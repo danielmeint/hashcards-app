@@ -1,4 +1,4 @@
-import { getConfig, saveConfig, listMdFiles, GitHubConfig } from "../github";
+import { getConfig, saveConfig, listMdFiles, getNewCardsPerDay, setNewCardsPerDay, GitHubConfig } from "../github";
 import { syncCards, fullSync } from "../sync";
 
 export function renderSettings(
@@ -6,6 +6,7 @@ export function renderSettings(
   onDone: () => void
 ): void {
   const config = getConfig();
+  const newPerDay = getNewCardsPerDay();
 
   container.innerHTML = `
     <div class="settings-view">
@@ -26,6 +27,10 @@ export function renderSettings(
         <label>
           Branch
           <input type="text" id="branch" value="${config?.branch || "main"}" placeholder="main" />
+        </label>
+        <label>
+          New cards per day
+          <input type="number" id="new-per-day" value="${newPerDay}" min="1" max="999" />
         </label>
         <div class="settings-buttons">
           <button type="button" id="test-btn">Test Connection</button>
@@ -49,6 +54,11 @@ export function renderSettings(
     };
   }
 
+  function saveNewPerDay(): void {
+    const val = parseInt((container.querySelector("#new-per-day") as HTMLInputElement).value, 10);
+    if (val > 0) setNewCardsPerDay(val);
+  }
+
   container.querySelector("#test-btn")!.addEventListener("click", async () => {
     const cfg = getFormConfig();
     if (!cfg.pat || !cfg.owner || !cfg.repo) {
@@ -59,9 +69,10 @@ export function renderSettings(
     try {
       const files = await listMdFiles(cfg);
       saveConfig(cfg);
+      saveNewPerDay();
       statusEl.textContent = `Connected! Found ${files.length} .md files.`;
     } catch (e) {
-      statusEl.textContent = `Error: ${(e as Error).message}`;
+      statusEl.textContent = `${(e as Error).message}`;
     }
   });
 
@@ -71,17 +82,36 @@ export function renderSettings(
       statusEl.textContent = "Please fill in all fields.";
       return;
     }
-    statusEl.textContent = "Syncing cards...";
+    const syncBtn = container.querySelector("#sync-btn") as HTMLButtonElement;
+    const testBtn = container.querySelector("#test-btn") as HTMLButtonElement;
+    syncBtn.disabled = true;
+    testBtn.disabled = true;
+
     try {
       saveConfig(cfg);
-      const cards = await syncCards(cfg);
+      saveNewPerDay();
+      const cards = await syncCards(cfg, (p) => {
+        if (p.current && p.total) {
+          statusEl.textContent = `${p.phase}... (${p.current}/${p.total})`;
+        } else {
+          statusEl.textContent = `${p.phase}...`;
+        }
+      });
       statusEl.textContent = `Synced ${cards.length} cards. Syncing state...`;
-      await fullSync(cfg);
+      await fullSync(cfg, (p) => {
+        statusEl.textContent = `${p.phase}...`;
+      });
       statusEl.textContent = `Done! ${cards.length} cards synced.`;
     } catch (e) {
-      statusEl.textContent = `Error: ${(e as Error).message}`;
+      statusEl.textContent = `${(e as Error).message}`;
+    } finally {
+      syncBtn.disabled = false;
+      testBtn.disabled = false;
     }
   });
 
-  container.querySelector("#back-btn")?.addEventListener("click", onDone);
+  container.querySelector("#back-btn")?.addEventListener("click", () => {
+    saveNewPerDay();
+    onDone();
+  });
 }

@@ -3,12 +3,12 @@
 ## UX Polish
 - [ ] Touch gestures — swipe to reveal, swipe left/right to grade
 - [ ] Progress persistence across sessions — resume mid-drill if app is closed
-- [ ] Better loading states during sync
+- [x] Better loading states during sync
 - [ ] Haptic feedback on grade buttons (mobile)
 
 ## Correctness / Robustness
 - [ ] Handle GitHub API rate limiting gracefully (show remaining quota, back off)
-- [ ] Validate PAT permissions on save (currently fails silently on first sync)
+- [x] Validate PAT permissions on save (descriptive error messages for 401/403/404)
 - [ ] Conflict handling when `hashcards-state.json` is updated by another device mid-session
 - [ ] Handle large repos — tree API limits, slow serial fetching of many files
 
@@ -17,7 +17,7 @@
 - [ ] Stats view — review history, heatmap, retention estimates
 - [ ] Audio support (the CLI supports `![](audio.mp3)`)
 - [ ] Multiple repos
-- [ ] "New cards per day" limit — currently all new cards are due immediately
+- [x] "New cards per day" limit — configurable in settings, default 20
 - [ ] Custom desired retention (currently hardcoded to 0.9)
 
 ## Infrastructure

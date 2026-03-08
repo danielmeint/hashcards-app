@@ -1,6 +1,7 @@
 import { Card, ReviewedPerformance } from "./types";
 import {
   GitHubConfig,
+  SyncProgress,
   listMdFiles,
   getFilesContent,
   readStateFile,
@@ -16,11 +17,17 @@ export function getCachedCards(): Card[] | null {
   return cachedCards;
 }
 
-export async function syncCards(config: GitHubConfig): Promise<Card[]> {
+export async function syncCards(
+  config: GitHubConfig,
+  onProgress?: (progress: SyncProgress) => void
+): Promise<Card[]> {
+  onProgress?.({ phase: "Listing files" });
   const files = await listMdFiles(config);
   const paths = files.map((f) => f.path);
-  const contents = await getFilesContent(config, paths);
 
+  const contents = await getFilesContent(config, paths, onProgress);
+
+  onProgress?.({ phase: "Parsing cards" });
   const allCards: Card[] = [];
   for (const [path, content] of contents) {
     const deckName = path
@@ -51,8 +58,12 @@ export function loadCachedCards(): Card[] {
   return [];
 }
 
-export async function fullSync(config: GitHubConfig): Promise<void> {
+export async function fullSync(
+  config: GitHubConfig,
+  onProgress?: (progress: SyncProgress) => void
+): Promise<void> {
   // 1. Fetch remote state
+  onProgress?.({ phase: "Fetching review state" });
   const remote = await readStateFile(config);
 
   // 2. Read local state
@@ -105,6 +116,7 @@ export async function fullSync(config: GitHubConfig): Promise<void> {
   const remoteJson = remote ? JSON.stringify(remote.data) : null;
   const mergedJson = JSON.stringify(stateFile);
   if (remoteJson !== mergedJson) {
+    onProgress?.({ phase: "Saving review state" });
     await writeStateFile(config, stateFile, remote?.sha);
   }
 }

@@ -21,6 +21,29 @@ export function saveConfig(config: GitHubConfig): void {
   localStorage.setItem("github_branch", config.branch);
 }
 
+export function getNewCardsPerDay(): number {
+  return parseInt(localStorage.getItem("new_cards_per_day") || "20", 10);
+}
+
+export function setNewCardsPerDay(n: number): void {
+  localStorage.setItem("new_cards_per_day", String(n));
+}
+
+export function getNewCardsIntroducedToday(today: string): number {
+  const raw = localStorage.getItem("new_cards_introduced");
+  if (!raw) return 0;
+  const parsed = JSON.parse(raw) as { date: string; count: number };
+  return parsed.date === today ? parsed.count : 0;
+}
+
+export function recordNewCardsIntroduced(today: string, count: number): void {
+  const existing = getNewCardsIntroducedToday(today);
+  localStorage.setItem(
+    "new_cards_introduced",
+    JSON.stringify({ date: today, count: existing + count })
+  );
+}
+
 async function apiFetch(
   config: GitHubConfig,
   path: string,
@@ -39,6 +62,18 @@ async function apiFetch(
   });
 }
 
+async function apiError(res: Response): Promise<string> {
+  if (res.status === 401) return "Authentication failed. Check your PAT.";
+  if (res.status === 403) return "Permission denied. Your PAT may lack the required permissions (Contents: Read and Write).";
+  if (res.status === 404) return "Repository not found. Check owner, repo name, and branch.";
+  try {
+    const data = await res.json();
+    return data.message || `GitHub API error: ${res.status}`;
+  } catch {
+    return `GitHub API error: ${res.status}`;
+  }
+}
+
 export type FileEntry = {
   path: string;
   sha: string;
@@ -49,7 +84,7 @@ export async function listMdFiles(config: GitHubConfig): Promise<FileEntry[]> {
     config,
     `/repos/${config.owner}/${config.repo}/git/trees/${config.branch}?recursive=1`
   );
-  if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
+  if (!res.ok) throw new Error(await apiError(res));
   const data = await res.json();
   return data.tree
     .filter(
@@ -70,14 +105,21 @@ export async function getFileContent(
     config,
     `/repos/${config.owner}/${config.repo}/contents/${path}?ref=${config.branch}`
   );
-  if (!res.ok) throw new Error(`GitHub API error: ${res.status} for ${path}`);
+  if (!res.ok) throw new Error(await apiError(res));
   const data = await res.json();
   return atob(data.content.replace(/\n/g, ""));
 }
 
+export type SyncProgress = {
+  phase: string;
+  current?: number;
+  total?: number;
+};
+
 export async function getFilesContent(
   config: GitHubConfig,
-  paths: string[]
+  paths: string[],
+  onProgress?: (progress: SyncProgress) => void
 ): Promise<Map<string, string>> {
   const results = new Map<string, string>();
   const concurrency = 5;
@@ -88,6 +130,11 @@ export async function getFilesContent(
       batch.map((p) => getFileContent(config, p))
     );
     batch.forEach((p, idx) => results.set(p, contents[idx]));
+    onProgress?.({
+      phase: "Fetching files",
+      current: Math.min(i + concurrency, paths.length),
+      total: paths.length,
+    });
   }
 
   return results;
@@ -117,7 +164,7 @@ export async function readStateFile(
     `/repos/${config.owner}/${config.repo}/contents/hashcards-state.json?ref=${config.branch}`
   );
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
+  if (!res.ok) throw new Error(await apiError(res));
   const data = await res.json();
   const content = atob(data.content.replace(/\n/g, ""));
   return { data: JSON.parse(content), sha: data.sha };
@@ -141,8 +188,5 @@ export async function writeStateFile(
     `/repos/${config.owner}/${config.repo}/contents/hashcards-state.json`,
     { method: "PUT", body: JSON.stringify(body) }
   );
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Failed to write state: ${res.status} ${err}`);
-  }
+  if (!res.ok) throw new Error(await apiError(res));
 }

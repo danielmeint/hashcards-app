@@ -1,6 +1,6 @@
 import { Card } from "../types";
 import { loadCachedCards, syncCards, fullSync } from "../sync";
-import { getConfig } from "../github";
+import { getConfig, getNewCardsPerDay, getNewCardsIntroducedToday, recordNewCardsIntroduced } from "../github";
 import { getAllPerformances } from "../db";
 import { todayStr } from "../fsrs";
 
@@ -31,12 +31,15 @@ export async function renderDeckList(
 
   const performances = await getAllPerformances();
   const today = todayStr();
+  const newPerDay = getNewCardsPerDay();
+  const introducedToday = getNewCardsIntroducedToday(today);
+  const remainingNewBudget = Math.max(0, newPerDay - introducedToday);
 
   // Group by deck
-  const deckMap = new Map<string, { cards: Card[]; due: number; newCount: number }>();
+  const deckMap = new Map<string, { cards: Card[]; reviewDue: number; newCount: number }>();
   for (const card of cards) {
     if (!deckMap.has(card.deckName)) {
-      deckMap.set(card.deckName, { cards: [], due: 0, newCount: 0 });
+      deckMap.set(card.deckName, { cards: [], reviewDue: 0, newCount: 0 });
     }
     const deck = deckMap.get(card.deckName)!;
     deck.cards.push(card);
@@ -44,19 +47,22 @@ export async function renderDeckList(
     const perf = performances.get(card.hash);
     if (!perf) {
       deck.newCount++;
-      deck.due++;
     } else if (perf.dueDate <= today) {
-      deck.due++;
+      deck.reviewDue++;
     }
   }
 
+  // Apply global new cards/day limit across decks
+  let newBudget = remainingNewBudget;
   const decks: DeckInfo[] = [];
   for (const [name, info] of deckMap) {
+    const cappedNew = Math.min(info.newCount, newBudget);
+    newBudget -= cappedNew;
     decks.push({
       name,
       total: info.cards.length,
-      due: info.due,
-      newCount: info.newCount,
+      due: info.reviewDue + cappedNew,
+      newCount: cappedNew,
     });
   }
   decks.sort((a, b) => a.name.localeCompare(b.name));
@@ -108,7 +114,9 @@ export async function renderDeckList(
     btn.disabled = true;
     btn.textContent = "...";
     try {
-      await syncCards(config);
+      await syncCards(config, (p) => {
+        btn.textContent = p.current && p.total ? `${p.current}/${p.total}` : "...";
+      });
       await fullSync(config);
       renderDeckList(container, onDrill, onSettings);
     } catch (e) {
@@ -133,14 +141,31 @@ export async function renderDeckList(
   });
 }
 
-async function getDueCards(
+function getDueCards(
   cards: Card[],
   performances: Map<string, { dueDate: string }>,
   today: string
-): Promise<Card[]> {
-  return cards.filter((card) => {
+): Card[] {
+  const newPerDay = getNewCardsPerDay();
+  const introducedToday = getNewCardsIntroducedToday(today);
+  const remainingNewBudget = Math.max(0, newPerDay - introducedToday);
+
+  const reviewDue: Card[] = [];
+  const newCards: Card[] = [];
+
+  for (const card of cards) {
     const perf = performances.get(card.hash);
-    if (!perf) return true; // new card
-    return perf.dueDate <= today;
-  });
+    if (!perf) {
+      newCards.push(card);
+    } else if (perf.dueDate <= today) {
+      reviewDue.push(card);
+    }
+  }
+
+  const introducedNow = newCards.slice(0, remainingNewBudget);
+  if (introducedNow.length > 0) {
+    recordNewCardsIntroduced(today, introducedNow.length);
+  }
+
+  return [...reviewDue, ...introducedNow];
 }

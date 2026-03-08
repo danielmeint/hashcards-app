@@ -130,6 +130,7 @@ export function renderSettings(
         statusEl.textContent = `${p.phase}...`;
       });
       statusEl.textContent = `Done! ${cards.length} cards synced.`;
+      if (isFirstRun) onDone();
     } catch (e) {
       statusEl.textContent = `${(e as Error).message}`;
     } finally {

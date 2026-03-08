@@ -34,6 +34,7 @@ export function renderSettings(
         </div>
         <div id="settings-status"></div>
       </form>
+      <div class="settings-version">hashcards ${__COMMIT_HASH__}</div>
     </div>
   `;
 

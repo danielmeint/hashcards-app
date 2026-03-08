@@ -10,9 +10,22 @@ export function renderSettings(
   const fuzzOn = getIntervalFuzz();
   const hapticOn = getHapticFeedback();
 
+  const isFirstRun = !config;
+
   container.innerHTML = `
     <div class="settings-view">
       <h1>Settings</h1>
+      ${isFirstRun ? `
+      <div class="welcome-banner">
+        <p><strong>Hashcards</strong> is a spaced repetition flashcard app. Cards live as <code>.md</code> files in a GitHub repo, and the app syncs them via the GitHub API.</p>
+        <p><strong>Get started in 3 steps:</strong></p>
+        <ol>
+          <li>Create a GitHub repo with <code>.md</code> flashcard files (<a href="https://github.com/eudoxia0/hashcards#format" target="_blank" rel="noopener">card format</a>)</li>
+          <li>Generate a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained PAT</a> with <strong>Contents: Read and write</strong> on your repo</li>
+          <li>Enter your details below and click <strong>Test Connection</strong></li>
+        </ol>
+      </div>
+      ` : ""}
       <form id="settings-form">
         <label>
           GitHub Personal Access Token
@@ -49,7 +62,10 @@ export function renderSettings(
         </div>
         <div id="settings-status"></div>
       </form>
-      <div class="settings-version">hashcards ${__COMMIT_HASH__}</div>
+      <div class="settings-footer">
+        <div class="settings-version">hashcards ${__COMMIT_HASH__}</div>
+        <a href="https://github.com/danielmeint/hashcards-app" target="_blank" rel="noopener">GitHub</a>
+      </div>
     </div>
   `;
 

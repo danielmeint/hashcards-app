@@ -1,6 +1,6 @@
 const encoder = new TextEncoder();
 
-async function sha256(data: Uint8Array): Promise<string> {
+async function sha256(data: ArrayBuffer): Promise<string> {
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = new Uint8Array(hashBuffer);
   return Array.from(hashArray)
@@ -8,7 +8,7 @@ async function sha256(data: Uint8Array): Promise<string> {
     .join("");
 }
 
-function concat(...arrays: Uint8Array[]): Uint8Array {
+function concat(...arrays: Uint8Array[]): ArrayBuffer {
   const totalLen = arrays.reduce((sum, a) => sum + a.length, 0);
   const result = new Uint8Array(totalLen);
   let offset = 0;
@@ -16,7 +16,7 @@ function concat(...arrays: Uint8Array[]): Uint8Array {
     result.set(arr, offset);
     offset += arr.length;
   }
-  return result;
+  return result.buffer as ArrayBuffer;
 }
 
 function u64LE(n: number): Uint8Array {

@@ -2,7 +2,7 @@ import { Card, Grade, Performance, Review } from "../types";
 import { updatePerformance } from "../fsrs";
 import { getPerformance, saveSessionResults } from "../db";
 import { renderFront, renderBack, postRender } from "../render";
-import { getConfig } from "../github";
+import { getConfig, getIntervalFuzz, getHapticFeedback } from "../github";
 import { fullSync } from "../sync";
 
 type SessionState = {
@@ -143,13 +143,21 @@ export async function renderDrill(
     }
   }
 
+  const useFuzz = getIntervalFuzz();
+  const useHaptic = getHapticFeedback();
+
+  function haptic(ms: number = 10) {
+    if (useHaptic && navigator.vibrate) navigator.vibrate(ms);
+  }
+
   function doGrade(grade: Grade) {
     if (!state.revealed) return;
+    haptic();
 
     const reviewedAt = new Date().toISOString();
     const card = state.queue.shift()!;
     const perf = state.cache.get(card.hash)!;
-    const newPerf = updatePerformance(perf, grade, reviewedAt);
+    const newPerf = updatePerformance(perf, grade, reviewedAt, useFuzz);
 
     const review: Review = {
       cardHash: card.hash,

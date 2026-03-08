@@ -29,6 +29,22 @@ export function setNewCardsPerDay(n: number): void {
   localStorage.setItem("new_cards_per_day", String(n));
 }
 
+export function getIntervalFuzz(): boolean {
+  return localStorage.getItem("interval_fuzz") !== "false"; // default on
+}
+
+export function setIntervalFuzz(on: boolean): void {
+  localStorage.setItem("interval_fuzz", String(on));
+}
+
+export function getHapticFeedback(): boolean {
+  return localStorage.getItem("haptic_feedback") !== "false"; // default on
+}
+
+export function setHapticFeedback(on: boolean): void {
+  localStorage.setItem("haptic_feedback", String(on));
+}
+
 export function getNewCardsIntroducedToday(today: string): number {
   const raw = localStorage.getItem("new_cards_introduced");
   if (!raw) return 0;

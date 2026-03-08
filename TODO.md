@@ -4,7 +4,7 @@
 - [ ] Touch gestures — swipe to reveal, swipe left/right to grade
 - [ ] Progress persistence across sessions — resume mid-drill if app is closed
 - [x] Better loading states during sync
-- [ ] Haptic feedback on grade buttons (mobile)
+- [x] Haptic feedback on grade buttons (mobile, configurable)
 
 ## Correctness / Robustness
 - [ ] Handle GitHub API rate limiting gracefully (show remaining quota, back off)
@@ -26,5 +26,5 @@
 - [ ] Bundle analysis — `marked` is most of the 68KB bundle; could lazy-load it
 
 ## FSRS Algorithm
-- [ ] Interval fuzz (randomize intervals slightly to avoid review clustering)
+- [x] Interval fuzz (randomize intervals slightly to avoid review clustering, configurable)
 - [ ] Parameter optimization (integrate with FSRS optimizer based on review history)

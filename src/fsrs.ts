@@ -112,10 +112,17 @@ export function todayStr(): string {
   );
 }
 
+function fuzzInterval(days: number): number {
+  if (days < 3) return days;
+  const delta = Math.max(1, Math.round(days * 0.05));
+  return days + Math.floor(Math.random() * (2 * delta + 1)) - delta;
+}
+
 export function updatePerformance(
   perf: Performance,
   grade: Grade,
-  reviewedAt: string
+  reviewedAt: string,
+  fuzz: boolean = false
 ): ReviewedPerformance {
   const today = reviewedAt.slice(0, 10);
   let stability: number;
@@ -136,7 +143,8 @@ export function updatePerformance(
   }
 
   const intervalRaw = interval(TARGET_RECALL, stability);
-  const intervalRounded = Math.round(intervalRaw);
+  let intervalRounded = Math.round(intervalRaw);
+  if (fuzz) intervalRounded = fuzzInterval(intervalRounded);
   const intervalClamped = Math.max(
     MIN_INTERVAL,
     Math.min(MAX_INTERVAL, intervalRounded)

@@ -1,4 +1,4 @@
-import { getConfig, saveConfig, listMdFiles, getNewCardsPerDay, setNewCardsPerDay, GitHubConfig } from "../github";
+import { getConfig, saveConfig, listMdFiles, getNewCardsPerDay, setNewCardsPerDay, getIntervalFuzz, setIntervalFuzz, getHapticFeedback, setHapticFeedback, GitHubConfig } from "../github";
 import { syncCards, fullSync } from "../sync";
 
 export function renderSettings(
@@ -7,6 +7,8 @@ export function renderSettings(
 ): void {
   const config = getConfig();
   const newPerDay = getNewCardsPerDay();
+  const fuzzOn = getIntervalFuzz();
+  const hapticOn = getHapticFeedback();
 
   container.innerHTML = `
     <div class="settings-view">
@@ -32,6 +34,14 @@ export function renderSettings(
           New cards per day
           <input type="number" id="new-per-day" value="${newPerDay}" min="1" max="999" />
         </label>
+        <label class="toggle-label">
+          <input type="checkbox" id="interval-fuzz" ${fuzzOn ? "checked" : ""} />
+          Interval fuzz (vary intervals slightly to avoid clustering)
+        </label>
+        <label class="toggle-label">
+          <input type="checkbox" id="haptic-feedback" ${hapticOn ? "checked" : ""} />
+          Haptic feedback on grade buttons
+        </label>
         <div class="settings-buttons">
           <button type="button" id="test-btn">Test Connection</button>
           <button type="button" id="sync-btn">Sync Now</button>
@@ -54,9 +64,11 @@ export function renderSettings(
     };
   }
 
-  function saveNewPerDay(): void {
+  function savePrefs(): void {
     const val = parseInt((container.querySelector("#new-per-day") as HTMLInputElement).value, 10);
     if (val > 0) setNewCardsPerDay(val);
+    setIntervalFuzz((container.querySelector("#interval-fuzz") as HTMLInputElement).checked);
+    setHapticFeedback((container.querySelector("#haptic-feedback") as HTMLInputElement).checked);
   }
 
   container.querySelector("#test-btn")!.addEventListener("click", async () => {
@@ -69,7 +81,7 @@ export function renderSettings(
     try {
       const files = await listMdFiles(cfg);
       saveConfig(cfg);
-      saveNewPerDay();
+      savePrefs();
       statusEl.textContent = `Connected! Found ${files.length} .md files.`;
     } catch (e) {
       statusEl.textContent = `${(e as Error).message}`;
@@ -89,7 +101,7 @@ export function renderSettings(
 
     try {
       saveConfig(cfg);
-      saveNewPerDay();
+      savePrefs();
       const cards = await syncCards(cfg, (p) => {
         if (p.current && p.total) {
           statusEl.textContent = `${p.phase}... (${p.current}/${p.total})`;
@@ -111,7 +123,7 @@ export function renderSettings(
   });
 
   container.querySelector("#back-btn")?.addEventListener("click", () => {
-    saveNewPerDay();
+    savePrefs();
     onDone();
   });
 }

@@ -18,8 +18,22 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  lighthouse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: treosh/lighthouse-ci-action@v12
+        with:
+          configPath: lighthouserc.json
+
   deploy:
-    needs: test
+    needs: [test, lighthouse]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

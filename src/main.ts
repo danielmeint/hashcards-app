@@ -10,10 +10,7 @@ const app = document.getElementById("app")!;
 
 type View = "settings" | "decks" | "drill";
 
-let currentView: View = "decks";
-
 async function navigate(view: View, drillCards?: Card[]) {
-  currentView = view;
   app.innerHTML = "";
 
   switch (view) {

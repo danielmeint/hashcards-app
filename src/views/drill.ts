@@ -1,5 +1,5 @@
 import { Card, Grade, Performance, Review } from "../types";
-import { updatePerformance, todayStr } from "../fsrs";
+import { updatePerformance } from "../fsrs";
 import { getPerformance, saveSessionResults } from "../db";
 import { renderFront, renderBack, postRender } from "../render";
 import { getConfig } from "../github";

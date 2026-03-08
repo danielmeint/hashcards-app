@@ -21,7 +21,7 @@
 - [ ] Custom desired retention (currently hardcoded to 0.9)
 
 ## Infrastructure
-- [ ] Custom domain
+- [x] Custom domain (hashcards.dev)
 - [ ] E2E tests with Playwright — drill through a session, verify IndexedDB state
 - [ ] Bundle analysis — `marked` is most of the 68KB bundle; could lazy-load it
 

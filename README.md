@@ -1,6 +1,6 @@
 # Hashcards PWA
 
-**[hashcards-app.pages.dev](https://hashcards-app.pages.dev)**
+**[hashcards.dev](https://hashcards.dev)**
 
 A mobile-friendly Progressive Web App for spaced repetition flashcards. Cards live as `.md` files in a GitHub repo (same format as the [hashcards](https://github.com/eudoxia0/hashcards) CLI), and the app reads them via the GitHub API.
 

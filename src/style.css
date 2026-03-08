@@ -1,0 +1,662 @@
+* {
+  margin: 0;
+  padding: 0;
+  font-weight: normal;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+body {
+  font-family:
+    "TeX Gyre Termes", "Nimbus Roman No9 L", "Times New Roman", "Times",
+    serif;
+  -webkit-font-smoothing: antialiased;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* ===== Drill View ===== */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+}
+
+.root .header,
+.root .controls {
+  background: #f8f8f8;
+}
+
+.root .header {
+  padding: 32px;
+  border-bottom: 1px solid black;
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+}
+
+.root .header .progress-bar {
+  width: 300px;
+  height: 24px;
+  border: 1px solid #999;
+  border-radius: 12px;
+  background: white;
+  overflow: hidden;
+}
+
+.root .header .progress-bar .progress-fill {
+  height: 100%;
+  background: palegreen;
+  transition: width 0.3s ease;
+}
+
+.root .card-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background: #fcfcfc;
+  overflow: hidden;
+}
+
+.root .card-container .card {
+  background: white;
+  display: flex;
+  flex-direction: column;
+}
+
+.root .card-container .card .card-header {
+  border-bottom: 1px solid black;
+  padding: 24px;
+}
+
+.root .card-container .card .card-header h1 {
+  font-size: 36px;
+}
+
+.root .card-container .card .card-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.root .card-container .card .card-content .question,
+.root .card-container .card .card-content .answer,
+.root .card-container .card .card-content .prompt {
+  padding: 24px;
+}
+
+.root .card-container .card .card-content .question {
+  border-bottom: 1px solid black;
+}
+
+.root .card-container .card .card-content .answer {
+  min-height: 30px;
+}
+
+.rich-text {
+  font-size: 30px;
+  text-align: justify;
+  line-height: 1.4;
+}
+
+.rich-text .cloze {
+  width: 30px;
+  background: #a0a0a0;
+  text-decoration: none;
+  border-radius: 8px;
+  color: transparent;
+}
+
+.rich-text .cloze-reveal {
+  color: royalblue;
+}
+
+.rich-text img {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 100%;
+  height: auto;
+}
+
+.rich-text ul,
+.rich-text ol {
+  padding-left: 24px;
+}
+
+.rich-text p:not(:last-child),
+.rich-text img:not(:last-child),
+.rich-text ol:not(:last-child),
+.rich-text ul:not(:last-child),
+.rich-text blockquote:not(:last-child),
+.rich-text table:not(:last-child),
+.rich-text pre:not(:last-child) {
+  margin-bottom: 16px;
+}
+
+.rich-text blockquote {
+  background: #f7f7f7;
+  border-left: 4px solid #ccc;
+  padding: 8px 12px;
+}
+
+.rich-text table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.65em;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+  border: 1px solid #999;
+}
+
+.rich-text table th,
+.rich-text table td {
+  border: 1px solid #bbb;
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.rich-text table th {
+  background: #e8e8e8;
+  font-weight: 600;
+  border: 1px solid #999;
+}
+
+.rich-text table tbody tr:nth-child(odd) {
+  background: #ffffff;
+}
+
+.rich-text table tbody tr:nth-child(even) {
+  background: #f5f5f5;
+}
+
+.rich-text table code {
+  font-size: 0.85em;
+  background: #ececec;
+}
+
+.rich-text code {
+  background: #f7f7f7;
+  border: 1px solid #ddd;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: "Menlo", "Monaco", "Courier New", monospace;
+  font-size: 0.7em;
+  color: inherit;
+}
+
+.rich-text pre {
+  background: #f7f7f7;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 0.7em;
+  line-height: 1.5;
+}
+
+.rich-text pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.85em;
+  color: inherit;
+}
+
+.rich-text audio {
+  width: 100%;
+}
+
+.rich-text .katex {
+  font-size: 1em;
+}
+
+.root .controls {
+  border-top: 1px solid black;
+}
+
+.root .controls .control-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.root .controls button {
+  -webkit-appearance: none;
+  appearance: none;
+  background: white;
+  border: 1px solid #999;
+  padding: 7px 12px;
+  font-size: 16px;
+  color: black;
+  font-family: system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: #ccc 0px 1px 3px 0px;
+  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.root .controls button:hover {
+  background: #f0f0f0;
+  border-color: #777;
+  box-shadow: #bbb 0px 2px 5px 0px;
+}
+
+.root .controls button:active {
+  background: #e4e4e4;
+  border-color: #666;
+  box-shadow: #ddd 0px 0px 2px 0px;
+}
+
+.root .controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.root .controls button:disabled:hover,
+.root .controls button:disabled:active {
+  background: white;
+  border-color: #999;
+  box-shadow: #ccc 0px 1px 3px 0px;
+}
+
+/* ===== Finished View ===== */
+
+.finished {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.finished h1 {
+  text-align: center;
+}
+
+.finished .summary {
+  font-size: 24px;
+  margin-bottom: 48px;
+}
+
+.finished h2 {
+  border-bottom: 1px solid #ccc;
+  width: 100%;
+}
+
+.finished .stats {
+  width: 100%;
+  max-width: 400px;
+}
+
+.finished .stats table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.finished .stats table tr {
+  border-bottom: 1px solid #eee;
+}
+
+.finished .stats table td {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.finished .stats table td.key {
+  font-family: "SF Pro", system-ui, sans-serif;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.finished .stats table td.val {
+  font-family: "SF Pro", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  width: 100%;
+}
+
+.finished .shutdown-container {
+  margin-top: 48px;
+  text-align: center;
+}
+
+.finished .shutdown-button {
+  background: #dc3545;
+  color: white;
+  border: 1px solid #c82333;
+  padding: 12px 24px;
+  font-size: 18px;
+  font-family: system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: rgba(220, 53, 69, 0.3) 0px 2px 8px 0px;
+  transition: background-color 0.2s, box-shadow 0.2s;
+}
+
+.finished .shutdown-button:hover {
+  background: #c82333;
+  box-shadow: rgba(220, 53, 69, 0.5) 0px 4px 12px 0px;
+}
+
+.finished .shutdown-button:active {
+  background: #bd2130;
+  box-shadow: rgba(220, 53, 69, 0.2) 0px 1px 4px 0px;
+}
+
+/* ===== Settings View ===== */
+
+.settings-view {
+  max-width: 500px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+.settings-view h1 {
+  font-size: 36px;
+  margin-bottom: 24px;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.settings-view label {
+  display: block;
+  margin-bottom: 16px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  color: #555;
+}
+
+.settings-view input[type="text"],
+.settings-view input[type="password"] {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 10px 12px;
+  font-size: 16px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.settings-view input:focus {
+  outline: none;
+  border-color: #4a90d9;
+  box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.2);
+}
+
+.settings-buttons {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+  flex-wrap: wrap;
+}
+
+.settings-buttons button {
+  padding: 10px 20px;
+  font-size: 16px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-weight: 600;
+  border: 1px solid #999;
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.settings-buttons button:hover {
+  background: #f0f0f0;
+}
+
+#settings-status {
+  margin-top: 16px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  color: #333;
+}
+
+/* ===== Deck List View ===== */
+
+.deck-list-view {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+.deck-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.deck-list-header h1 {
+  font-size: 36px;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.deck-list-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.deck-list-actions button {
+  padding: 8px 12px;
+  font-size: 18px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+}
+
+.deck-list-actions button:hover {
+  background: #f0f0f0;
+}
+
+.drill-all-btn {
+  display: block;
+  width: 100%;
+  padding: 14px;
+  font-size: 18px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-weight: 600;
+  background: #4a90d9;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 24px;
+  transition: background 0.15s;
+}
+
+.drill-all-btn:hover {
+  background: #357abd;
+}
+
+.all-caught-up {
+  text-align: center;
+  font-size: 24px;
+  color: #666;
+  padding: 32px 0;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.deck-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.deck-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: white;
+}
+
+.deck-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.deck-name {
+  font-size: 18px;
+  font-weight: 600;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.deck-counts {
+  font-size: 13px;
+  color: #888;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.deck-drill-btn {
+  padding: 8px 16px;
+  font-size: 14px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-weight: 600;
+  background: white;
+  border: 1px solid #999;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.deck-drill-btn:hover {
+  background: #f0f0f0;
+}
+
+/* ===== Mobile ===== */
+
+@media (max-width: 768px) {
+  .root .card-container .card {
+    width: 100%;
+    height: 100%;
+    box-shadow: none;
+  }
+
+  .root .controls {
+    padding: 12px;
+  }
+
+  .root .controls .control-row {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .root .controls .control-row .grades {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .root .controls button {
+    width: 100%;
+  }
+
+  .root .controls .grades button {
+    flex: 1;
+    margin: 0 4px;
+  }
+
+  .root .header {
+    padding: 16px;
+  }
+
+  .finished {
+    padding: 24px;
+  }
+
+  .finished h1 {
+    font-size: 36px;
+    margin-bottom: 36px;
+  }
+
+  .finished h2 {
+    font-size: 30px;
+    margin-bottom: 16px;
+  }
+
+  .finished .stats {
+    font-size: 16px;
+  }
+
+  .finished .stats td.val {
+    padding-left: 24px;
+  }
+}
+
+/* ===== Desktop ===== */
+
+@media (min-width: 769px) {
+  .root .card-container .card {
+    width: 900px;
+    min-height: 400px;
+    max-height: 90%;
+    box-shadow: 0px 0px 48px 16px #ddd;
+    border: 1px solid black;
+  }
+
+  .root .controls {
+    padding: 32px;
+  }
+
+  .root .controls .control-row {
+    flex-direction: row;
+  }
+
+  .root .controls button {
+    margin: 0 12px;
+  }
+
+  .finished {
+    padding: 48px;
+  }
+
+  .finished h1 {
+    font-size: 48px;
+    margin-bottom: 48px;
+  }
+
+  .finished h2 {
+    font-size: 36px;
+    margin-bottom: 24px;
+  }
+
+  .finished .stats {
+    font-size: 22px;
+  }
+
+  .finished .stats td.val {
+    padding-left: 48px;
+  }
+}

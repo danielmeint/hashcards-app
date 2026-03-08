@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.env
+*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Reference source (used during development only)
+reference/
+
+# Test coverage
+coverage/

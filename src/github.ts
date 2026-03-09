@@ -78,6 +78,24 @@ async function apiFetch(
   });
 }
 
+export type TokenInfo = {
+  tokenType: "fine-grained" | "classic" | "unknown";
+  username: string;
+  scopes: string | null;
+};
+
+export async function inspectToken(config: GitHubConfig): Promise<TokenInfo> {
+  const res = await apiFetch(config, "/user");
+  if (!res.ok) throw new Error(await apiError(res));
+  const data = await res.json();
+  const scopes = res.headers.get("x-oauth-scopes");
+  const pat = config.pat;
+  let tokenType: TokenInfo["tokenType"] = "unknown";
+  if (pat.startsWith("github_pat_")) tokenType = "fine-grained";
+  else if (pat.startsWith("ghp_")) tokenType = "classic";
+  return { tokenType, username: data.login, scopes };
+}
+
 async function apiError(res: Response): Promise<string> {
   if (res.status === 401) return "Authentication failed. Check your PAT.";
   if (res.status === 403) return "Permission denied. Your PAT may lack the required permissions (Contents: Read and Write).";

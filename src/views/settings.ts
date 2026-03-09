@@ -1,4 +1,4 @@
-import { getConfig, saveConfig, listMdFiles, getNewCardsPerDay, setNewCardsPerDay, getIntervalFuzz, setIntervalFuzz, getHapticFeedback, setHapticFeedback, GitHubConfig } from "../github";
+import { getConfig, saveConfig, listMdFiles, getNewCardsPerDay, setNewCardsPerDay, getIntervalFuzz, setIntervalFuzz, getHapticFeedback, setHapticFeedback, inspectToken, GitHubConfig } from "../github";
 import { syncCards, fullSync } from "../sync";
 
 export function renderSettings(
@@ -21,7 +21,7 @@ export function renderSettings(
         <p><strong>Get started in 3 steps:</strong></p>
         <ol>
           <li>Create a GitHub repo with <code>.md</code> flashcard files (<a href="https://github.com/eudoxia0/hashcards#format" target="_blank" rel="noopener">card format</a>)</li>
-          <li>Generate a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained PAT</a> with <strong>Contents: Read and write</strong> on your repo</li>
+          <li>Generate a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained PAT</a> — select only your repo, grant <strong>Contents: Read and write</strong></li>
           <li>Enter your details below and click <strong>Test Connection</strong></li>
         </ol>
       </div>
@@ -29,7 +29,9 @@ export function renderSettings(
       <form id="settings-form">
         <label>
           GitHub Personal Access Token
-          <input type="password" id="pat" value="${config?.pat || ""}" placeholder="ghp_..." />
+          <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener" class="pat-help-link">Create a fine-grained token</a>
+          <input type="password" id="pat" value="${config?.pat || ""}" placeholder="github_pat_... or ghp_..." />
+          <div id="token-info"></div>
         </label>
         <label>
           Repository Owner
@@ -87,6 +89,31 @@ export function renderSettings(
     setHapticFeedback((container.querySelector("#haptic-feedback") as HTMLInputElement).checked);
   }
 
+  const tokenInfoEl = container.querySelector("#token-info") as HTMLElement;
+
+  function renderTokenInfo(cfg: GitHubConfig): void {
+    const pat = cfg.pat;
+    if (!pat) {
+      tokenInfoEl.innerHTML = "";
+      return;
+    }
+    if (pat.startsWith("ghp_")) {
+      tokenInfoEl.innerHTML = `<span class="token-warning">Classic token — consider using a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a> scoped to just your repo.</span>`;
+    } else if (pat.startsWith("github_pat_")) {
+      tokenInfoEl.innerHTML = `<span class="token-ok">Fine-grained token</span>`;
+    } else {
+      tokenInfoEl.innerHTML = "";
+    }
+  }
+
+  // Show token type on load
+  if (config) renderTokenInfo(config);
+
+  // Update on input change
+  container.querySelector("#pat")!.addEventListener("input", () => {
+    renderTokenInfo(getFormConfig());
+  });
+
   container.querySelector("#test-btn")!.addEventListener("click", async () => {
     const cfg = getFormConfig();
     if (!cfg.pat || !cfg.owner || !cfg.repo) {
@@ -95,10 +122,25 @@ export function renderSettings(
     }
     statusEl.textContent = "Testing connection...";
     try {
-      const files = await listMdFiles(cfg);
+      const [files, tokenInfo] = await Promise.all([
+        listMdFiles(cfg),
+        inspectToken(cfg),
+      ]);
       saveConfig(cfg);
       savePrefs();
-      statusEl.textContent = `Connected! Found ${files.length} .md files.`;
+
+      let detail = `Connected as ${tokenInfo.username}. Found ${files.length} .md file${files.length === 1 ? "" : "s"}.`;
+      if (tokenInfo.tokenType === "classic" && tokenInfo.scopes) {
+        detail += ` Scopes: ${tokenInfo.scopes}.`;
+      }
+      statusEl.textContent = detail;
+
+      // Update token info badge after successful auth
+      if (tokenInfo.tokenType === "fine-grained") {
+        tokenInfoEl.innerHTML = `<span class="token-ok">Fine-grained token — ${tokenInfo.username}</span>`;
+      } else if (tokenInfo.tokenType === "classic") {
+        tokenInfoEl.innerHTML = `<span class="token-warning">Classic token (${tokenInfo.username}) — consider using a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a> scoped to just your repo.</span>`;
+      }
     } catch (e) {
       statusEl.textContent = `${(e as Error).message}`;
     }

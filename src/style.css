@@ -451,6 +451,31 @@ body {
   margin: 0;
 }
 
+.pat-help-link {
+  float: right;
+  font-size: 12px;
+  font-weight: normal;
+  color: #2563eb;
+}
+
+#token-info {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.token-ok {
+  color: #16a34a;
+}
+
+.token-warning {
+  color: #b45309;
+}
+
+.token-warning a {
+  color: #2563eb;
+}
+
 .welcome-banner {
   background: #f0f4ff;
   border: 1px solid #d0d8ee;

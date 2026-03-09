@@ -451,6 +451,15 @@ body {
   margin: 0;
 }
 
+.field-group {
+  margin-bottom: 16px;
+}
+
+.field-group label {
+  display: inline;
+  margin-bottom: 0;
+}
+
 .pat-help-link {
   float: right;
   font-size: 12px;

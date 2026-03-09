@@ -27,12 +27,12 @@ export function renderSettings(
       </div>
       ` : ""}
       <form id="settings-form">
-        <label>
-          GitHub Personal Access Token
+        <div class="field-group">
+          <label for="pat">GitHub Personal Access Token</label>
           <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener" class="pat-help-link">Create a fine-grained token</a>
           <input type="password" id="pat" value="${config?.pat || ""}" placeholder="github_pat_... or ghp_..." />
           <div id="token-info"></div>
-        </label>
+        </div>
         <label>
           Repository Owner
           <input type="text" id="owner" value="${config?.owner || ""}" placeholder="username" />

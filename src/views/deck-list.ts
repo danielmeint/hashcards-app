@@ -1,6 +1,6 @@
 import { Card } from "../types";
 import { loadCachedCards, syncCards, fullSync } from "../sync";
-import { getConfig, getNewCardsPerDay, getNewCardsIntroducedToday, recordNewCardsIntroduced } from "../github";
+import { getConfig, getNewCardsPerDay, getNewCardsIntroducedToday } from "../github";
 import { getAllPerformances } from "../db";
 import { todayStr } from "../fsrs";
 
@@ -52,20 +52,46 @@ export async function renderDeckList(
     }
   }
 
-  // Apply global new cards/day limit across decks
-  let newBudget = remainingNewBudget;
+  // Distribute new card budget proportionally across decks
+  const deckEntries = [...deckMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const totalNewAvailable = deckEntries.reduce((s, [, info]) => s + info.newCount, 0);
   const decks: DeckInfo[] = [];
-  for (const [name, info] of deckMap) {
-    const cappedNew = Math.min(info.newCount, newBudget);
-    newBudget -= cappedNew;
-    decks.push({
-      name,
-      total: info.cards.length,
-      reviewDue: info.reviewDue,
-      newCount: cappedNew,
-    });
+
+  if (totalNewAvailable <= remainingNewBudget) {
+    // Budget exceeds available new cards — no cap needed
+    for (const [name, info] of deckEntries) {
+      decks.push({ name, total: info.cards.length, reviewDue: info.reviewDue, newCount: info.newCount });
+    }
+  } else {
+    // Distribute proportionally, giving each deck at least 1 if budget allows
+    let remaining = deckEntries.map(([name, info]) => ({ name, info, allocated: 0 }));
+
+    // First pass: proportional allocation (floored)
+    for (const entry of remaining) {
+      const share = Math.floor((entry.info.newCount / totalNewAvailable) * remainingNewBudget);
+      entry.allocated = Math.min(share, entry.info.newCount);
+    }
+
+    // Second pass: distribute leftover one at a time to decks that still have capacity
+    let used = remaining.reduce((s, e) => s + e.allocated, 0);
+    for (const entry of remaining) {
+      if (used >= remainingNewBudget) break;
+      const canAdd = entry.info.newCount - entry.allocated;
+      if (canAdd > 0) {
+        entry.allocated++;
+        used++;
+      }
+    }
+
+    for (const entry of remaining) {
+      decks.push({
+        name: entry.name,
+        total: entry.info.cards.length,
+        reviewDue: entry.info.reviewDue,
+        newCount: entry.allocated,
+      });
+    }
   }
-  decks.sort((a, b) => a.name.localeCompare(b.name));
 
   const totalReviews = decks.reduce((s, d) => s + d.reviewDue, 0);
   const totalNew = decks.reduce((s, d) => s + d.newCount, 0);
@@ -164,10 +190,5 @@ function getDueCards(
     }
   }
 
-  const introducedNow = newCards.slice(0, remainingNewBudget);
-  if (introducedNow.length > 0) {
-    recordNewCardsIntroduced(today, introducedNow.length);
-  }
-
-  return [...reviewDue, ...introducedNow];
+  return [...reviewDue, ...newCards.slice(0, remainingNewBudget)];
 }

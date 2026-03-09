@@ -60,6 +60,10 @@ export function recordNewCardsIntroduced(today: string, count: number): void {
   );
 }
 
+export function resetNewCardsIntroduced(): void {
+  localStorage.removeItem("new_cards_introduced");
+}
+
 async function apiFetch(
   config: GitHubConfig,
   path: string,
@@ -141,7 +145,9 @@ export async function getFileContent(
   );
   if (!res.ok) throw new Error(await apiError(res));
   const data = await res.json();
-  return atob(data.content.replace(/\n/g, ""));
+  const binary = atob(data.content.replace(/\n/g, ""));
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
 }
 
 export type SyncProgress = {
@@ -200,7 +206,9 @@ export async function readStateFile(
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(await apiError(res));
   const data = await res.json();
-  const content = atob(data.content.replace(/\n/g, ""));
+  const binary = atob(data.content.replace(/\n/g, ""));
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  const content = new TextDecoder().decode(bytes);
   return { data: JSON.parse(content), sha: data.sha };
 }
 

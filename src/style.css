@@ -392,7 +392,8 @@ body {
 }
 
 .settings-view input[type="text"],
-.settings-view input[type="password"] {
+.settings-view input[type="password"],
+.settings-view input[type="number"] {
   display: block;
   width: 100%;
   margin-top: 4px;
@@ -483,6 +484,31 @@ body {
 
 .token-warning a {
   color: #2563eb;
+}
+
+.new-cards-status {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #666;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reset-btn {
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  font-family: system-ui, -apple-system, sans-serif;
+  color: #555;
+}
+
+.reset-btn:hover {
+  background: #f0f0f0;
+  border-color: #999;
 }
 
 .welcome-banner {

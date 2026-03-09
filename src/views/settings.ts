@@ -1,4 +1,5 @@
-import { getConfig, saveConfig, listMdFiles, getNewCardsPerDay, setNewCardsPerDay, getIntervalFuzz, setIntervalFuzz, getHapticFeedback, setHapticFeedback, inspectToken, GitHubConfig } from "../github";
+import { getConfig, saveConfig, listMdFiles, getNewCardsPerDay, setNewCardsPerDay, getIntervalFuzz, setIntervalFuzz, getHapticFeedback, setHapticFeedback, inspectToken, getNewCardsIntroducedToday, resetNewCardsIntroduced, GitHubConfig } from "../github";
+import { todayStr } from "../fsrs";
 import { syncCards, fullSync } from "../sync";
 
 export function renderSettings(
@@ -7,6 +8,8 @@ export function renderSettings(
 ): void {
   const config = getConfig();
   const newPerDay = getNewCardsPerDay();
+  const today = todayStr();
+  const introducedToday = getNewCardsIntroducedToday(today);
   const fuzzOn = getIntervalFuzz();
   const hapticOn = getHapticFeedback();
 
@@ -45,10 +48,14 @@ export function renderSettings(
           Branch
           <input type="text" id="branch" value="${config?.branch || "main"}" placeholder="main" />
         </label>
-        <label>
-          New cards per day
+        <div class="field-group">
+          <label for="new-per-day">New cards per day</label>
           <input type="number" id="new-per-day" value="${newPerDay}" min="1" max="999" />
-        </label>
+          <div class="new-cards-status">
+            <span id="new-cards-counter">${introducedToday}/${newPerDay} introduced today</span>
+            ${introducedToday > 0 ? `<button type="button" id="reset-new-btn" class="reset-btn">Reset</button>` : ""}
+          </div>
+        </div>
         <label class="toggle-label">
           <input type="checkbox" id="interval-fuzz" ${fuzzOn ? "checked" : ""} />
           Interval fuzz (vary intervals slightly to avoid clustering)
@@ -179,6 +186,15 @@ export function renderSettings(
       syncBtn.disabled = false;
       testBtn.disabled = false;
     }
+  });
+
+  container.querySelector("#reset-new-btn")?.addEventListener("click", () => {
+    resetNewCardsIntroduced();
+    const counterEl = container.querySelector("#new-cards-counter") as HTMLElement;
+    const newPerDayVal = (container.querySelector("#new-per-day") as HTMLInputElement).value;
+    counterEl.textContent = `0/${newPerDayVal} introduced today`;
+    const resetBtn = container.querySelector("#reset-new-btn") as HTMLElement;
+    if (resetBtn) resetBtn.remove();
   });
 
   container.querySelector("#back-btn")?.addEventListener("click", () => {

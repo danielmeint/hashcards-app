@@ -7,7 +7,7 @@ import { todayStr } from "../fsrs";
 type DeckInfo = {
   name: string;
   total: number;
-  due: number;
+  reviewDue: number;
   newCount: number;
 };
 
@@ -61,13 +61,15 @@ export async function renderDeckList(
     decks.push({
       name,
       total: info.cards.length,
-      due: info.reviewDue + cappedNew,
+      reviewDue: info.reviewDue,
       newCount: cappedNew,
     });
   }
   decks.sort((a, b) => a.name.localeCompare(b.name));
 
-  const totalDue = decks.reduce((s, d) => s + d.due, 0);
+  const totalReviews = decks.reduce((s, d) => s + d.reviewDue, 0);
+  const totalNew = decks.reduce((s, d) => s + d.newCount, 0);
+  const totalDue = totalReviews + totalNew;
 
   container.innerHTML = `
     <div class="deck-list-view">
@@ -80,7 +82,7 @@ export async function renderDeckList(
       </div>
       ${
         totalDue > 0
-          ? `<button class="drill-all-btn" id="drill-all">Drill All (${totalDue} due)</button>`
+          ? `<button class="drill-all-btn" id="drill-all">Drill All (${totalReviews} review${totalReviews === 1 ? "" : "s"}, ${totalNew} new)</button>`
           : `<div class="all-caught-up">All caught up!</div>`
       }
       <div class="deck-cards">
@@ -90,9 +92,9 @@ export async function renderDeckList(
           <div class="deck-card" data-deck="${d.name}">
             <div class="deck-info">
               <span class="deck-name">${d.name}</span>
-              <span class="deck-counts">${d.total} cards · ${d.due} due · ${d.newCount} new</span>
+              <span class="deck-counts">${d.total} cards · ${d.reviewDue} review${d.reviewDue === 1 ? "" : "s"} · ${d.newCount} new</span>
             </div>
-            ${d.due > 0 ? `<button class="deck-drill-btn" data-deck="${d.name}">Drill</button>` : ""}
+            ${d.reviewDue + d.newCount > 0 ? `<button class="deck-drill-btn" data-deck="${d.name}">Drill</button>` : ""}
           </div>
         `
           )

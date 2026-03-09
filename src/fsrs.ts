@@ -10,7 +10,7 @@ const F = 19.0 / 81.0;
 const C = -0.5;
 
 const TARGET_RECALL = 0.9;
-const MIN_INTERVAL = 1.0;
+const MIN_INTERVAL = 0.0;
 const MAX_INTERVAL = 256.0;
 
 export function retrievability(t: number, s: number): number {

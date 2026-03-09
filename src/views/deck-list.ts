@@ -52,46 +52,17 @@ export async function renderDeckList(
     }
   }
 
-  // Distribute new card budget proportionally across decks
-  const deckEntries = [...deckMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  const totalNewAvailable = deckEntries.reduce((s, [, info]) => s + info.newCount, 0);
+  // Each deck can draw from the global new card budget freely
   const decks: DeckInfo[] = [];
-
-  if (totalNewAvailable <= remainingNewBudget) {
-    // Budget exceeds available new cards — no cap needed
-    for (const [name, info] of deckEntries) {
-      decks.push({ name, total: info.cards.length, reviewDue: info.reviewDue, newCount: info.newCount });
-    }
-  } else {
-    // Distribute proportionally, giving each deck at least 1 if budget allows
-    let remaining = deckEntries.map(([name, info]) => ({ name, info, allocated: 0 }));
-
-    // First pass: proportional allocation (floored)
-    for (const entry of remaining) {
-      const share = Math.floor((entry.info.newCount / totalNewAvailable) * remainingNewBudget);
-      entry.allocated = Math.min(share, entry.info.newCount);
-    }
-
-    // Second pass: distribute leftover one at a time to decks that still have capacity
-    let used = remaining.reduce((s, e) => s + e.allocated, 0);
-    for (const entry of remaining) {
-      if (used >= remainingNewBudget) break;
-      const canAdd = entry.info.newCount - entry.allocated;
-      if (canAdd > 0) {
-        entry.allocated++;
-        used++;
-      }
-    }
-
-    for (const entry of remaining) {
-      decks.push({
-        name: entry.name,
-        total: entry.info.cards.length,
-        reviewDue: entry.info.reviewDue,
-        newCount: entry.allocated,
-      });
-    }
+  for (const [name, info] of deckMap) {
+    decks.push({
+      name,
+      total: info.cards.length,
+      reviewDue: info.reviewDue,
+      newCount: Math.min(info.newCount, remainingNewBudget),
+    });
   }
+  decks.sort((a, b) => a.name.localeCompare(b.name));
 
   const totalReviews = decks.reduce((s, d) => s + d.reviewDue, 0);
   const totalNew = decks.reduce((s, d) => s + d.newCount, 0);
@@ -106,6 +77,7 @@ export async function renderDeckList(
           <button id="settings-btn" title="Settings">⚙</button>
         </div>
       </div>
+      <div class="new-budget-status">New today: ${introducedToday}/${newPerDay}</div>
       ${
         totalDue > 0
           ? `<button class="drill-all-btn" id="drill-all">Drill All (${totalReviews} review${totalReviews === 1 ? "" : "s"}, ${totalNew} new)</button>`

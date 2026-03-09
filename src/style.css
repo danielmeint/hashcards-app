@@ -603,6 +603,14 @@ body {
   background: #f0f0f0;
 }
 
+.new-budget-status {
+  font-size: 13px;
+  color: #888;
+  font-family: system-ui, -apple-system, sans-serif;
+  text-align: center;
+  margin-bottom: 8px;
+}
+
 .drill-all-btn {
   display: block;
   width: 100%;

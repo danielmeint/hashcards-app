@@ -218,6 +218,16 @@ export async function renderDrill(
       if (idx >= 0) state.queue.splice(idx, 1);
     }
 
+    // Reverse new card budget if this was a new card's first grade
+    if (gradedNewCards.has(card.hash)) {
+      // Only reverse if no earlier review of this card remains in the session
+      const stillGraded = state.reviews.some((r) => r.cardHash === card.hash);
+      if (!stillGraded) {
+        gradedNewCards.delete(card.hash);
+        recordNewCardsIntroduced(todayStr(), -1);
+      }
+    }
+
     // Put card back at front
     state.queue.unshift(card);
 

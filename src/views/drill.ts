@@ -1,6 +1,6 @@
 import { Card, Grade, Performance, Review } from "../types";
 import { updatePerformance, todayStr } from "../fsrs";
-import { getPerformance, saveSessionResults } from "../db";
+import { getPerformance, getAllPerformances, saveSessionResults } from "../db";
 import { renderFront, renderBack, postRender } from "../render";
 import { getConfig, getIntervalFuzz, getHapticFeedback } from "../github";
 import { recordIntroduced } from "../new-card-budget";
@@ -37,11 +37,12 @@ export async function renderDrill(
     filtered.push(card);
   }
 
-  // Populate cache from IndexedDB
+  // Populate cache from IndexedDB (batch load)
+  const allPerfs = await getAllPerformances();
   const cache = new Map<string, Performance>();
   for (const card of filtered) {
     if (!cache.has(card.hash)) {
-      cache.set(card.hash, await getPerformance(card.hash));
+      cache.set(card.hash, allPerfs.get(card.hash) ?? { type: "new" });
     }
   }
 
@@ -257,7 +258,9 @@ export async function renderDrill(
   }
 
   // Keyboard shortcuts
-  function handleKey(e: KeyboardEvent) {
+  const keyboardAC = new AbortController();
+
+  document.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     if (e.key === " " || e.key === "Spacebar") {
       e.preventDefault();
@@ -267,14 +270,11 @@ export async function renderDrill(
     } else if (e.key === "u" || e.key === "U") {
       doUndo();
     }
-  }
+  }, { signal: keyboardAC.signal });
 
-  document.addEventListener("keydown", handleKey);
-
-  // Store cleanup function
   const origOnEnd = onEnd;
   onEnd = () => {
-    document.removeEventListener("keydown", handleKey);
+    keyboardAC.abort();
     origOnEnd();
   };
 

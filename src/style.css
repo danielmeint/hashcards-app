@@ -794,3 +794,285 @@ body {
     padding-left: 48px;
   }
 }
+
+/* ===== Stats View ===== */
+
+.stats-view {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.stats-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stats-header h1 {
+  font-size: 36px;
+}
+
+.stats-back-btn {
+  padding: 8px 16px;
+  font-size: 14px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-weight: 600;
+  background: white;
+  border: 1px solid #999;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.stats-back-btn:hover {
+  background: #f0f0f0;
+}
+
+.stats-overview {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 32px;
+}
+
+.stat-box {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 16px 12px;
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #888;
+  margin-top: 4px;
+}
+
+.stats-section {
+  margin-bottom: 32px;
+}
+
+.stats-section h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.stats-empty {
+  color: #888;
+  font-size: 14px;
+}
+
+/* Retention bar */
+.retention-bar-container {
+  position: relative;
+  height: 32px;
+  background: #ebedf0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.retention-bar {
+  height: 100%;
+  background: #40c463;
+  border-radius: 6px;
+  transition: width 0.3s;
+}
+
+.retention-label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+/* Maturity */
+.maturity-bar-container {
+  display: flex;
+  height: 24px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #ebedf0;
+}
+
+.maturity-bar {
+  height: 100%;
+  transition: width 0.3s;
+}
+
+.maturity-new { background: #ebedf0; }
+.maturity-young { background: #9be9a8; }
+.maturity-mature { background: #216e39; }
+
+.maturity-legend {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #666;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.maturity-new-dot { background: #ebedf0; border: 1px solid #ccc; }
+.maturity-young-dot { background: #9be9a8; }
+.maturity-mature-dot { background: #216e39; }
+
+/* Heatmap */
+.heatmap-container {
+  overflow-x: auto;
+}
+
+.heatmap-grid {
+  display: flex;
+  gap: 2px;
+}
+
+.heatmap-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.heatmap-cell {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #888;
+  justify-content: flex-end;
+}
+
+.heatmap-legend .heatmap-cell {
+  width: 10px;
+  height: 10px;
+}
+
+/* Grade bars */
+.grade-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.grade-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.grade-label {
+  width: 50px;
+  font-size: 13px;
+  color: #555;
+  text-align: right;
+}
+
+.grade-bar-track {
+  flex: 1;
+  height: 20px;
+  background: #f0f0f0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.grade-bar {
+  height: 100%;
+  border-radius: 4px;
+  min-width: 2px;
+}
+
+.grade-forgot { background: #ef4444; }
+.grade-hard { background: #f59e0b; }
+.grade-good { background: #22c55e; }
+.grade-easy { background: #3b82f6; }
+
+.grade-count {
+  width: 36px;
+  font-size: 13px;
+  color: #666;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Forecast chart */
+.forecast-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 120px;
+}
+
+.forecast-bar-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  justify-content: flex-end;
+}
+
+.forecast-bar {
+  width: 100%;
+  background: #4a90d9;
+  border-radius: 3px 3px 0 0;
+  min-height: 2px;
+}
+
+.forecast-bar-value {
+  font-size: 10px;
+  color: #666;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 2px;
+}
+
+.forecast-bar-label {
+  font-size: 10px;
+  color: #888;
+  margin-top: 4px;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .stats-overview {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .stat-value {
+    font-size: 24px;
+  }
+
+  .heatmap-cell {
+    width: 10px;
+    height: 10px;
+  }
+}

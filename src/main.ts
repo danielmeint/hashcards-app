@@ -3,12 +3,13 @@ import { syncCards, fullSync, loadCachedCards } from "./sync";
 import { renderSettings } from "./views/settings";
 import { renderDeckList } from "./views/deck-list";
 import { renderDrill } from "./views/drill";
+import { renderStats } from "./views/stats";
 import { Card } from "./types";
 import "./style.css";
 
 const app = document.getElementById("app")!;
 
-type View = "settings" | "decks" | "drill";
+type View = "settings" | "decks" | "drill" | "stats";
 
 async function navigate(view: View, drillCards?: Card[]) {
   app.innerHTML = "";
@@ -22,7 +23,8 @@ async function navigate(view: View, drillCards?: Card[]) {
       await renderDeckList(
         app,
         (cards) => navigate("drill", cards),
-        () => navigate("settings")
+        () => navigate("settings"),
+        () => navigate("stats")
       );
       break;
 
@@ -32,6 +34,10 @@ async function navigate(view: View, drillCards?: Card[]) {
       } else {
         await navigate("decks");
       }
+      break;
+
+    case "stats":
+      await renderStats(app, () => navigate("decks"));
       break;
   }
 }

@@ -73,6 +73,11 @@ export async function getDueCardHashes(today: string): Promise<Set<string>> {
   return due;
 }
 
+export async function getAllReviews(): Promise<Review[]> {
+  const db = await getDb();
+  return db.getAll("reviews");
+}
+
 export async function saveSessionResults(
   cache: Map<string, Performance>,
   reviews: Review[]

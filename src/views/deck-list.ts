@@ -15,7 +15,8 @@ type DeckInfo = {
 export async function renderDeckList(
   container: HTMLElement,
   onDrill: (cards: Card[]) => void,
-  onSettings: () => void
+  onSettings: () => void,
+  onStats: () => void
 ): Promise<void> {
   const cards = loadCachedCards();
   if (cards.length === 0) {
@@ -65,6 +66,7 @@ export async function renderDeckList(
       <div class="deck-list-header">
         <h1>Decks</h1>
         <div class="deck-list-actions">
+          <button id="stats-btn" title="Statistics">Stats</button>
           <button id="sync-btn" title="Sync">⟳</button>
           <button id="settings-btn" title="Settings">⚙</button>
         </div>
@@ -95,6 +97,7 @@ export async function renderDeckList(
 
   // Event handlers
   container.querySelector("#settings-btn")!.addEventListener("click", onSettings);
+  container.querySelector("#stats-btn")!.addEventListener("click", onStats);
 
   container.querySelector("#sync-btn")!.addEventListener("click", async () => {
     const config = getConfig();
@@ -110,7 +113,7 @@ export async function renderDeckList(
         btn.textContent = p.current && p.total ? `${p.current}/${p.total}` : "...";
       });
       await fullSync(config);
-      renderDeckList(container, onDrill, onSettings);
+      renderDeckList(container, onDrill, onSettings, onStats);
     } catch (e) {
       alert(`Sync error: ${(e as Error).message}`);
       btn.disabled = false;

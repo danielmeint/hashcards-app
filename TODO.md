@@ -14,7 +14,7 @@
 
 ## Features
 - [ ] Search/filter cards across decks
-- [ ] Stats view — review history, heatmap, retention estimates
+- [x] Stats view — review history, heatmap, retention estimates
 - [ ] Audio support (the CLI supports `![](audio.mp3)`)
 - [ ] Multiple repos
 - [x] "New cards per day" limit — configurable in settings, default 20

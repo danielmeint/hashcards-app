@@ -1,4 +1,4 @@
-import { Card, CardContent } from "./types";
+import { Card } from "./types";
 import { hashBasicCard, hashClozeCard, hashClozeFamily } from "./hash";
 
 type DeckMetadata = {
@@ -267,6 +267,69 @@ function parseLine(
   return state;
 }
 
+type BracketEvent =
+  | { type: "open"; cleanIndex: number }
+  | { type: "close"; cleanIndex: number }
+  | { type: "char"; byte: number };
+
+/**
+ * Walk bytes, handling image mode (`![...]`) and escape mode (`\[`, `\]`).
+ * Cloze brackets emit open/close events; all other bytes emit char events.
+ */
+function scanClozeBytes(
+  textBytes: Uint8Array,
+  onEvent: (event: BracketEvent) => void
+): void {
+  let imageMode = false;
+  let escapeMode = false;
+  let cleanIndex = 0;
+
+  for (let i = 0; i < textBytes.length; i++) {
+    const c = textBytes[i];
+    if (c === 0x5b) {
+      // '['
+      if (imageMode || escapeMode) {
+        escapeMode = false;
+        onEvent({ type: "char", byte: c });
+        cleanIndex++;
+      } else {
+        onEvent({ type: "open", cleanIndex });
+      }
+    } else if (c === 0x5d) {
+      // ']'
+      if (imageMode) {
+        imageMode = false;
+        onEvent({ type: "char", byte: c });
+        cleanIndex++;
+      } else if (escapeMode) {
+        escapeMode = false;
+        onEvent({ type: "char", byte: c });
+        cleanIndex++;
+      } else {
+        onEvent({ type: "close", cleanIndex });
+      }
+    } else if (c === 0x21) {
+      // '!'
+      if (!imageMode && textBytes[i + 1] === 0x5b) {
+        imageMode = true;
+      }
+      onEvent({ type: "char", byte: c });
+      cleanIndex++;
+    } else if (c === 0x5c) {
+      // '\\'
+      if (!escapeMode && (textBytes[i + 1] === 0x5b || textBytes[i + 1] === 0x5d)) {
+        escapeMode = true;
+      } else {
+        onEvent({ type: "char", byte: c });
+        cleanIndex++;
+      }
+    } else {
+      onEvent({ type: "char", byte: c });
+      cleanIndex++;
+    }
+  }
+}
+
 async function parseClozeCards(
   rawText: string,
   deckName: string,
@@ -277,124 +340,39 @@ async function parseClozeCards(
 
   // Build clean text (without cloze brackets)
   const cleanBytes: number[] = [];
-  let imageMode = false;
-  let escapeMode = false;
-
-  for (let bytepos = 0; bytepos < textBytes.length; bytepos++) {
-    const c = textBytes[bytepos];
-    if (c === 0x5b) {
-      // '['
-      if (imageMode) {
-        cleanBytes.push(c);
-      }
-      if (escapeMode) {
-        escapeMode = false;
-        cleanBytes.push(c);
-      }
-    } else if (c === 0x5d) {
-      // ']'
-      if (imageMode) {
-        imageMode = false;
-        cleanBytes.push(c);
-      } else if (escapeMode) {
-        escapeMode = false;
-        cleanBytes.push(c);
-      }
-    } else if (c === 0x21) {
-      // '!'
-      if (!imageMode) {
-        const next = textBytes[bytepos + 1];
-        if (next === 0x5b) {
-          imageMode = true;
-        }
-      }
-      cleanBytes.push(c);
-    } else if (c === 0x5c) {
-      // '\\'
-      if (!escapeMode) {
-        const next = textBytes[bytepos + 1];
-        if (next === 0x5b || next === 0x5d) {
-          escapeMode = true;
-        } else {
-          cleanBytes.push(c);
-        }
-      }
-    } else {
-      cleanBytes.push(c);
-    }
-  }
-
+  scanClozeBytes(textBytes, (e) => {
+    if (e.type === "char") cleanBytes.push(e.byte);
+  });
   const cleanText = new TextDecoder().decode(new Uint8Array(cleanBytes));
 
   // Find cloze deletions
   const cards: Card[] = [];
   let start: number | null = null;
-  let index = 0;
-  imageMode = false;
-  escapeMode = false;
 
-  for (let bytepos = 0; bytepos < textBytes.length; bytepos++) {
-    const c = textBytes[bytepos];
-    if (c === 0x5b) {
-      // '['
-      if (imageMode) {
-        index++;
-      } else if (escapeMode) {
-        index++;
-        escapeMode = false;
-      } else {
-        start = index;
-      }
-    } else if (c === 0x5d) {
-      // ']'
-      if (imageMode) {
-        imageMode = false;
-        index++;
-      } else if (escapeMode) {
-        escapeMode = false;
-        index++;
-      } else if (start !== null) {
-        const end = index;
-        const content: CardContent = {
-          type: "cloze",
-          text: cleanText,
-          start: start,
-          end: end - 1,
-        };
-        const hash = await hashClozeCard(cleanText, start, end - 1);
-        const familyHash = await hashClozeFamily(cleanText);
-        cards.push({
-          deckName,
-          filePath,
-          range: [0, 0],
-          content,
-          hash,
-          familyHash,
-        });
-        start = null;
-      }
-    } else if (c === 0x21) {
-      // '!'
-      if (!imageMode) {
-        const next = textBytes[bytepos + 1];
-        if (next === 0x5b) {
-          imageMode = true;
-        }
-      }
-      index++;
-    } else if (c === 0x5c) {
-      // '\\'
-      if (!escapeMode) {
-        const next = textBytes[bytepos + 1];
-        if (next === 0x5b || next === 0x5d) {
-          escapeMode = true;
-        } else {
-          index++;
-        }
-      }
-    } else {
-      index++;
+  scanClozeBytes(textBytes, (e) => {
+    if (e.type === "open") {
+      start = e.cleanIndex;
+    } else if (e.type === "close" && start !== null) {
+      const end = e.cleanIndex;
+      // Card creation is synchronous here; we'll hash after
+      cards.push({
+        deckName,
+        filePath,
+        range: [0, 0],
+        content: { type: "cloze", text: cleanText, start, end: end - 1 },
+        hash: "", // filled below
+        familyHash: null, // filled below
+      });
+      start = null;
     }
+  });
+
+  // Fill in hashes (async)
+  const familyHash = cards.length > 0 ? await hashClozeFamily(cleanText) : null;
+  for (const card of cards) {
+    const c = card.content as { type: "cloze"; text: string; start: number; end: number };
+    card.hash = await hashClozeCard(c.text, c.start, c.end);
+    card.familyHash = familyHash;
   }
 
   if (cards.length === 0) {

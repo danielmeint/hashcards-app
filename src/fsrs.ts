@@ -135,7 +135,13 @@ export function updatePerformance(
     reviewCount = 0;
   } else {
     const lastDate = perf.lastReviewedAt.slice(0, 10);
-    const time = daysBetween(lastDate, today);
+    let time = daysBetween(lastDate, today);
+    // Same-day re-reviews produce r=1.0 which zeroes out the FSRS stability
+    // growth term. Use time=1 for successful same-day grades so stability
+    // can actually increase and the card isn't stuck forever.
+    if (time === 0 && grade !== Grade.Forgot) {
+      time = 1;
+    }
     const retr = retrievability(time, perf.stability);
     stability = newStability(perf.difficulty, perf.stability, retr, grade);
     difficulty = newDifficulty(perf.difficulty, grade);

@@ -121,7 +121,7 @@ export async function renderStats(
   container.innerHTML = `
     <div class="stats-view">
       <div class="stats-header">
-        <button id="back-btn" class="stats-back-btn">Back</button>
+        <button id="back-btn" class="btn stats-back-btn">Back</button>
         <h1>Statistics</h1>
       </div>
 

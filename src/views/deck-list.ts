@@ -24,7 +24,7 @@ export async function renderDeckList(
       <div class="deck-list-view">
         <h1>No cards loaded</h1>
         <p>Configure your GitHub repo and sync first.</p>
-        <button id="goto-settings">Settings</button>
+        <button id="goto-settings" class="btn">Settings</button>
       </div>
     `;
     container.querySelector("#goto-settings")!.addEventListener("click", onSettings);
@@ -66,15 +66,15 @@ export async function renderDeckList(
       <div class="deck-list-header">
         <h1>Decks</h1>
         <div class="deck-list-actions">
-          <button id="stats-btn" title="Statistics">Stats</button>
-          <button id="sync-btn" title="Sync">⟳</button>
-          <button id="settings-btn" title="Settings">⚙</button>
+          <button id="stats-btn" class="btn" title="Statistics">Stats</button>
+          <button id="sync-btn" class="btn" title="Sync">⟳</button>
+          <button id="settings-btn" class="btn" title="Settings">⚙</button>
         </div>
       </div>
       <div class="new-budget-status">New today: ${introducedToday}/${newPerDay}</div>
       ${
         totalDue > 0
-          ? `<button class="drill-all-btn" id="drill-all">Drill All (${totalReviews} review${totalReviews === 1 ? "" : "s"}, ${totalNew} new)</button>`
+          ? `<button class="btn btn-primary drill-all-btn" id="drill-all">Drill All (${totalReviews} review${totalReviews === 1 ? "" : "s"}, ${totalNew} new)</button>`
           : `<div class="all-caught-up">All caught up!</div>`
       }
       <div class="deck-cards">
@@ -86,7 +86,7 @@ export async function renderDeckList(
               <span class="deck-name">${d.name}</span>
               <span class="deck-counts">${d.total} cards · ${d.reviewDue} review${d.reviewDue === 1 ? "" : "s"} · ${d.newCount} new</span>
             </div>
-            ${d.reviewDue + d.newCount > 0 ? `<button class="deck-drill-btn" data-deck="${d.name}">Drill</button>` : ""}
+            ${d.reviewDue + d.newCount > 0 ? `<button class="btn deck-drill-btn" data-deck="${d.name}">Drill</button>` : ""}
           </div>
         `
           )

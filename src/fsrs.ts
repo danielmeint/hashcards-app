@@ -118,6 +118,15 @@ function fuzzInterval(days: number): number {
   return days + Math.floor(Math.random() * (2 * delta + 1)) - delta;
 }
 
+export function formatInterval(days: number): string {
+  if (days < 1) return "<1d";
+  if (days === 1) return "1d";
+  if (days < 14) return `${days}d`;
+  if (days < 30) return `${Math.round(days / 7)}w`;
+  if (days < 365) return `${Math.round(days / 30)}mo`;
+  return `${(days / 365).toFixed(1)}y`;
+}
+
 export function updatePerformance(
   perf: Performance,
   grade: Grade,

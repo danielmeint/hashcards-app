@@ -1,5 +1,5 @@
 import { Card, Grade, Performance, Review } from "../types";
-import { updatePerformance, todayStr } from "../fsrs";
+import { updatePerformance, todayStr, formatInterval } from "../fsrs";
 import { getPerformance, getAllPerformances, saveSessionResults } from "../db";
 import { renderFront, renderBack, postRender } from "../render";
 import { getConfig, getIntervalFuzz, getHapticFeedback } from "../github";
@@ -71,6 +71,15 @@ export async function renderDrill(
     const done = state.totalCards - state.queue.length;
     const progress = (done / state.totalCards) * 100;
 
+    // Compute interval previews for each grade (unfuzzed)
+    const previews = state.revealed
+      ? ([Grade.Forgot, Grade.Hard, Grade.Good, Grade.Easy] as const).map((g) => {
+          const perf = state.cache.get(card.hash)!;
+          const preview = updatePerformance(perf, g, new Date().toISOString(), false);
+          return formatInterval(preview.intervalDays);
+        })
+      : [];
+
     container.innerHTML = `
       <div class="root">
         <div class="header">
@@ -99,20 +108,20 @@ export async function renderDrill(
         </div>
         <div class="controls">
           <div class="control-row">
-            <button id="undo-btn" ${state.reviews.length === 0 ? "disabled" : ""}>Undo</button>
+            <button id="undo-btn" class="btn" ${state.reviews.length === 0 ? "disabled" : ""}>Undo</button>
             ${
               !state.revealed
-                ? `<button id="reveal-btn">Reveal</button>`
+                ? `<button id="reveal-btn" class="btn">Reveal</button>`
                 : `
               <div class="grades">
-                <button class="grade-btn" data-grade="1">Forgot</button>
-                <button class="grade-btn" data-grade="2">Hard</button>
-                <button class="grade-btn" data-grade="3">Good</button>
-                <button class="grade-btn" data-grade="4">Easy</button>
+                <button class="btn grade-btn" data-grade="1">Forgot<span class="interval-preview">${previews[0]}</span></button>
+                <button class="btn grade-btn" data-grade="2">Hard<span class="interval-preview">${previews[1]}</span></button>
+                <button class="btn grade-btn" data-grade="3">Good<span class="interval-preview">${previews[2]}</span></button>
+                <button class="btn grade-btn" data-grade="4">Easy<span class="interval-preview">${previews[3]}</span></button>
               </div>
             `
             }
-            <button id="end-btn">End</button>
+            <button id="end-btn" class="btn">End</button>
           </div>
         </div>
       </div>
@@ -318,7 +327,7 @@ function renderFinished(
         </table>
       </div>
       <div class="shutdown-container">
-        <button id="done-btn" class="shutdown-button">Done</button>
+        <button id="done-btn" class="btn btn-danger shutdown-button">Done</button>
       </div>
     </div>
   `;

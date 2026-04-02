@@ -66,9 +66,9 @@ export function renderSettings(
           Haptic feedback on grade buttons
         </label>
         <div class="settings-buttons">
-          <button type="button" id="test-btn">Test Connection</button>
-          <button type="button" id="sync-btn">Sync Now</button>
-          ${config ? '<button type="button" id="back-btn">Back to Decks</button>' : ""}
+          <button type="button" id="test-btn" class="btn">Test Connection</button>
+          <button type="button" id="sync-btn" class="btn">Sync Now</button>
+          ${config ? '<button type="button" id="back-btn" class="btn">Back to Decks</button>' : ""}
         </div>
         <div id="settings-status"></div>
       </form>

@@ -1,3 +1,28 @@
+:root {
+  --font-ui: system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --font-content: "TeX Gyre Termes", "Nimbus Roman No9 L", "Times New Roman", "Times", serif;
+  --font-mono: "Menlo", "Monaco", "Courier New", monospace;
+
+  --color-primary: #4a90d9;
+  --color-primary-hover: #357abd;
+  --color-danger: #dc3545;
+  --color-danger-hover: #c82333;
+  --color-danger-active: #bd2130;
+
+  --color-border: #999;
+  --color-border-light: #ccc;
+  --color-border-lighter: #ddd;
+  --color-bg: #f8f8f8;
+  --color-bg-hover: #f0f0f0;
+  --color-bg-active: #e4e4e4;
+  --color-text-muted: #888;
+  --color-text-secondary: #666;
+  --color-text-tertiary: #555;
+
+  --radius: 6px;
+  --radius-lg: 8px;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -19,12 +44,80 @@ body,
 }
 
 body {
-  font-family:
-    "TeX Gyre Termes", "Nimbus Roman No9 L", "Times New Roman", "Times",
-    serif;
+  font-family: var(--font-content);
   -webkit-font-smoothing: antialiased;
   padding: env(safe-area-inset-top) env(safe-area-inset-right)
     env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* ===== Shared Button Styles ===== */
+
+.btn {
+  -webkit-appearance: none;
+  appearance: none;
+  background: white;
+  border: 1px solid var(--color-border);
+  padding: 8px 16px;
+  font-size: 16px;
+  color: black;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  border-radius: var(--radius);
+  cursor: pointer;
+  box-shadow: var(--color-border-light) 0px 1px 3px 0px;
+  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.btn:hover {
+  background: var(--color-bg-hover);
+  border-color: #777;
+  box-shadow: #bbb 0px 2px 5px 0px;
+}
+
+.btn:active {
+  background: var(--color-bg-active);
+  border-color: #666;
+  box-shadow: var(--color-border-lighter) 0px 0px 2px 0px;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:disabled:hover,
+.btn:disabled:active {
+  background: white;
+  border-color: var(--color-border);
+  box-shadow: var(--color-border-light) 0px 1px 3px 0px;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: white;
+  border-color: var(--color-primary);
+}
+
+.btn-primary:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+.btn-danger {
+  background: var(--color-danger);
+  color: white;
+  border-color: var(--color-danger-hover);
+  box-shadow: rgba(220, 53, 69, 0.3) 0px 2px 8px 0px;
+}
+
+.btn-danger:hover {
+  background: var(--color-danger-hover);
+  box-shadow: rgba(220, 53, 69, 0.5) 0px 4px 12px 0px;
+}
+
+.btn-danger:active {
+  background: var(--color-danger-active);
+  box-shadow: rgba(220, 53, 69, 0.2) 0px 1px 4px 0px;
 }
 
 /* ===== Drill View ===== */
@@ -39,7 +132,7 @@ body {
 
 .root .header,
 .root .controls {
-  background: #f8f8f8;
+  background: var(--color-bg);
 }
 
 .root .header {
@@ -54,7 +147,7 @@ body {
 .root .header .progress-bar {
   width: 300px;
   height: 24px;
-  border: 1px solid #999;
+  border: 1px solid var(--color-border);
   border-radius: 12px;
   background: white;
   overflow: hidden;
@@ -164,7 +257,7 @@ body {
   border-collapse: collapse;
   width: 100%;
   font-size: 0.65em;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-family: var(--font-ui);
   line-height: 1.6;
   border: 1px solid #999;
 }
@@ -201,7 +294,7 @@ body {
   border: 1px solid #ddd;
   padding: 2px 6px;
   border-radius: 3px;
-  font-family: "Menlo", "Monaco", "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 0.7em;
   color: inherit;
 }
@@ -243,44 +336,22 @@ body {
   align-items: center;
 }
 
-.root .controls button {
-  -webkit-appearance: none;
-  appearance: none;
-  background: white;
-  border: 1px solid #999;
+.root .controls .btn {
   padding: 7px 12px;
-  font-size: 16px;
-  color: black;
-  font-family: system-ui, -apple-system, "Helvetica Neue", sans-serif;
-  font-weight: 600;
-  border-radius: 6px;
-  cursor: pointer;
-  box-shadow: #ccc 0px 1px 3px 0px;
-  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
-.root .controls button:hover {
-  background: #f0f0f0;
-  border-color: #777;
-  box-shadow: #bbb 0px 2px 5px 0px;
+.root .controls .grades .btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
 }
 
-.root .controls button:active {
-  background: #e4e4e4;
-  border-color: #666;
-  box-shadow: #ddd 0px 0px 2px 0px;
-}
-
-.root .controls button:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-
-.root .controls button:disabled:hover,
-.root .controls button:disabled:active {
-  background: white;
-  border-color: #999;
-  box-shadow: #ccc 0px 1px 3px 0px;
+.interval-preview {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-muted);
 }
 
 /* ===== Finished View ===== */
@@ -328,13 +399,13 @@ body {
 }
 
 .finished .stats table td.key {
-  font-family: "SF Pro", system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-weight: 500;
   white-space: nowrap;
 }
 
 .finished .stats table td.val {
-  font-family: "SF Pro", system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-variant-numeric: tabular-nums;
   width: 100%;
 }
@@ -345,27 +416,8 @@ body {
 }
 
 .finished .shutdown-button {
-  background: #dc3545;
-  color: white;
-  border: 1px solid #c82333;
   padding: 12px 24px;
   font-size: 18px;
-  font-family: system-ui, -apple-system, "Helvetica Neue", sans-serif;
-  font-weight: 600;
-  border-radius: 6px;
-  cursor: pointer;
-  box-shadow: rgba(220, 53, 69, 0.3) 0px 2px 8px 0px;
-  transition: background-color 0.2s, box-shadow 0.2s;
-}
-
-.finished .shutdown-button:hover {
-  background: #c82333;
-  box-shadow: rgba(220, 53, 69, 0.5) 0px 4px 12px 0px;
-}
-
-.finished .shutdown-button:active {
-  background: #bd2130;
-  box-shadow: rgba(220, 53, 69, 0.2) 0px 1px 4px 0px;
 }
 
 /* ===== Settings View ===== */
@@ -379,16 +431,16 @@ body {
 .settings-view h1 {
   font-size: 36px;
   margin-bottom: 24px;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-ui);
 }
 
 .settings-view label {
   display: block;
   margin-bottom: 16px;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-ui);
   font-size: 14px;
   font-weight: 500;
-  color: #555;
+  color: var(--color-text-tertiary);
 }
 
 .settings-view input[type="text"],
@@ -399,14 +451,14 @@ body {
   margin-top: 4px;
   padding: 10px 12px;
   font-size: 16px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  font-family: system-ui, -apple-system, sans-serif;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius);
+  font-family: var(--font-ui);
 }
 
 .settings-view input:focus {
   outline: none;
-  border-color: #4a90d9;
+  border-color: var(--color-primary);
   box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.2);
 }
 
@@ -417,25 +469,13 @@ body {
   flex-wrap: wrap;
 }
 
-.settings-buttons button {
+.settings-buttons .btn {
   padding: 10px 20px;
-  font-size: 16px;
-  font-family: system-ui, -apple-system, sans-serif;
-  font-weight: 600;
-  border: 1px solid #999;
-  border-radius: 6px;
-  background: white;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.settings-buttons button:hover {
-  background: #f0f0f0;
 }
 
 #settings-status {
   margin-top: 16px;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-ui);
   font-size: 14px;
   color: #333;
 }
@@ -498,17 +538,17 @@ body {
 .reset-btn {
   font-size: 12px;
   padding: 2px 8px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--color-border-light);
   border-radius: 4px;
   background: white;
   cursor: pointer;
-  font-family: system-ui, -apple-system, sans-serif;
-  color: #555;
+  font-family: var(--font-ui);
+  color: var(--color-text-tertiary);
 }
 
 .reset-btn:hover {
-  background: #f0f0f0;
-  border-color: #999;
+  background: var(--color-bg-hover);
+  border-color: var(--color-border);
 }
 
 .welcome-banner {
@@ -560,7 +600,7 @@ body {
 }
 
 .settings-version {
-  font-family: "Menlo", "Monaco", "Courier New", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   color: #aaa;
 }
@@ -582,7 +622,7 @@ body {
 
 .deck-list-header h1 {
   font-size: 36px;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-ui);
 }
 
 .deck-list-actions {
@@ -590,23 +630,15 @@ body {
   gap: 8px;
 }
 
-.deck-list-actions button {
+.deck-list-actions .btn {
   padding: 8px 12px;
   font-size: 18px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background: white;
-  cursor: pointer;
-}
-
-.deck-list-actions button:hover {
-  background: #f0f0f0;
 }
 
 .new-budget-status {
   font-size: 13px;
-  color: #888;
-  font-family: system-ui, -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  font-family: var(--font-ui);
   text-align: center;
   margin-bottom: 8px;
 }
@@ -616,27 +648,16 @@ body {
   width: 100%;
   padding: 14px;
   font-size: 18px;
-  font-family: system-ui, -apple-system, sans-serif;
-  font-weight: 600;
-  background: #4a90d9;
-  color: white;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
+  border-radius: var(--radius-lg);
   margin-bottom: 24px;
-  transition: background 0.15s;
-}
-
-.drill-all-btn:hover {
-  background: #357abd;
 }
 
 .all-caught-up {
   text-align: center;
   font-size: 24px;
-  color: #666;
+  color: var(--color-text-secondary);
   padding: 32px 0;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-ui);
 }
 
 .deck-cards {
@@ -650,8 +671,8 @@ body {
   justify-content: space-between;
   align-items: center;
   padding: 16px;
-  border: 1px solid #ddd;
-  border-radius: 8px;
+  border: 1px solid var(--color-border-lighter);
+  border-radius: var(--radius-lg);
   background: white;
 }
 
@@ -664,28 +685,18 @@ body {
 .deck-name {
   font-size: 18px;
   font-weight: 600;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-ui);
 }
 
 .deck-counts {
   font-size: 13px;
-  color: #888;
-  font-family: system-ui, -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  font-family: var(--font-ui);
 }
 
 .deck-drill-btn {
   padding: 8px 16px;
   font-size: 14px;
-  font-family: system-ui, -apple-system, sans-serif;
-  font-weight: 600;
-  background: white;
-  border: 1px solid #999;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.deck-drill-btn:hover {
-  background: #f0f0f0;
 }
 
 /* ===== Mobile ===== */
@@ -801,7 +812,7 @@ body {
   max-width: 600px;
   margin: 0 auto;
   padding: 32px 24px;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-ui);
 }
 
 .stats-header {
@@ -818,16 +829,6 @@ body {
 .stats-back-btn {
   padding: 8px 16px;
   font-size: 14px;
-  font-family: system-ui, -apple-system, sans-serif;
-  font-weight: 600;
-  background: white;
-  border: 1px solid #999;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.stats-back-btn:hover {
-  background: #f0f0f0;
 }
 
 .stats-overview {
@@ -839,8 +840,8 @@ body {
 
 .stat-box {
   background: white;
-  border: 1px solid #ddd;
-  border-radius: 8px;
+  border: 1px solid var(--color-border-lighter);
+  border-radius: var(--radius-lg);
   padding: 16px 12px;
   text-align: center;
 }
@@ -853,7 +854,7 @@ body {
 
 .stat-label {
   font-size: 12px;
-  color: #888;
+  color: var(--color-text-muted);
   margin-top: 4px;
 }
 
@@ -868,7 +869,7 @@ body {
 }
 
 .stats-empty {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 14px;
 }
 
@@ -921,7 +922,7 @@ body {
   gap: 16px;
   margin-top: 8px;
   font-size: 12px;
-  color: #666;
+  color: var(--color-text-secondary);
 }
 
 .legend-item {
@@ -969,7 +970,7 @@ body {
   gap: 3px;
   margin-top: 8px;
   font-size: 11px;
-  color: #888;
+  color: var(--color-text-muted);
   justify-content: flex-end;
 }
 
@@ -994,14 +995,14 @@ body {
 .grade-label {
   width: 50px;
   font-size: 13px;
-  color: #555;
+  color: var(--color-text-tertiary);
   text-align: right;
 }
 
 .grade-bar-track {
   flex: 1;
   height: 20px;
-  background: #f0f0f0;
+  background: var(--color-bg-hover);
   border-radius: 4px;
   overflow: hidden;
 }
@@ -1020,7 +1021,7 @@ body {
 .grade-count {
   width: 36px;
   font-size: 13px;
-  color: #666;
+  color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1050,14 +1051,14 @@ body {
 
 .forecast-bar-value {
   font-size: 10px;
-  color: #666;
+  color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
   margin-bottom: 2px;
 }
 
 .forecast-bar-label {
   font-size: 10px;
-  color: #888;
+  color: var(--color-text-muted);
   margin-top: 4px;
   white-space: nowrap;
 }

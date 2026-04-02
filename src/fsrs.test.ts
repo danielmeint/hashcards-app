@@ -7,6 +7,7 @@ import {
   interval,
   retrievability,
   updatePerformance,
+  formatInterval,
 } from "./fsrs";
 import { Grade, Performance, ReviewedPerformance } from "./types";
 
@@ -49,6 +50,35 @@ function assertSteps(actual: Step[], expected: Step[]) {
     expect(feq(actual[i].i, expected[i].i)).toBe(true);
   }
 }
+
+describe("formatInterval", () => {
+  it("formats sub-day as <1d", () => {
+    expect(formatInterval(0)).toBe("<1d");
+  });
+
+  it("formats days", () => {
+    expect(formatInterval(1)).toBe("1d");
+    expect(formatInterval(7)).toBe("7d");
+    expect(formatInterval(13)).toBe("13d");
+  });
+
+  it("formats weeks", () => {
+    expect(formatInterval(14)).toBe("2w");
+    expect(formatInterval(21)).toBe("3w");
+    expect(formatInterval(28)).toBe("4w");
+  });
+
+  it("formats months", () => {
+    expect(formatInterval(30)).toBe("1mo");
+    expect(formatInterval(90)).toBe("3mo");
+    expect(formatInterval(180)).toBe("6mo");
+  });
+
+  it("formats years", () => {
+    expect(formatInterval(365)).toBe("1.0y");
+    expect(formatInterval(730)).toBe("2.0y");
+  });
+});
 
 describe("FSRS", () => {
   it("interval equals stability at R=0.9", () => {

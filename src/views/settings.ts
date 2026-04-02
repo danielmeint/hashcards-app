@@ -1,4 +1,5 @@
-import { getConfig, saveConfig, listMdFiles, getNewCardsPerDay, setNewCardsPerDay, getIntervalFuzz, setIntervalFuzz, getHapticFeedback, setHapticFeedback, inspectToken, getNewCardsIntroducedToday, resetNewCardsIntroduced, GitHubConfig } from "../github";
+import { getConfig, saveConfig, listMdFiles, getIntervalFuzz, setIntervalFuzz, getHapticFeedback, setHapticFeedback, inspectToken, GitHubConfig } from "../github";
+import { getNewCardsPerDay, setNewCardsPerDay, getIntroducedToday, resetIntroduced } from "../new-card-budget";
 import { todayStr } from "../fsrs";
 import { syncCards, fullSync } from "../sync";
 
@@ -9,7 +10,7 @@ export function renderSettings(
   const config = getConfig();
   const newPerDay = getNewCardsPerDay();
   const today = todayStr();
-  const introducedToday = getNewCardsIntroducedToday(today);
+  const introducedToday = getIntroducedToday(today);
   const fuzzOn = getIntervalFuzz();
   const hapticOn = getHapticFeedback();
 
@@ -189,7 +190,7 @@ export function renderSettings(
   });
 
   container.querySelector("#reset-new-btn")?.addEventListener("click", () => {
-    resetNewCardsIntroduced();
+    resetIntroduced();
     const counterEl = container.querySelector("#new-cards-counter") as HTMLElement;
     const newPerDayVal = (container.querySelector("#new-per-day") as HTMLInputElement).value;
     counterEl.textContent = `0/${newPerDayVal} introduced today`;

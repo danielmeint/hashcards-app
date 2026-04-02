@@ -1,8 +1,9 @@
 import { Card } from "../types";
 import { loadCachedCards, syncCards, fullSync } from "../sync";
-import { getConfig, getNewCardsPerDay, getNewCardsIntroducedToday } from "../github";
+import { getConfig } from "../github";
 import { getAllPerformances } from "../db";
 import { todayStr } from "../fsrs";
+import { getNewCardsPerDay, getIntroducedToday, selectDueCards, countDue } from "../new-card-budget";
 
 type DeckInfo = {
   name: string;
@@ -32,34 +33,25 @@ export async function renderDeckList(
   const performances = await getAllPerformances();
   const today = todayStr();
   const newPerDay = getNewCardsPerDay();
-  const introducedToday = getNewCardsIntroducedToday(today);
-  const remainingNewBudget = Math.max(0, newPerDay - introducedToday);
+  const introducedToday = getIntroducedToday(today);
 
-  // Group by deck
-  const deckMap = new Map<string, { cards: Card[]; reviewDue: number; newCount: number }>();
+  // Group by deck and compute counts
+  const deckCardMap = new Map<string, Card[]>();
   for (const card of cards) {
-    if (!deckMap.has(card.deckName)) {
-      deckMap.set(card.deckName, { cards: [], reviewDue: 0, newCount: 0 });
+    if (!deckCardMap.has(card.deckName)) {
+      deckCardMap.set(card.deckName, []);
     }
-    const deck = deckMap.get(card.deckName)!;
-    deck.cards.push(card);
-
-    const perf = performances.get(card.hash);
-    if (!perf) {
-      deck.newCount++;
-    } else if (perf.dueDate <= today) {
-      deck.reviewDue++;
-    }
+    deckCardMap.get(card.deckName)!.push(card);
   }
 
-  // Each deck can draw from the global new card budget freely
   const decks: DeckInfo[] = [];
-  for (const [name, info] of deckMap) {
+  for (const [name, deckCards] of deckCardMap) {
+    const counts = countDue(deckCards, performances, today);
     decks.push({
       name,
-      total: info.cards.length,
-      reviewDue: info.reviewDue,
-      newCount: Math.min(info.newCount, remainingNewBudget),
+      total: deckCards.length,
+      reviewDue: counts.reviewDue,
+      newCount: counts.newCount,
     });
   }
   decks.sort((a, b) => a.name.localeCompare(b.name));
@@ -127,40 +119,16 @@ export async function renderDeckList(
   });
 
   container.querySelector("#drill-all")?.addEventListener("click", async () => {
-    const dueCards = await getDueCards(cards, performances, today);
-    if (dueCards.length > 0) onDrill(dueCards);
+    const due = selectDueCards(cards, performances, today);
+    if (due.length > 0) onDrill(due);
   });
 
   container.querySelectorAll(".deck-drill-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const deckName = (btn as HTMLElement).dataset.deck!;
       const deckCards = cards.filter((c) => c.deckName === deckName);
-      const dueCards = await getDueCards(deckCards, performances, today);
-      if (dueCards.length > 0) onDrill(dueCards);
+      const due = selectDueCards(deckCards, performances, today);
+      if (due.length > 0) onDrill(due);
     });
   });
-}
-
-function getDueCards(
-  cards: Card[],
-  performances: Map<string, { dueDate: string }>,
-  today: string
-): Card[] {
-  const newPerDay = getNewCardsPerDay();
-  const introducedToday = getNewCardsIntroducedToday(today);
-  const remainingNewBudget = Math.max(0, newPerDay - introducedToday);
-
-  const reviewDue: Card[] = [];
-  const newCards: Card[] = [];
-
-  for (const card of cards) {
-    const perf = performances.get(card.hash);
-    if (!perf) {
-      newCards.push(card);
-    } else if (perf.dueDate <= today) {
-      reviewDue.push(card);
-    }
-  }
-
-  return [...reviewDue, ...newCards.slice(0, remainingNewBudget)];
 }

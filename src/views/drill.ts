@@ -2,7 +2,8 @@ import { Card, Grade, Performance, Review } from "../types";
 import { updatePerformance, todayStr } from "../fsrs";
 import { getPerformance, saveSessionResults } from "../db";
 import { renderFront, renderBack, postRender } from "../render";
-import { getConfig, getIntervalFuzz, getHapticFeedback, recordNewCardsIntroduced } from "../github";
+import { getConfig, getIntervalFuzz, getHapticFeedback } from "../github";
+import { recordIntroduced } from "../new-card-budget";
 import { fullSync } from "../sync";
 
 type SessionState = {
@@ -182,7 +183,7 @@ export async function renderDrill(
     // Record new card introduction only when actually graded
     if (newCardHashes.has(card.hash) && !gradedNewCards.has(card.hash)) {
       gradedNewCards.add(card.hash);
-      recordNewCardsIntroduced(todayStr(), 1);
+      recordIntroduced(todayStr(), 1);
     }
 
     // Re-add to back if Forgot or Hard
@@ -224,7 +225,7 @@ export async function renderDrill(
       const stillGraded = state.reviews.some((r) => r.cardHash === card.hash);
       if (!stillGraded) {
         gradedNewCards.delete(card.hash);
-        recordNewCardsIntroduced(todayStr(), -1);
+        recordIntroduced(todayStr(), -1);
       }
     }
 

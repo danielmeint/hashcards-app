@@ -21,14 +21,6 @@ export function saveConfig(config: GitHubConfig): void {
   localStorage.setItem("github_branch", config.branch);
 }
 
-export function getNewCardsPerDay(): number {
-  return parseInt(localStorage.getItem("new_cards_per_day") || "20", 10);
-}
-
-export function setNewCardsPerDay(n: number): void {
-  localStorage.setItem("new_cards_per_day", String(n));
-}
-
 export function getIntervalFuzz(): boolean {
   return localStorage.getItem("interval_fuzz") !== "false"; // default on
 }
@@ -45,24 +37,6 @@ export function setHapticFeedback(on: boolean): void {
   localStorage.setItem("haptic_feedback", String(on));
 }
 
-export function getNewCardsIntroducedToday(today: string): number {
-  const raw = localStorage.getItem("new_cards_introduced");
-  if (!raw) return 0;
-  const parsed = JSON.parse(raw) as { date: string; count: number };
-  return parsed.date === today ? parsed.count : 0;
-}
-
-export function recordNewCardsIntroduced(today: string, count: number): void {
-  const existing = getNewCardsIntroducedToday(today);
-  localStorage.setItem(
-    "new_cards_introduced",
-    JSON.stringify({ date: today, count: existing + count })
-  );
-}
-
-export function resetNewCardsIntroduced(): void {
-  localStorage.removeItem("new_cards_introduced");
-}
 
 async function apiFetch(
   config: GitHubConfig,

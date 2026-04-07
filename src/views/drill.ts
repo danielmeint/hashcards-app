@@ -14,10 +14,16 @@ type SessionState = {
   totalCards: number;
 };
 
+type DrillOptions = {
+  dryRun?: boolean;
+  cache?: Map<string, Performance>;
+};
+
 export async function renderDrill(
   container: HTMLElement,
   dueCards: Card[],
-  onEnd: () => void
+  onEnd: () => void,
+  options: DrillOptions = {}
 ): Promise<void> {
   // Shuffle
   const queue = [...dueCards];
@@ -37,12 +43,20 @@ export async function renderDrill(
     filtered.push(card);
   }
 
-  // Populate cache from IndexedDB (batch load)
-  const allPerfs = await getAllPerformances();
+  // Populate cache from provided data or IndexedDB
   const cache = new Map<string, Performance>();
-  for (const card of filtered) {
-    if (!cache.has(card.hash)) {
-      cache.set(card.hash, allPerfs.get(card.hash) ?? { type: "new" });
+  if (options.cache) {
+    for (const card of filtered) {
+      if (!cache.has(card.hash)) {
+        cache.set(card.hash, options.cache.get(card.hash) ?? { type: "new" });
+      }
+    }
+  } else {
+    const allPerfs = await getAllPerformances();
+    for (const card of filtered) {
+      if (!cache.has(card.hash)) {
+        cache.set(card.hash, allPerfs.get(card.hash) ?? { type: "new" });
+      }
     }
   }
 
@@ -71,7 +85,7 @@ export async function renderDrill(
 
   function render() {
     if (state.queue.length === 0) {
-      renderFinished(container, state, onEnd);
+      renderFinished(container, state, onEnd, options);
       return;
     }
 
@@ -311,15 +325,16 @@ export async function renderDrill(
   }
 
   async function doEnd() {
-    await saveSessionResults(state.cache, state.reviews);
+    if (!options.dryRun) {
+      await saveSessionResults(state.cache, state.reviews);
 
-    // Try to sync
-    const config = getConfig();
-    if (config && navigator.onLine) {
-      try {
-        await fullSync(config);
-      } catch (e) {
-        console.warn("Sync after session failed:", e);
+      const config = getConfig();
+      if (config && navigator.onLine) {
+        try {
+          await fullSync(config);
+        } catch (e) {
+          console.warn("Sync after session failed:", e);
+        }
       }
     }
 
@@ -360,7 +375,8 @@ export async function renderDrill(
 function renderFinished(
   container: HTMLElement,
   state: SessionState,
-  onEnd: () => void
+  onEnd: () => void,
+  options: DrillOptions = {}
 ): void {
   const gradeCount = { forgot: 0, hard: 0, good: 0, easy: 0 };
   for (const r of state.reviews) {
@@ -400,13 +416,15 @@ function renderFinished(
   `;
 
   container.querySelector("#done-btn")!.addEventListener("click", async () => {
-    await saveSessionResults(state.cache, state.reviews);
-    const config = getConfig();
-    if (config && navigator.onLine) {
-      try {
-        await fullSync(config);
-      } catch (e) {
-        console.warn("Sync failed:", e);
+    if (!options.dryRun) {
+      await saveSessionResults(state.cache, state.reviews);
+      const config = getConfig();
+      if (config && navigator.onLine) {
+        try {
+          await fullSync(config);
+        } catch (e) {
+          console.warn("Sync failed:", e);
+        }
       }
     }
     onEnd();

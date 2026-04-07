@@ -4,6 +4,7 @@ import { renderSettings } from "./views/settings";
 import { renderDeckList } from "./views/deck-list";
 import { renderDrill } from "./views/drill";
 import { renderStats } from "./views/stats";
+import { getDemoData } from "./demo";
 import { Card } from "./types";
 import "./style.css";
 
@@ -51,6 +52,16 @@ async function init() {
   // Request persistent storage
   if (navigator.storage?.persist) {
     navigator.storage.persist().catch(() => {});
+  }
+
+  // Demo mode: #demo launches a drill with fake cards, no persistence
+  if (window.location.hash === "#demo") {
+    const demo = await getDemoData();
+    await renderDrill(app, demo.cards, () => navigate("decks"), {
+      dryRun: true,
+      cache: demo.cache,
+    });
+    return;
   }
 
   const config = getConfig();

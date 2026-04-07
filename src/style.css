@@ -354,6 +354,15 @@ body {
   color: var(--color-text-muted);
 }
 
+.requeue-controls {
+  background: #f0f4ff;
+}
+
+.requeue-grades {
+  display: flex;
+  gap: 8px;
+}
+
 /* ===== Finished View ===== */
 
 .finished {

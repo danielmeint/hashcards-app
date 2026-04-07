@@ -53,6 +53,14 @@ export async function renderDrill(
   }
   const gradedNewCards = new Set<string>();
 
+  type UndoEntry =
+    | { type: "grade"; cardHash: string; grade: Grade }
+    | { type: "requeue"; cardHash: string; again: boolean };
+
+  const requeuedHashes = new Set<string>();
+  const completedHashes = new Set<string>();
+  const undoStack: UndoEntry[] = [];
+
   const state: SessionState = {
     queue: filtered,
     reviews: [],
@@ -68,11 +76,11 @@ export async function renderDrill(
     }
 
     const card = state.queue[0];
-    const done = state.totalCards - state.queue.length;
-    const progress = (done / state.totalCards) * 100;
+    const isRequeue = requeuedHashes.has(card.hash);
+    const progress = (completedHashes.size / state.totalCards) * 100;
 
-    // Compute interval previews for each grade (unfuzzed)
-    const previews = state.revealed
+    // Compute interval previews for each grade (unfuzzed) — only for normal reviews
+    const previews = state.revealed && !isRequeue
       ? ([Grade.Forgot, Grade.Hard, Grade.Good, Grade.Easy] as const).map((g) => {
           const perf = state.cache.get(card.hash)!;
           const preview = updatePerformance(perf, g, new Date().toISOString(), false);
@@ -106,12 +114,19 @@ export async function renderDrill(
             </div>
           </div>
         </div>
-        <div class="controls">
+        <div class="controls${isRequeue ? " requeue-controls" : ""}">
           <div class="control-row">
-            <button id="undo-btn" class="btn" ${state.reviews.length === 0 ? "disabled" : ""}>Undo</button>
+            <button id="undo-btn" class="btn" ${undoStack.length === 0 ? "disabled" : ""}>Undo</button>
             ${
               !state.revealed
                 ? `<button id="reveal-btn" class="btn">Reveal</button>`
+                : isRequeue
+                ? `
+              <div class="grades requeue-grades">
+                <button class="btn requeue-btn" data-action="again">Again</button>
+                <button class="btn requeue-btn" data-action="done">Got it</button>
+              </div>
+            `
                 : `
               <div class="grades">
                 <button class="btn grade-btn" data-grade="1">Forgot<span class="interval-preview">${previews[0]}</span></button>
@@ -142,6 +157,13 @@ export async function renderDrill(
           (btn as HTMLElement).dataset.grade!
         ) as Grade;
         doGrade(grade);
+      });
+    });
+
+    container.querySelectorAll(".requeue-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const action = (btn as HTMLElement).dataset.action!;
+        doRequeue(action === "again");
       });
     });
 
@@ -196,12 +218,39 @@ export async function renderDrill(
       recordIntroduced(todayStr(), 1);
     }
 
-    // Re-add to back if Forgot or Hard
+    // Re-add to back if Forgot or Hard (for reinforcement, no further FSRS)
     if (grade === Grade.Forgot || grade === Grade.Hard) {
+      requeuedHashes.add(card.hash);
       state.queue.push(card);
+    } else {
+      completedHashes.add(card.hash);
     }
 
     state.reviews.push(review);
+    undoStack.push({ type: "grade", cardHash: card.hash, grade });
+    state.revealed = false;
+
+    if (state.queue.length === 0) {
+      doEnd();
+    } else {
+      render();
+    }
+  }
+
+  function doRequeue(again: boolean) {
+    if (!state.revealed) return;
+    haptic();
+
+    const card = state.queue.shift()!;
+    undoStack.push({ type: "requeue", cardHash: card.hash, again });
+
+    if (again) {
+      state.queue.push(card);
+    } else {
+      requeuedHashes.delete(card.hash);
+      completedHashes.add(card.hash);
+    }
+
     state.revealed = false;
 
     if (state.queue.length === 0) {
@@ -212,39 +261,50 @@ export async function renderDrill(
   }
 
   async function doUndo() {
-    if (state.reviews.length === 0) return;
+    if (undoStack.length === 0) return;
 
-    const lastReview = state.reviews.pop()!;
-    const card = dueCards.find((c) => c.hash === lastReview.cardHash);
+    const entry = undoStack.pop()!;
+    const card = dueCards.find((c) => c.hash === entry.cardHash);
     if (!card) return;
 
-    // If the card was re-added (Forgot/Hard), remove it from the back
-    if (
-      lastReview.grade === Grade.Forgot ||
-      lastReview.grade === Grade.Hard
-    ) {
-      const idx = state.queue.findLastIndex(
-        (c) => c.hash === lastReview.cardHash
-      );
-      if (idx >= 0) state.queue.splice(idx, 1);
-    }
-
-    // Reverse new card budget if this was a new card's first grade
-    if (gradedNewCards.has(card.hash)) {
-      // Only reverse if no earlier review of this card remains in the session
-      const stillGraded = state.reviews.some((r) => r.cardHash === card.hash);
-      if (!stillGraded) {
-        gradedNewCards.delete(card.hash);
-        recordIntroduced(todayStr(), -1);
+    if (entry.type === "requeue") {
+      if (entry.again) {
+        // "Again" pushed card to back — remove it
+        const idx = state.queue.findLastIndex((c) => c.hash === card.hash);
+        if (idx >= 0) state.queue.splice(idx, 1);
+      } else {
+        // "Got it" removed card from queue — restore re-queue state
+        requeuedHashes.add(card.hash);
+        completedHashes.delete(card.hash);
       }
+      state.queue.unshift(card);
+    } else {
+      // Undo a real FSRS grade
+      state.reviews.pop();
+
+      if (entry.grade === Grade.Forgot || entry.grade === Grade.Hard) {
+        const idx = state.queue.findLastIndex((c) => c.hash === card.hash);
+        if (idx >= 0) state.queue.splice(idx, 1);
+        requeuedHashes.delete(card.hash);
+      } else {
+        completedHashes.delete(card.hash);
+      }
+
+      // Reverse new card budget if this was a new card's first grade
+      if (gradedNewCards.has(card.hash)) {
+        const stillGraded = state.reviews.some((r) => r.cardHash === card.hash);
+        if (!stillGraded) {
+          gradedNewCards.delete(card.hash);
+          recordIntroduced(todayStr(), -1);
+        }
+      }
+
+      state.queue.unshift(card);
+
+      // Restore cache from IndexedDB
+      const origPerf = await getPerformance(card.hash);
+      state.cache.set(card.hash, origPerf);
     }
-
-    // Put card back at front
-    state.queue.unshift(card);
-
-    // Restore cache from IndexedDB
-    const origPerf = await getPerformance(card.hash);
-    state.cache.set(card.hash, origPerf);
 
     state.revealed = false;
     render();
@@ -271,10 +331,17 @@ export async function renderDrill(
 
   document.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    const currentCard = state.queue[0];
+    const isRequeue = currentCard && requeuedHashes.has(currentCard.hash);
     if (e.key === " " || e.key === "Spacebar") {
       e.preventDefault();
       if (!state.revealed) doReveal();
-    } else if (state.revealed && e.key >= "1" && e.key <= "4") {
+      else if (isRequeue) doRequeue(true); // Space = Again
+    } else if (state.revealed && isRequeue && (e.key === "Enter" || e.key === "2")) {
+      doRequeue(false); // Enter or 2 = Got it
+    } else if (state.revealed && isRequeue && e.key === "1") {
+      doRequeue(true); // 1 = Again
+    } else if (state.revealed && !isRequeue && e.key >= "1" && e.key <= "4") {
       doGrade(parseInt(e.key) as Grade);
     } else if (e.key === "u" || e.key === "U") {
       doUndo();

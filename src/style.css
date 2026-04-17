@@ -340,6 +340,11 @@ body {
   padding: 7px 12px;
 }
 
+.root .controls .grades {
+  display: flex;
+  gap: 8px;
+}
+
 .root .controls .grades .btn {
   display: flex;
   flex-direction: column;
@@ -727,9 +732,6 @@ body {
   }
 
   .root .controls .control-row .grades {
-    display: flex;
-    flex-direction: row;
-    justify-content: space-between;
     width: 100%;
   }
 

@@ -188,6 +188,10 @@ the tap and the grade buttons appearing.
 
 ### 2.3 Sync re-fetches everything, every time
 
+**Fixed.** Conditional tree request plus SHA-diffed blob fetches in
+`syncCards` (`src/sync.ts`) and `listMdFiles` (`src/github.ts`), covered by
+`src/sync.test.ts`. Original report below.
+
 `syncCards` lists the tree and then fetches every `.md` file individually, five
 at a time, on every startup — whether or not anything changed. `listMdFiles`
 returns each file's blob SHA (`src/github.ts:94-110`) and `sync.ts:26` throws
@@ -202,7 +206,18 @@ them away.
 - **SHA-diffed fetches.** When the tree *has* changed, fetch blobs only for paths
   whose SHA moved. Keep parsed cards for the rest.
 
+*As shipped:* both, and they turned out to be the same change as 2.4 — the
+per-file record that SHA-diffing needs is exactly what getting cards out of
+localStorage wanted anyway. The tree tag is recorded only after every fetch has
+succeeded, or the next sync would report "nothing changed" over files it never
+got. A file that fails to *parse* is recorded with its SHA and no cards, since
+re-fetching the same bytes cannot parse differently and fixing the file moves
+the SHA.
+
 ### 2.4 Cards live in localStorage
+
+**Fixed.** Cards live in a `decks` store (schema v3), keyed by repo path. See
+`DeckFile` in `src/db.ts`. Original report below.
 
 `sync.ts:46` stringifies the whole card set into localStorage on every sync, and
 `loadCachedCards` synchronously `JSON.parse`s it on the startup path. That is a
@@ -211,6 +226,13 @@ code path where blocking hurts most.
 
 **Fix:** move cards into IndexedDB next to performances and reviews. Same store,
 same transaction semantics, no ceiling, no synchronous parse.
+
+*As shipped:* each record is one source file — its path, the blob SHA it was
+parsed from, and its parsed cards — which is what makes 2.3's SHA diffing
+possible. Existing installs carry their localStorage cache over on upgrade so
+the app still works offline immediately afterwards; those records have no SHA to
+trust, so the next online sync refetches them once, and the old blob is removed
+only once the cards are provably in the new store.
 
 ### 2.5 No dark mode
 
@@ -438,18 +460,13 @@ Kept for history.
 
 ## Suggested order
 
-**Done:** **1.1** (durable grades), **2.6** (session resume), **2.5** (dark
-mode), **2.1** (non-blocking startup), **2.2** (incremental drill rendering),
-**2.7** (touch gestures) —
-with drill-loop and deck-list tests as a partial answer to 3.5, running in jsdom
-against a fake IndexedDB rather than a real browser.
+**Done:** the whole of section 2, plus **1.1** (durable grades) — with
+drill-loop, deck-list and sync tests as a partial answer to 3.5, running in jsdom
+against a fake IndexedDB and a fake GitHub rather than a real browser.
 
-**Next:** the feel section is done. **2.3** (stop re-fetching everything on every
-sync) and **2.4** (move cards out of localStorage) are what is left of making
-sync fast, and 2.1 made that cost visible rather than hidden behind a blank
-screen.
-
-**Then correctness cleanup:** **1.2**, **1.3**, **1.5**, **3.1**.
+**Next, correctness cleanup:** **1.2**, **1.3**, **1.5**, **3.1**. 1.5 is
+part-done — sync now reports failures in the deck list — but the durable half
+(retry queue, unmissable banner) is still open.
 
 **Then pick a bet.** **4.1** is the one that changes who can use this at all, and
 it makes 3.4 and the localStorage-credential problem disappear. **4.2 → 4.3** is

@@ -81,6 +81,17 @@ export async function getAllReviews(): Promise<Review[]> {
   return db.getAll("reviews");
 }
 
+/**
+ * Reviews recorded at or after `iso`. Used for the end-of-session summary, so
+ * that a session spread over two sittings still reports all of itself. The
+ * store has no index on the timestamp; a scan is well within budget at the
+ * scale one person's review history reaches.
+ */
+export async function getReviewsSince(iso: string): Promise<Review[]> {
+  const all = await getAllReviews();
+  return all.filter((r) => r.reviewedAt >= iso);
+}
+
 const SESSION_KEY = "current";
 const SESSION_STORES = ["performances", "reviews", "session"] as const;
 

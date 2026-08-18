@@ -146,7 +146,13 @@ describe("drill persistence", () => {
   it("undo after a second grade leaves the first review intact", async () => {
     const { renderDrill, getAllPerformances, getAllReviews } =
       await freshDrill();
-    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+    // Three cards, so grading twice leaves the drill on a card rather than on
+    // the end-of-session summary, where there is no undo button.
+    await renderDrill(
+      container,
+      [basicCard(1), basicCard(2), basicCard(3)],
+      () => {}
+    );
 
     grade(container, Grade.Easy);
     await waitFor(getAllReviews, (r) => r.length === 1, "first grade");
@@ -384,5 +390,225 @@ describe("drill rendering", () => {
 
     expect(container.querySelector(".card")).toBe(first);
     expect(typeset.mock.calls.length).toBe(passes);
+  });
+});
+
+/**
+ * Space and 1–4 are good on a desktop; on a phone they leave you tapping a row
+ * of small targets along the bottom edge while the biggest thing on the screen
+ * — the card — does nothing. These cover the two gestures that changed that,
+ * and the keyboard inconsistency found alongside them.
+ */
+
+/** jsdom has no PointerEvent, so synthesize one with the fields read. */
+function pointer(
+  el: Element,
+  type: string,
+  x: number,
+  y: number,
+  id = 1
+): void {
+  const ev = new Event(type, { bubbles: true, cancelable: true });
+  Object.assign(ev, {
+    pointerId: id,
+    pointerType: "touch",
+    clientX: x,
+    clientY: y,
+  });
+  el.dispatchEvent(ev);
+}
+
+function drag(container: HTMLElement, dx: number, dy = 0): void {
+  const target = container.querySelector(".card-container")!;
+  pointer(target, "pointerdown", 200, 300);
+  pointer(target, "pointermove", 200 + dx / 2, 300 + dy / 2);
+  pointer(target, "pointermove", 200 + dx, 300 + dy);
+  pointer(target, "pointerup", 200 + dx, 300 + dy);
+}
+
+function press(key: string): void {
+  document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+}
+
+function isRevealed(container: HTMLElement): boolean {
+  return !!container.querySelector(".card-content.revealed");
+}
+
+describe("drill input", () => {
+  let container: HTMLElement;
+
+  beforeEach(async () => {
+    await settle();
+    localStorage.clear();
+    document.body.innerHTML = "";
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+
+  it("reveals when the card itself is tapped", async () => {
+    const { renderDrill } = await freshDrill();
+    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+    expect(isRevealed(container)).toBe(false);
+    (container.querySelector(".card-container") as HTMLElement).click();
+    expect(isRevealed(container)).toBe(true);
+  });
+
+  it("does not grade when a revealed card is tapped", async () => {
+    const { renderDrill, getAllReviews } = await freshDrill();
+    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+    click(container, "#reveal-btn");
+    (container.querySelector(".card-container") as HTMLElement).click();
+    await settle();
+
+    // Grading stays deliberate: only the buttons, keys and swipes do it.
+    expect(await getAllReviews()).toHaveLength(0);
+  });
+
+  it("swipes right for Good and left for Forgot", async () => {
+    const { renderDrill, getAllReviews } = await freshDrill();
+    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+    click(container, "#reveal-btn");
+    drag(container, 120);
+    let reviews = await waitFor(getAllReviews, (r) => r.length === 1, "the swipe right");
+    expect(reviews[0].grade).toBe(Grade.Good);
+
+    click(container, "#reveal-btn");
+    drag(container, -120);
+    reviews = await waitFor(getAllReviews, (r) => r.length === 2, "the swipe left");
+    expect(reviews[1].grade).toBe(Grade.Forgot);
+  });
+
+  it("maps a swipe on a re-queued card to Again and Got it", async () => {
+    const { renderDrill, getAllReviews } = await freshDrill();
+    await renderDrill(container, [basicCard(1)], () => {});
+
+    // Forgot re-queues the card, so the controls become Again / Got it.
+    grade(container, Grade.Forgot);
+    await waitFor(getAllReviews, (r) => r.length === 1, "the grade");
+
+    click(container, "#reveal-btn");
+    drag(container, -120); // Again: back to the end of the queue
+    expect(container.querySelector(".finished")).toBeNull();
+
+    click(container, "#reveal-btn");
+    drag(container, 120); // Got it: retires the card
+
+    await waitFor(
+      async () => container.querySelector(".finished"),
+      (el) => el !== null,
+      "the session to finish"
+    );
+    // Reinforcement, not re-grading — still the one review.
+    expect(await getAllReviews()).toHaveLength(1);
+  });
+
+  it("reveals rather than grades when swiped before the answer is showing", async () => {
+    const { renderDrill, getAllReviews } = await freshDrill();
+    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+    drag(container, 120);
+    await settle();
+
+    expect(isRevealed(container)).toBe(true);
+    expect(await getAllReviews()).toHaveLength(0);
+  });
+
+  it("springs back from a short swipe and ignores a vertical drag", async () => {
+    const { renderDrill, getAllReviews } = await freshDrill();
+    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+    click(container, "#reveal-btn");
+    drag(container, 40); // short of the commit distance
+    drag(container, 0, 140); // scrolling a long card, not a swipe
+    await settle();
+
+    expect(await getAllReviews()).toHaveLength(0);
+    expect(isRevealed(container)).toBe(true);
+  });
+
+  it("space reveals and never grades", async () => {
+    const { renderDrill, getAllReviews } = await freshDrill();
+    await renderDrill(container, [basicCard(1)], () => {});
+
+    // Space used to mean "Again" on a re-queued card, so holding it down sent
+    // the same card round the queue over and over.
+    grade(container, Grade.Forgot);
+    await waitFor(getAllReviews, (r) => r.length === 1, "the grade");
+
+    press(" ");
+    expect(isRevealed(container)).toBe(true);
+    press(" ");
+    press(" ");
+    await settle();
+
+    expect(container.querySelector(".finished")).toBeNull();
+    expect(await getAllReviews()).toHaveLength(1);
+  });
+});
+
+describe("drill summary", () => {
+  let container: HTMLElement;
+
+  beforeEach(async () => {
+    await settle();
+    localStorage.clear();
+    document.body.innerHTML = "";
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+
+  it("lands on the summary rather than navigating straight out", async () => {
+    const { renderDrill } = await freshDrill();
+    const onEnd = vi.fn();
+    await renderDrill(container, [basicCard(1)], onEnd);
+
+    grade(container, Grade.Easy);
+    await waitFor(
+      async () => container.querySelector(".finished"),
+      (el) => el !== null,
+      "the summary"
+    );
+
+    expect(onEnd).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Reviewed 1 card");
+
+    click(container, "#done-btn");
+    await waitFor(
+      async () => onEnd.mock.calls.length,
+      (n) => n === 1,
+      "Done to leave the drill"
+    );
+  });
+
+  it("counts both sittings of a resumed session", async () => {
+    const { renderDrill, getAllReviews, loadSession } = await freshDrill();
+    const cards = [basicCard(1), basicCard(2), basicCard(3)];
+    await renderDrill(container, cards, () => {});
+
+    grade(container, Grade.Easy);
+    const session = await waitFor(
+      loadSession,
+      (s) => s !== null && s.queue.length === 2,
+      "the drill position"
+    );
+
+    document.body.innerHTML = "";
+    const resumed = document.createElement("div");
+    document.body.appendChild(resumed);
+    await renderDrill(resumed, cards, () => {}, { resume: session! });
+
+    grade(resumed, Grade.Easy);
+    await waitFor(getAllReviews, (r) => r.length === 2, "the second grade");
+    grade(resumed, Grade.Easy);
+
+    // The first sitting's review is in the store, not in memory.
+    await waitFor(
+      async () => resumed.querySelector(".finished")?.textContent ?? "",
+      (text) => text.includes("Reviewed 3 cards"),
+      "the summary to count both sittings"
+    );
   });
 });

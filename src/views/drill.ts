@@ -2,6 +2,7 @@ import { Card, DrillSession, Grade, Performance, Review } from "../types";
 import { updatePerformance, todayStr, formatInterval } from "../fsrs";
 import {
   getAllPerformances,
+  getReviewsSince,
   persistReview,
   revertReview,
   saveSession,
@@ -157,6 +158,7 @@ export async function renderDrill(
     progressFill: HTMLElement;
     writeError: HTMLElement;
     cardContainer: HTMLElement;
+    swipeHint: HTMLElement;
     controls: HTMLElement;
     undoBtn: HTMLButtonElement;
     revealBtn: HTMLButtonElement;
@@ -177,7 +179,9 @@ export async function renderDrill(
         </div>
         <div class="write-error" role="alert" hidden>Couldn't save progress on this device — reviews from this session may be lost.</div>
       </div>
-      <div class="card-container"></div>
+      <div class="card-container">
+        <div class="swipe-hint" aria-hidden="true" hidden></div>
+      </div>
       <div class="controls">
         <div class="control-row">
           <button id="undo-btn" class="btn" disabled>Undo</button>
@@ -205,6 +209,7 @@ export async function renderDrill(
       progressFill: pick(".progress-fill"),
       writeError: pick(".write-error"),
       cardContainer: pick(".card-container"),
+      swipeHint: pick(".swipe-hint"),
       controls: pick(".controls"),
       undoBtn: pick<HTMLButtonElement>("#undo-btn"),
       revealBtn: pick<HTMLButtonElement>("#reveal-btn"),
@@ -234,8 +239,158 @@ export async function renderDrill(
       });
     });
 
+    attachCardGestures(mounted);
+
     mounted.writeError.hidden = !writeFailed;
     return mounted;
+  }
+
+  /**
+   * Touch input for the card itself. On a phone the controls are a row of small
+   * targets along the bottom edge while the card is the whole screen, so the
+   * card takes the two gestures worth having: tap to reveal, and swipe to give
+   * the two grades that account for most answers. The button row stays for the
+   * rest, and nothing here exists on desktop, where the keyboard is better.
+   */
+
+  /** How far a drag must travel horizontally before it counts as a swipe. */
+  const SWIPE_CLAIM_PX = 12;
+  /** How far it must travel before releasing commits, rather than springing back. */
+  const SWIPE_COMMIT_PX = 90;
+
+  type Drag = {
+    id: number;
+    x0: number;
+    y0: number;
+    dx: number;
+    /** Set once the gesture is unambiguously horizontal and we own it. */
+    claimed: boolean;
+    /** Set once it has passed the commit distance, for a single haptic tick. */
+    armed: boolean;
+  };
+
+  let drag: Drag | null = null;
+  /** A completed swipe also produces a click; that click is not a tap. */
+  let swipeAteClick = false;
+
+  /** What a release in this direction would do, for the drag indicator. */
+  function swipeAction(right: boolean): { label: string; positive: boolean } {
+    if (!state.revealed) return { label: "Reveal", positive: true };
+    const card = state.queue[0];
+    if (card && requeuedHashes.has(card.hash)) {
+      return right
+        ? { label: "Got it", positive: true }
+        : { label: "Again", positive: false };
+    }
+    return right
+      ? { label: "Good", positive: true }
+      : { label: "Forgot", positive: false };
+  }
+
+  function commitSwipe(right: boolean): void {
+    // A swipe before the answer is showing means "show me", never a grade —
+    // the gesture must not be able to grade a card that was never seen.
+    if (!state.revealed) {
+      doReveal();
+      return;
+    }
+    const card = state.queue[0];
+    if (card && requeuedHashes.has(card.hash)) doRequeue(!right);
+    else doGrade(right ? Grade.Good : Grade.Forgot);
+  }
+
+  function attachCardGestures(view: DrillUi): void {
+    const currentCard = () =>
+      view.cardContainer.querySelector(".card") as HTMLElement | null;
+
+    view.cardContainer.addEventListener("click", (e) => {
+      if (swipeAteClick || state.revealed) return;
+      // Links keep their own behaviour, and the click that ends a text
+      // selection is someone reading, not someone asking for the answer.
+      if ((e.target as HTMLElement).closest?.("a")) return;
+      if (document.getSelection()?.isCollapsed === false) return;
+      doReveal();
+    });
+
+    view.cardContainer.addEventListener("pointerdown", (e) => {
+      // Mouse drags are text selection, and desktop has the keyboard.
+      if (e.pointerType === "mouse" || state.queue.length === 0) return;
+      drag = {
+        id: e.pointerId,
+        x0: e.clientX,
+        y0: e.clientY,
+        dx: 0,
+        claimed: false,
+        armed: false,
+      };
+    });
+
+    view.cardContainer.addEventListener("pointermove", (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dx = e.clientX - drag.x0;
+      const dy = e.clientY - drag.y0;
+
+      if (!drag.claimed) {
+        // Vertical wins ties, so scrolling a long card still works.
+        if (Math.abs(dx) < SWIPE_CLAIM_PX || Math.abs(dx) <= Math.abs(dy)) return;
+        drag.claimed = true;
+        view.cardContainer.setPointerCapture?.(e.pointerId);
+      }
+
+      e.preventDefault();
+      drag.dx = dx;
+
+      const progress = Math.min(1, Math.abs(dx) / SWIPE_COMMIT_PX);
+      if (progress === 1 && !drag.armed) {
+        drag.armed = true;
+        haptic(8);
+      } else if (progress < 1) {
+        drag.armed = false;
+      }
+
+      const node = currentCard();
+      if (node) {
+        // A little tilt reads as "picking the card up". Clamped, because a
+        // long drag on a wide card otherwise turns into a cartwheel.
+        const tilt = Math.max(-3, Math.min(3, dx * 0.02));
+        node.style.transition = "none";
+        node.style.transform = `translateX(${dx}px) rotate(${tilt}deg)`;
+      }
+
+      const action = swipeAction(dx > 0);
+      view.swipeHint.textContent = action.label;
+      view.swipeHint.classList.toggle("swipe-hint-positive", action.positive);
+      view.swipeHint.style.opacity = String(progress);
+      view.swipeHint.hidden = false;
+    });
+
+    const endDrag = (e: PointerEvent, commit: boolean) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const { dx, claimed } = drag;
+      drag = null;
+
+      const node = currentCard();
+      if (node) {
+        node.style.transition = "transform 0.2s ease";
+        node.style.transform = "";
+      }
+      view.swipeHint.hidden = true;
+      view.swipeHint.style.opacity = "0";
+
+      if (!claimed) return;
+      // The synthetic click that follows a drag belongs to the gesture.
+      swipeAteClick = true;
+      setTimeout(() => {
+        swipeAteClick = false;
+      }, 0);
+
+      if (commit && Math.abs(dx) >= SWIPE_COMMIT_PX) commitSwipe(dx > 0);
+    };
+
+    view.cardContainer.addEventListener("pointerup", (e) => endDrag(e, true));
+    view.cardContainer.addEventListener("pointercancel", (e) =>
+      endDrag(e, false)
+    );
   }
 
   /**
@@ -299,10 +454,32 @@ export async function renderDrill(
     });
   }
 
+  /**
+   * The end-of-session summary. Reviews are read back from the store rather
+   * than taken from memory so a session picked up across two sittings reports
+   * all of itself, not just the part that happened since the app reopened.
+   */
+  async function showFinished(): Promise<void> {
+    ui = null;
+    let reviews = state.reviews;
+    if (!options.dryRun) {
+      // Grades are written behind a queue, and the last one is still in flight
+      // when the queue empties. Reading before it lands undercounts the
+      // session, usually by exactly the card that just finished it.
+      await writeChain;
+      reviews = await getReviewsSince(startedAt);
+    }
+    // An undo during that wait puts a card back; it is no longer the end.
+    if (state.queue.length > 0) {
+      paint();
+      return;
+    }
+    renderFinished(container, reviews, doEnd);
+  }
+
   function paint() {
     if (state.queue.length === 0) {
-      ui = null;
-      renderFinished(container, state, doEnd);
+      void showFinished();
       return;
     }
 
@@ -313,13 +490,20 @@ export async function renderDrill(
     view.progressFill.style.width = `${(completedHashes.size / state.totalCards) * 100}%`;
 
     const node = cardNode(card);
-    if (view.cardContainer.firstChild !== node) {
-      view.cardContainer.replaceChildren(node);
+    const mountedCard = view.cardContainer.querySelector(".card");
+    if (mountedCard !== node) {
+      mountedCard?.remove();
+      // Before the hint, so a drag indicator paints over the card. A cached
+      // node may still carry the transform from the swipe that retired it.
+      node.style.transform = "";
+      node.style.transition = "";
+      view.cardContainer.insertBefore(node, view.swipeHint);
     }
     (node.querySelector(".card-content") as HTMLElement).classList.toggle(
       "revealed",
       state.revealed
     );
+    view.cardContainer.classList.toggle("revealable", !state.revealed);
 
     view.controls.classList.toggle("requeue-controls", isRequeue);
     view.undoBtn.disabled = undoStack.length === 0;
@@ -336,10 +520,9 @@ export async function renderDrill(
   }
 
   function doReveal() {
-    if (!state.revealed) {
-      state.revealed = true;
-      paint();
-    }
+    if (state.revealed || state.queue.length === 0) return;
+    state.revealed = true;
+    paint();
   }
 
   const useFuzz = getIntervalFuzz();
@@ -409,12 +592,7 @@ export async function renderDrill(
     }
 
     state.revealed = false;
-
-    if (state.queue.length === 0) {
-      doEnd();
-    } else {
-      paint();
-    }
+    paint();
   }
 
   function doRequeue(again: boolean) {
@@ -437,12 +615,7 @@ export async function renderDrill(
     }
 
     state.revealed = false;
-
-    if (state.queue.length === 0) {
-      doEnd();
-    } else {
-      paint();
-    }
+    paint();
   }
 
   async function doUndo() {
@@ -535,8 +708,7 @@ export async function renderDrill(
     const isRequeue = currentCard && requeuedHashes.has(currentCard.hash);
     if (e.key === " " || e.key === "Spacebar") {
       e.preventDefault();
-      if (!state.revealed) doReveal();
-      else if (isRequeue) doRequeue(true); // Space = Again
+      doReveal(); // Reveal, and only ever reveal
     } else if (state.revealed && isRequeue && (e.key === "Enter" || e.key === "2")) {
       doRequeue(false); // Enter or 2 = Got it
     } else if (state.revealed && isRequeue && e.key === "1") {
@@ -559,11 +731,11 @@ export async function renderDrill(
 
 function renderFinished(
   container: HTMLElement,
-  state: SessionState,
+  reviews: Review[],
   onDone: () => void
 ): void {
   const gradeCount = { forgot: 0, hard: 0, good: 0, easy: 0 };
-  for (const r of state.reviews) {
+  for (const r of reviews) {
     switch (r.grade) {
       case Grade.Forgot:
         gradeCount.forgot++;
@@ -583,7 +755,7 @@ function renderFinished(
   container.innerHTML = `
     <div class="finished">
       <h1>Session Complete</h1>
-      <div class="summary">Reviewed ${state.reviews.length} cards</div>
+      <div class="summary">Reviewed ${reviews.length} card${reviews.length === 1 ? "" : "s"}</div>
       <h2>Stats</h2>
       <div class="stats">
         <table>
@@ -594,7 +766,7 @@ function renderFinished(
         </table>
       </div>
       <div class="shutdown-container">
-        <button id="done-btn" class="btn btn-danger shutdown-button">Done</button>
+        <button id="done-btn" class="btn btn-primary shutdown-button">Done</button>
       </div>
     </div>
   `;

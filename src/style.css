@@ -378,6 +378,39 @@ body {
   align-items: center;
   background: var(--color-surface-sunken);
   overflow: hidden;
+  /* Anchors the swipe indicator. */
+  position: relative;
+  /* Vertical panning stays with the browser so long cards still scroll;
+     horizontal belongs to the swipe handler. */
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Before the answer is showing, the card is a single large "reveal" target. */
+.root .card-container.revealable {
+  cursor: pointer;
+}
+
+.swipe-hint {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  translate: -50% 0;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  background: var(--color-surface);
+  pointer-events: none;
+  opacity: 0;
+}
+
+.swipe-hint.swipe-hint-positive {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .root .card-container .card {
@@ -621,9 +654,13 @@ body {
   margin-bottom: 48px;
 }
 
+/* The heading rule used to span the viewport while the table it introduced was
+   400px wide and centred. Only visible now that the screen is reachable. */
 .finished h2 {
   border-bottom: 1px solid var(--color-border-light);
   width: 100%;
+  max-width: 400px;
+  margin-bottom: 8px;
 }
 
 .finished .stats {

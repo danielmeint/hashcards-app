@@ -7,7 +7,7 @@ import {
   saveSession,
   clearSession,
 } from "../db";
-import { renderFront, renderBack, postRender } from "../render";
+import { renderCardBody, postRender } from "../render";
 import { getConfig, getIntervalFuzz, getHapticFeedback } from "../github";
 import { recordIntroduced } from "../new-card-budget";
 import { syncStateOnly } from "../sync";
@@ -116,6 +116,7 @@ export async function renderDrill(
     writeChain = writeChain.then(op).catch((e) => {
       console.error("Failed to persist review:", e);
       writeFailed = true;
+      if (ui) ui.writeError.hidden = false;
     });
     return writeChain;
   }
@@ -146,122 +147,198 @@ export async function renderDrill(
     enqueueWrite(() => saveSession(snapshot()));
   }
 
-  function render() {
+  /**
+   * The drill chrome is built once and then mutated. Reveal is a class toggle,
+   * advancing swaps a prepared node into place, and the next card is typeset
+   * while the current one is on screen — so no interaction re-parses markdown
+   * or re-runs KaTeX and highlight.js over content that has not changed.
+   */
+  type DrillUi = {
+    progressFill: HTMLElement;
+    writeError: HTMLElement;
+    cardContainer: HTMLElement;
+    controls: HTMLElement;
+    undoBtn: HTMLButtonElement;
+    revealBtn: HTMLButtonElement;
+    grades: HTMLElement;
+    previews: HTMLElement[];
+    requeueGrades: HTMLElement;
+  };
+
+  let ui: DrillUi | null = null;
+
+  function mountShell(): DrillUi {
+    const root = document.createElement("div");
+    root.className = "root";
+    root.innerHTML = `
+      <div class="header">
+        <div class="progress-bar">
+          <div class="progress-fill"></div>
+        </div>
+        <div class="write-error" role="alert" hidden>Couldn't save progress on this device — reviews from this session may be lost.</div>
+      </div>
+      <div class="card-container"></div>
+      <div class="controls">
+        <div class="control-row">
+          <button id="undo-btn" class="btn" disabled>Undo</button>
+          <button id="reveal-btn" class="btn">Reveal</button>
+          <div class="grades" hidden>
+            <button class="btn grade-btn" data-grade="1">Forgot<span class="interval-preview"></span></button>
+            <button class="btn grade-btn" data-grade="2">Hard<span class="interval-preview"></span></button>
+            <button class="btn grade-btn" data-grade="3">Good<span class="interval-preview"></span></button>
+            <button class="btn grade-btn" data-grade="4">Easy<span class="interval-preview"></span></button>
+          </div>
+          <div class="grades requeue-grades" hidden>
+            <button class="btn requeue-btn" data-action="again">Again</button>
+            <button class="btn requeue-btn" data-action="done">Got it</button>
+          </div>
+          <button id="end-btn" class="btn">End</button>
+        </div>
+      </div>
+    `;
+    container.replaceChildren(root);
+
+    const pick = <T extends HTMLElement>(selector: string) =>
+      root.querySelector(selector) as T;
+
+    const mounted: DrillUi = {
+      progressFill: pick(".progress-fill"),
+      writeError: pick(".write-error"),
+      cardContainer: pick(".card-container"),
+      controls: pick(".controls"),
+      undoBtn: pick<HTMLButtonElement>("#undo-btn"),
+      revealBtn: pick<HTMLButtonElement>("#reveal-btn"),
+      grades: pick(".grades:not(.requeue-grades)"),
+      previews: [
+        ...root.querySelectorAll<HTMLElement>(
+          ".grades:not(.requeue-grades) .interval-preview"
+        ),
+      ],
+      requeueGrades: pick(".requeue-grades"),
+    };
+
+    // Bound once, to nodes that live for the whole drill.
+    mounted.revealBtn.addEventListener("click", () => doReveal());
+    mounted.undoBtn.addEventListener("click", () => doUndo());
+    pick("#end-btn").addEventListener("click", () => doEnd());
+
+    mounted.grades.querySelectorAll(".grade-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        doGrade(parseInt((btn as HTMLElement).dataset.grade!) as Grade);
+      });
+    });
+
+    mounted.requeueGrades.querySelectorAll(".requeue-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        doRequeue((btn as HTMLElement).dataset.action === "again");
+      });
+    });
+
+    mounted.writeError.hidden = !writeFailed;
+    return mounted;
+  }
+
+  /**
+   * Built cards are kept only while they might be needed again: the one on
+   * screen, the one being prepared behind it, and whatever an undo would bring
+   * back. Typeset DOM is not cheap, and a long session would otherwise hold
+   * onto every card it had shown.
+   */
+  const nodeCache = new Map<string, HTMLElement>();
+
+  function cardNode(card: Card): HTMLElement {
+    let node = nodeCache.get(card.hash);
+    if (!node) {
+      node = document.createElement("div");
+      node.className = "card";
+      node.innerHTML = `
+        <div class="card-header">
+          <h1>${card.deckName}</h1>
+        </div>
+        <div class="card-content">${renderCardBody(card)}</div>
+      `;
+      postRender(node.querySelector(".card-content") as HTMLElement);
+      nodeCache.set(card.hash, node);
+    }
+    return node;
+  }
+
+  function pruneNodeCache(): void {
+    const keep = new Set<string>();
+    for (const card of state.queue.slice(0, 2)) keep.add(card.hash);
+    const lastUndo = undoStack[undoStack.length - 1];
+    if (lastUndo) keep.add(lastUndo.cardHash);
+    for (const hash of nodeCache.keys()) {
+      if (!keep.has(hash)) nodeCache.delete(hash);
+    }
+  }
+
+  const whenIdle: (fn: () => void) => void =
+    typeof (window as any).requestIdleCallback === "function"
+      ? (fn) => (window as any).requestIdleCallback(fn, { timeout: 500 })
+      : (fn) => setTimeout(fn, 0);
+
+  /** Typeset the next card during the seconds the user spends on this one. */
+  function prerenderNext(): void {
+    const next = state.queue[1];
+    if (!next || nodeCache.has(next.hash)) return;
+    whenIdle(() => {
+      // The queue may have moved on while this was waiting for idle time.
+      if (state.queue[1]?.hash === next.hash) cardNode(next);
+    });
+  }
+
+  /** Unfuzzed interval each grade would produce, shown on the grade buttons. */
+  function updatePreviews(card: Card, into: HTMLElement[]): void {
+    const perf = state.cache.get(card.hash)!;
+    const now = new Date().toISOString();
+    const grades = [Grade.Forgot, Grade.Hard, Grade.Good, Grade.Easy] as const;
+    grades.forEach((grade, i) => {
+      const preview = updatePerformance(perf, grade, now, false);
+      into[i].textContent = formatInterval(preview.intervalDays);
+    });
+  }
+
+  function paint() {
     if (state.queue.length === 0) {
+      ui = null;
       renderFinished(container, state, doEnd);
       return;
     }
 
+    const view = ui ?? (ui = mountShell());
     const card = state.queue[0];
     const isRequeue = requeuedHashes.has(card.hash);
-    const progress = (completedHashes.size / state.totalCards) * 100;
 
-    // Compute interval previews for each grade (unfuzzed) — only for normal reviews
-    const previews = state.revealed && !isRequeue
-      ? ([Grade.Forgot, Grade.Hard, Grade.Good, Grade.Easy] as const).map((g) => {
-          const perf = state.cache.get(card.hash)!;
-          const preview = updatePerformance(perf, g, new Date().toISOString(), false);
-          return formatInterval(preview.intervalDays);
-        })
-      : [];
+    view.progressFill.style.width = `${(completedHashes.size / state.totalCards) * 100}%`;
 
-    container.innerHTML = `
-      <div class="root">
-        <div class="header">
-          <div class="progress-bar">
-            <div class="progress-fill" style="width: ${progress}%"></div>
-          </div>
-          ${
-            writeFailed
-              ? `<div class="write-error" role="alert">Couldn't save progress on this device — reviews from this session may be lost.</div>`
-              : ""
-          }
-        </div>
-        <div class="card-container">
-          <div class="card">
-            <div class="card-header">
-              <h1>${card.deckName}</h1>
-            </div>
-            <div class="card-content">
-              ${
-                card.content.type === "basic"
-                  ? `
-                <div class="question">${renderFront(card)}</div>
-                <div class="answer" style="${state.revealed ? "" : "visibility: hidden"}">${renderBack(card)}</div>
-              `
-                  : `
-                <div class="prompt">${state.revealed ? renderBack(card) : renderFront(card)}</div>
-              `
-              }
-            </div>
-          </div>
-        </div>
-        <div class="controls${isRequeue ? " requeue-controls" : ""}">
-          <div class="control-row">
-            <button id="undo-btn" class="btn" ${undoStack.length === 0 ? "disabled" : ""}>Undo</button>
-            ${
-              !state.revealed
-                ? `<button id="reveal-btn" class="btn">Reveal</button>`
-                : isRequeue
-                ? `
-              <div class="grades requeue-grades">
-                <button class="btn requeue-btn" data-action="again">Again</button>
-                <button class="btn requeue-btn" data-action="done">Got it</button>
-              </div>
-            `
-                : `
-              <div class="grades">
-                <button class="btn grade-btn" data-grade="1">Forgot<span class="interval-preview">${previews[0]}</span></button>
-                <button class="btn grade-btn" data-grade="2">Hard<span class="interval-preview">${previews[1]}</span></button>
-                <button class="btn grade-btn" data-grade="3">Good<span class="interval-preview">${previews[2]}</span></button>
-                <button class="btn grade-btn" data-grade="4">Easy<span class="interval-preview">${previews[3]}</span></button>
-              </div>
-            `
-            }
-            <button id="end-btn" class="btn">End</button>
-          </div>
-        </div>
-      </div>
-    `;
+    const node = cardNode(card);
+    if (view.cardContainer.firstChild !== node) {
+      view.cardContainer.replaceChildren(node);
+    }
+    (node.querySelector(".card-content") as HTMLElement).classList.toggle(
+      "revealed",
+      state.revealed
+    );
 
-    // Post-render for KaTeX and highlight.js
-    const cardContent = container.querySelector(".card-content");
-    if (cardContent) postRender(cardContent as HTMLElement);
+    view.controls.classList.toggle("requeue-controls", isRequeue);
+    view.undoBtn.disabled = undoStack.length === 0;
+    view.revealBtn.hidden = state.revealed;
+    view.grades.hidden = !state.revealed || isRequeue;
+    view.requeueGrades.hidden = !state.revealed || !isRequeue;
 
-    // Event handlers
-    container
-      .querySelector("#reveal-btn")
-      ?.addEventListener("click", () => doReveal());
+    // Cheap arithmetic, so computed up front rather than at reveal — by the
+    // time the grades appear there is nothing left to do.
+    if (!isRequeue) updatePreviews(card, view.previews);
 
-    container.querySelectorAll(".grade-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const grade = parseInt(
-          (btn as HTMLElement).dataset.grade!
-        ) as Grade;
-        doGrade(grade);
-      });
-    });
-
-    container.querySelectorAll(".requeue-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const action = (btn as HTMLElement).dataset.action!;
-        doRequeue(action === "again");
-      });
-    });
-
-    container
-      .querySelector("#undo-btn")
-      ?.addEventListener("click", () => doUndo());
-
-    container
-      .querySelector("#end-btn")
-      ?.addEventListener("click", () => doEnd());
+    prerenderNext();
+    pruneNodeCache();
   }
 
   function doReveal() {
     if (!state.revealed) {
       state.revealed = true;
-      render();
+      paint();
     }
   }
 
@@ -336,7 +413,7 @@ export async function renderDrill(
     if (state.queue.length === 0) {
       doEnd();
     } else {
-      render();
+      paint();
     }
   }
 
@@ -364,7 +441,7 @@ export async function renderDrill(
     if (state.queue.length === 0) {
       doEnd();
     } else {
-      render();
+      paint();
     }
   }
 
@@ -431,7 +508,7 @@ export async function renderDrill(
     }
 
     state.revealed = false;
-    render();
+    paint();
   }
 
   async function doEnd() {
@@ -477,7 +554,7 @@ export async function renderDrill(
     origOnEnd();
   };
 
-  render();
+  paint();
 }
 
 function renderFinished(

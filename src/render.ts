@@ -1,5 +1,5 @@
 import { marked } from "marked";
-import { Card } from "./types";
+import { Card, ClozeCard } from "./types";
 
 const CLOZE_TAG = "CLOZE_DELETION_PLACEHOLDER";
 
@@ -29,67 +29,68 @@ function renderMarkdown(text: string): string {
   return marked.parse(text, { async: false }) as string;
 }
 
-export function renderFront(card: Card): string {
-  const content = card.content;
-  if (content.type === "basic") {
-    let html = renderMarkdown(content.question);
-    html = rewriteImageUrls(html, card.filePath);
-    return `<div class="rich-text">${html}</div>`;
-  } else {
-    const textBytes = new TextEncoder().encode(content.text);
-    const before = textBytes.slice(0, content.start);
-    const after = textBytes.slice(content.end + 1);
-    const tagBytes = new TextEncoder().encode(CLOZE_TAG);
-    const combined = new Uint8Array(
-      before.length + tagBytes.length + after.length
-    );
-    combined.set(before);
-    combined.set(tagBytes, before.length);
-    combined.set(after, before.length + tagBytes.length);
-    let text = new TextDecoder().decode(combined);
-    let html = renderMarkdown(text);
-    html = html.replace(
-      CLOZE_TAG,
-      "<span class='cloze'>.............</span>"
-    );
-    html = rewriteImageUrls(html, card.filePath);
-    return `<div class="rich-text">${html}</div>`;
-  }
+function richText(html: string, filePath: string): string {
+  return `<div class="rich-text">${rewriteImageUrls(html, filePath)}</div>`;
 }
 
-export function renderBack(card: Card): string {
+/** Cloze text with the deletion swapped for a placeholder, spliced by byte. */
+function textWithClozeTag(content: ClozeCard): string {
+  const textBytes = new TextEncoder().encode(content.text);
+  const before = textBytes.slice(0, content.start);
+  const after = textBytes.slice(content.end + 1);
+  const tagBytes = new TextEncoder().encode(CLOZE_TAG);
+  const combined = new Uint8Array(
+    before.length + tagBytes.length + after.length
+  );
+  combined.set(before);
+  combined.set(tagBytes, before.length);
+  combined.set(after, before.length + tagBytes.length);
+  return new TextDecoder().decode(combined);
+}
+
+/** The deleted span, rendered as inline HTML rather than its own paragraph. */
+function clozeAnswerHtml(content: ClozeCard): string {
+  const textBytes = new TextEncoder().encode(content.text);
+  const deleted = new TextDecoder().decode(
+    textBytes.slice(content.start, content.end + 1)
+  );
+  return renderMarkdown(deleted).replace(/^<p>(.*)<\/p>\s*$/, "$1");
+}
+
+/**
+ * A cloze card with both faces in one pass: the surrounding prose is identical
+ * either way, so it is parsed once and the placeholder becomes a slot holding
+ * the blank and the answer together. Which one shows is then a class on an
+ * ancestor.
+ */
+function renderCloze(card: Card, content: ClozeCard): string {
+  const slot =
+    `<span class="cloze-slot">` +
+    `<span class="cloze">.............</span>` +
+    `<span class="cloze-reveal">${clozeAnswerHtml(content)}</span>` +
+    `</span>`;
+
+  const html = renderMarkdown(textWithClozeTag(content)).replace(
+    CLOZE_TAG,
+    slot
+  );
+  return richText(html, card.filePath);
+}
+
+/**
+ * A card's whole body, with the answer already in the DOM but hidden. Revealing
+ * is then a class toggle rather than a re-render — no second markdown parse and
+ * no second KaTeX / highlight.js pass over content that has not changed.
+ */
+export function renderCardBody(card: Card): string {
   const content = card.content;
   if (content.type === "basic") {
-    let html = renderMarkdown(content.answer);
-    html = rewriteImageUrls(html, card.filePath);
-    return `<div class="rich-text">${html}</div>`;
-  } else {
-    const textBytes = new TextEncoder().encode(content.text);
-    const deletedBytes = textBytes.slice(content.start, content.end + 1);
-    const deletedText = new TextDecoder().decode(deletedBytes);
-    const deletedHtml = renderMarkdown(deletedText).replace(
-      /^<p>(.*)<\/p>\s*$/,
-      "$1"
+    return (
+      `<div class="question">${richText(renderMarkdown(content.question), card.filePath)}</div>` +
+      `<div class="answer">${richText(renderMarkdown(content.answer), card.filePath)}</div>`
     );
-
-    const before = textBytes.slice(0, content.start);
-    const after = textBytes.slice(content.end + 1);
-    const tagBytes = new TextEncoder().encode(CLOZE_TAG);
-    const combined = new Uint8Array(
-      before.length + tagBytes.length + after.length
-    );
-    combined.set(before);
-    combined.set(tagBytes, before.length);
-    combined.set(after, before.length + tagBytes.length);
-    let text = new TextDecoder().decode(combined);
-    let html = renderMarkdown(text);
-    html = html.replace(
-      CLOZE_TAG,
-      `<span class='cloze-reveal'>${deletedHtml}</span>`
-    );
-    html = rewriteImageUrls(html, card.filePath);
-    return `<div class="rich-text">${html}</div>`;
   }
+  return `<div class="prompt">${renderCloze(card, content)}</div>`;
 }
 
 export function postRender(container: HTMLElement): void {

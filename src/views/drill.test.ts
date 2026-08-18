@@ -71,6 +71,18 @@ function grade(container: HTMLElement, g: Grade): void {
   click(container, `.grade-btn[data-grade="${g}"]`);
 }
 
+function clozeCard(n: number): Card {
+  // Byte offsets, end inclusive: "Paris" in "The capital is Paris".
+  return {
+    deckName: "Test",
+    filePath: "test.md",
+    range: [n, n + 1],
+    content: { type: "cloze", text: "The capital is Paris", start: 15, end: 19 },
+    hash: `cloze-${n}`,
+    familyHash: null,
+  };
+}
+
 describe("drill persistence", () => {
   let container: HTMLElement;
 
@@ -262,5 +274,115 @@ describe("drill persistence", () => {
 
     expect(await getAllReviews()).toHaveLength(0);
     expect((await getAllPerformances()).size).toBe(0);
+  });
+});
+
+/**
+ * Reveal, grade, requeue and undo all used to funnel into one function that
+ * replaced the entire subtree and re-ran KaTeX and highlight.js from scratch.
+ * These tests pin the two claims that replaced it: revealing touches nothing
+ * but a class, and a card is typeset exactly once.
+ */
+describe("drill rendering", () => {
+  let container: HTMLElement;
+  let typeset: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    // A drill from an earlier test may still have a prepare-next callback
+    // pending. Let those land against nothing before installing a fresh
+    // counter, or they show up as typesetting passes this test did not cause.
+    (window as any).renderMathInElement = undefined;
+    await settle();
+
+    localStorage.clear();
+    document.body.innerHTML = "";
+    container = document.createElement("div");
+    document.body.appendChild(container);
+
+    // postRender's KaTeX hook, standing in as a count of typesetting passes.
+    typeset = vi.fn();
+    (window as any).renderMathInElement = typeset;
+  });
+
+  it("keeps the answer in the DOM and reveals it with a class", async () => {
+    const { renderDrill } = await freshDrill();
+    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+    const card = container.querySelector(".card");
+    const content = container.querySelector(".card-content")!;
+    expect(container.querySelector(".answer")!.textContent).toContain("A");
+    expect(content.classList.contains("revealed")).toBe(false);
+
+    const passes = typeset.mock.calls.length;
+    click(container, "#reveal-btn");
+
+    // Same nodes, no second typesetting pass — only the class changed.
+    expect(container.querySelector(".card")).toBe(card);
+    expect(container.querySelector(".card-content")).toBe(content);
+    expect(typeset.mock.calls.length).toBe(passes);
+    expect(content.classList.contains("revealed")).toBe(true);
+  });
+
+  it("carries both faces of a cloze card, parsed once", async () => {
+    const { renderDrill } = await freshDrill();
+    await renderDrill(container, [clozeCard(1), clozeCard(2)], () => {});
+
+    const slot = container.querySelector(".cloze-slot")!;
+    expect(slot.querySelector(".cloze")).not.toBeNull();
+    expect(slot.querySelector(".cloze-reveal")!.textContent).toBe("Paris");
+
+    const passes = typeset.mock.calls.length;
+    click(container, "#reveal-btn");
+
+    expect(container.querySelector(".cloze-slot")).toBe(slot);
+    expect(typeset.mock.calls.length).toBe(passes);
+  });
+
+  it("prepares the next card while the current one is on screen", async () => {
+    const { renderDrill } = await freshDrill();
+    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+    expect(typeset).toHaveBeenCalledTimes(1);
+    await waitFor(
+      async () => typeset.mock.calls.length,
+      (n) => n === 2,
+      "the next card to be prepared ahead of time"
+    );
+
+    // Advancing then costs nothing: the card was typeset while the user was
+    // still looking at the previous one.
+    grade(container, Grade.Easy);
+    expect(typeset).toHaveBeenCalledTimes(2);
+  });
+
+  it("swaps the card node when advancing rather than rebuilding the chrome", async () => {
+    const { renderDrill } = await freshDrill();
+    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+    const controls = container.querySelector(".controls");
+    const progress = container.querySelector(".progress-fill");
+    const first = container.querySelector(".card");
+
+    grade(container, Grade.Easy);
+
+    expect(container.querySelector(".card")).not.toBe(first);
+    expect(container.querySelector(".controls")).toBe(controls);
+    expect(container.querySelector(".progress-fill")).toBe(progress);
+  });
+
+  it("does not re-typeset a card brought back by undo", async () => {
+    const { renderDrill, getAllReviews } = await freshDrill();
+    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+    const first = container.querySelector(".card");
+    grade(container, Grade.Easy);
+    await waitFor(getAllReviews, (r) => r.length === 1, "the grade");
+
+    const passes = typeset.mock.calls.length;
+    click(container, "#undo-btn");
+    await waitFor(getAllReviews, (r) => r.length === 0, "the undo");
+
+    expect(container.querySelector(".card")).toBe(first);
+    expect(typeset.mock.calls.length).toBe(passes);
   });
 });

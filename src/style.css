@@ -224,6 +224,11 @@
   box-sizing: border-box;
 }
 
+/* The UA rule loses to any author `display`, and the drill hides flex rows. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body,
 #app {
@@ -408,8 +413,30 @@ body {
   border-bottom: 1px solid var(--color-border-strong);
 }
 
+/*
+ * Both faces of a card are always in the DOM; revealing is this class. Nothing
+ * is re-parsed or re-typeset, so the answer appears with no reflow of the
+ * question above it.
+ */
 .root .card-container .card .card-content .answer {
   min-height: 30px;
+  visibility: hidden;
+}
+
+.root .card-container .card .card-content.revealed .answer {
+  visibility: visible;
+}
+
+.rich-text .cloze-slot .cloze-reveal {
+  display: none;
+}
+
+.card-content.revealed .rich-text .cloze-slot .cloze {
+  display: none;
+}
+
+.card-content.revealed .rich-text .cloze-slot .cloze-reveal {
+  display: inline;
 }
 
 .rich-text {
@@ -875,7 +902,9 @@ body {
   margin-bottom: 16px;
 }
 
-.sync-status-error {
+/* The compound selector beats `.deck-list-empty p`, which is also muted. */
+.sync-status-error,
+.deck-list-empty p.sync-status-error {
   color: var(--color-danger);
 }
 

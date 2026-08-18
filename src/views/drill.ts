@@ -10,7 +10,7 @@ import {
 import { renderFront, renderBack, postRender } from "../render";
 import { getConfig, getIntervalFuzz, getHapticFeedback } from "../github";
 import { recordIntroduced } from "../new-card-budget";
-import { fullSync } from "../sync";
+import { syncStateOnly } from "../sync";
 
 type SessionState = {
   queue: Card[];
@@ -439,14 +439,11 @@ export async function renderDrill(
       enqueueWrite(() => clearSession());
       await writeChain;
 
+      // Every grade is already durable locally, so pushing them to GitHub is
+      // not something to hold the user behind on the way out of a drill. It
+      // runs behind the deck list, which reports its progress and failures.
       const config = getConfig();
-      if (config && navigator.onLine) {
-        try {
-          await fullSync(config);
-        } catch (e) {
-          console.warn("Sync after session failed:", e);
-        }
-      }
+      if (config && navigator.onLine) syncStateOnly(config);
     }
 
     onEnd();

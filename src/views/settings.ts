@@ -2,7 +2,8 @@ import { getConfig, saveConfig, listMdFiles, getIntervalFuzz, setIntervalFuzz, g
 import { getNewCardsPerDay, setNewCardsPerDay, getIntroducedToday, resetIntroduced } from "../new-card-budget";
 import { todayStr } from "../fsrs";
 import { getTheme, setTheme, Theme } from "../theme";
-import { syncCards, fullSync } from "../sync";
+import { syncAll, getCachedCards } from "../sync";
+import { getSyncStatus, onSyncStatus } from "../sync-state";
 
 export function renderSettings(
   container: HTMLElement,
@@ -184,25 +185,31 @@ export function renderSettings(
     syncBtn.disabled = true;
     testBtn.disabled = true;
 
+    saveConfig(cfg);
+    savePrefs();
+
+    // Same runner the deck list uses, so this can't race a background sync and
+    // so a successful sync from here also updates the "last synced" line. The
+    // progress it publishes is echoed inline, because here the user is watching.
+    const unwatch = onSyncStatus((s) => {
+      if (s.phase === "syncing") {
+        statusEl.textContent = s.detail ? `${s.detail}...` : "Syncing...";
+      }
+    });
+
     try {
-      saveConfig(cfg);
-      savePrefs();
-      const cards = await syncCards(cfg, (p) => {
-        if (p.current && p.total) {
-          statusEl.textContent = `${p.phase}... (${p.current}/${p.total})`;
-        } else {
-          statusEl.textContent = `${p.phase}...`;
-        }
-      });
-      statusEl.textContent = `Synced ${cards.length} cards. Syncing state...`;
-      await fullSync(cfg, (p) => {
-        statusEl.textContent = `${p.phase}...`;
-      });
-      statusEl.textContent = `Done! ${cards.length} cards synced.`;
-      if (isFirstRun) onDone();
-    } catch (e) {
-      statusEl.textContent = `${(e as Error).message}`;
+      const ok = await syncAll(cfg);
+      if (ok) {
+        const count = getCachedCards()?.length ?? 0;
+        statusEl.textContent = `Done! ${count} cards synced.`;
+        if (isFirstRun) onDone();
+      } else {
+        const status = getSyncStatus();
+        statusEl.textContent =
+          status.phase === "error" ? status.message : "Sync failed.";
+      }
     } finally {
+      unwatch();
       syncBtn.disabled = false;
       testBtn.disabled = false;
     }

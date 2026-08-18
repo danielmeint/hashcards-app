@@ -10,11 +10,69 @@ import {
 } from "./github";
 import { exportState, importState } from "./db";
 import { parseFile } from "./parser";
+import { recordSyncSuccess, setSyncStatus } from "./sync-state";
 
 let cachedCards: Card[] | null = null;
 
 export function getCachedCards(): Card[] | null {
   return cachedCards;
+}
+
+let inFlight: Promise<boolean> | null = null;
+
+/**
+ * Cards then review state, reporting through `sync-state` rather than to a
+ * caller: nothing waits for this any more, so the status the deck list renders
+ * is its only channel. Resolves `false` on failure instead of rejecting —
+ * every caller is fire-and-forget, and an unhandled rejection is not a way to
+ * report a network error. Concurrent callers share a single run.
+ */
+export function syncAll(config: GitHubConfig): Promise<boolean> {
+  return start(config, true);
+}
+
+/**
+ * Push review state without re-fetching cards — nothing about the repo has
+ * changed just because a session ended. Joins a sync already in progress rather
+ * than racing it: two writers interleaving on the state file is how a merge
+ * gets lost.
+ */
+export function syncStateOnly(config: GitHubConfig): Promise<boolean> {
+  return start(config, false);
+}
+
+function start(config: GitHubConfig, includeCards: boolean): Promise<boolean> {
+  if (inFlight) return inFlight;
+  inFlight = runSync(config, includeCards).finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
+}
+
+async function runSync(
+  config: GitHubConfig,
+  includeCards: boolean
+): Promise<boolean> {
+  const report = (progress: SyncProgress) =>
+    setSyncStatus({
+      phase: "syncing",
+      detail:
+        progress.current && progress.total
+          ? `${progress.phase} (${progress.current}/${progress.total})`
+          : progress.phase,
+    });
+
+  setSyncStatus({ phase: "syncing", detail: null });
+  try {
+    if (includeCards) await syncCards(config, report);
+    await fullSync(config, report);
+    recordSyncSuccess();
+    setSyncStatus({ phase: "idle" });
+    return true;
+  } catch (e) {
+    setSyncStatus({ phase: "error", message: (e as Error).message });
+    return false;
+  }
 }
 
 export async function syncCards(

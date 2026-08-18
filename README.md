@@ -68,6 +68,10 @@ The production build (`npm run build`) outputs static files to `dist/` — deplo
 - KaTeX + highlight.js via CDN
 - FSRS algorithm (custom port)
 
+## Roadmap
+
+Known defects, planned work, and longer-term ideas live in [ROADMAP.md](ROADMAP.md).
+
 ## License
 
 MIT

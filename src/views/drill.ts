@@ -1,6 +1,6 @@
 import { Card, Grade, Performance, Review } from "../types";
 import { updatePerformance, todayStr, formatInterval } from "../fsrs";
-import { getPerformance, getAllPerformances, saveSessionResults } from "../db";
+import { getAllPerformances, persistReview, revertReview } from "../db";
 import { renderFront, renderBack, postRender } from "../render";
 import { getConfig, getIntervalFuzz, getHapticFeedback } from "../github";
 import { recordIntroduced } from "../new-card-budget";
@@ -68,12 +68,35 @@ export async function renderDrill(
   const gradedNewCards = new Set<string>();
 
   type UndoEntry =
-    | { type: "grade"; cardHash: string; grade: Grade }
+    | {
+        type: "grade";
+        cardHash: string;
+        grade: Grade;
+        /** Scheduling state before the grade, used to reverse the write. */
+        prevPerf: Performance;
+        /** Key of the persisted review; null until the write lands. */
+        reviewKey: IDBValidKey | null;
+      }
     | { type: "requeue"; cardHash: string; again: boolean };
 
   const requeuedHashes = new Set<string>();
   const completedHashes = new Set<string>();
   const undoStack: UndoEntry[] = [];
+
+  // Grades are persisted as they happen rather than batched until the session
+  // ends: a drill interrupted by a crash, a backgrounded tab, or the OS
+  // reclaiming the page must keep the reviews already answered. Writes are
+  // serialized so an undo can never overtake the grade it reverses.
+  let writeChain: Promise<void> = Promise.resolve();
+  let writeFailed = false;
+
+  function enqueueWrite(op: () => Promise<void>): Promise<void> {
+    writeChain = writeChain.then(op).catch((e) => {
+      console.error("Failed to persist review:", e);
+      writeFailed = true;
+    });
+    return writeChain;
+  }
 
   const state: SessionState = {
     queue: filtered,
@@ -85,7 +108,7 @@ export async function renderDrill(
 
   function render() {
     if (state.queue.length === 0) {
-      renderFinished(container, state, onEnd, options);
+      renderFinished(container, state, doEnd);
       return;
     }
 
@@ -108,6 +131,11 @@ export async function renderDrill(
           <div class="progress-bar">
             <div class="progress-fill" style="width: ${progress}%"></div>
           </div>
+          ${
+            writeFailed
+              ? `<div class="write-error" role="alert">Couldn't save progress on this device — reviews from this session may be lost.</div>`
+              : ""
+          }
         </div>
         <div class="card-container">
           <div class="card">
@@ -241,7 +269,22 @@ export async function renderDrill(
     }
 
     state.reviews.push(review);
-    undoStack.push({ type: "grade", cardHash: card.hash, grade });
+
+    const undoEntry: UndoEntry = {
+      type: "grade",
+      cardHash: card.hash,
+      grade,
+      prevPerf: perf,
+      reviewKey: null,
+    };
+    undoStack.push(undoEntry);
+
+    if (!options.dryRun) {
+      enqueueWrite(async () => {
+        undoEntry.reviewKey = await persistReview(card.hash, newPerf, review);
+      });
+    }
+
     state.revealed = false;
 
     if (state.queue.length === 0) {
@@ -315,9 +358,14 @@ export async function renderDrill(
 
       state.queue.unshift(card);
 
-      // Restore cache from IndexedDB
-      const origPerf = await getPerformance(card.hash);
-      state.cache.set(card.hash, origPerf);
+      // Reverse the persisted write. The queue is serialized, so the grade's
+      // write has landed and its key is populated by the time this runs.
+      if (!options.dryRun) {
+        await enqueueWrite(() =>
+          revertReview(entry.cardHash, entry.prevPerf, entry.reviewKey)
+        );
+      }
+      state.cache.set(card.hash, entry.prevPerf);
     }
 
     state.revealed = false;
@@ -326,7 +374,7 @@ export async function renderDrill(
 
   async function doEnd() {
     if (!options.dryRun) {
-      await saveSessionResults(state.cache, state.reviews);
+      await writeChain;
 
       const config = getConfig();
       if (config && navigator.onLine) {
@@ -375,8 +423,7 @@ export async function renderDrill(
 function renderFinished(
   container: HTMLElement,
   state: SessionState,
-  onEnd: () => void,
-  options: DrillOptions = {}
+  onDone: () => void
 ): void {
   const gradeCount = { forgot: 0, hard: 0, good: 0, easy: 0 };
   for (const r of state.reviews) {
@@ -415,18 +462,5 @@ function renderFinished(
     </div>
   `;
 
-  container.querySelector("#done-btn")!.addEventListener("click", async () => {
-    if (!options.dryRun) {
-      await saveSessionResults(state.cache, state.reviews);
-      const config = getConfig();
-      if (config && navigator.onLine) {
-        try {
-          await fullSync(config);
-        } catch (e) {
-          console.warn("Sync failed:", e);
-        }
-      }
-    }
-    onEnd();
-  });
+  container.querySelector("#done-btn")!.addEventListener("click", onDone);
 }

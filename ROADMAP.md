@@ -17,6 +17,10 @@ Ranked by consequence. The first one loses data.
 
 ### 1.1 Closing the app mid-session discards every review in it
 
+**Fixed.** Grades now persist individually; see `src/db.ts` (`persistReview` /
+`revertReview`) and the write queue in `src/views/drill.ts`, covered by
+`src/views/drill.test.ts`. Original report below.
+
 **P0.** `saveSessionResults` is called only from `doEnd()` (`src/views/drill.ts:329`)
 and the Done button on the finished screen (`src/views/drill.ts:420`). Everything
 before that lives purely in `state.reviews` and `state.cache`, in memory.
@@ -33,6 +37,14 @@ path the user waits for.
 **Fallout, all positive:** this makes session resume nearly free — if per-grade
 state is already durable, "resume mid-drill" is just persisting the remaining
 queue alongside it (see 2.6). It also means a crash costs one card, not a session.
+
+*As shipped:* writes are serialized through a small queue so an undo can never
+overtake the grade it reverses, and the undo entry carries the previous
+scheduling state rather than re-reading it — the old code read the *post-grade*
+value back from IndexedDB, which would have restored the wrong state once writes
+became eager. A failed write now raises a banner in the drill instead of being
+swallowed. `renderFinished` was rewired to reuse `doEnd`, removing a second copy
+of the save-and-sync logic.
 
 ### 1.2 The deck list inflates the "new" count
 
@@ -339,6 +351,11 @@ Carried forward, still open, none of it urgent.
   dynamic import, since it is not needed until the first card renders.
 - **DOM query boilerplate** — a small typed helper would remove a lot of repeated
   `querySelector` casting, mostly in the settings view.
+- **The "Session Complete" screen is unreachable** — `doGrade` and `doRequeue`
+  both call `doEnd()` directly when the queue empties, which navigates away
+  before `render()` can show `renderFinished`. The end-of-session summary has
+  therefore never been visible. Either route the last card through `render()` or
+  delete the screen.
 - **Requeue keybinding is inconsistent** — Space means "reveal" everywhere except
   on a requeued card, where it means "Again" (`src/views/drill.ts:351-354`).
   Worth a second look.
@@ -370,8 +387,10 @@ Kept for history.
 
 ## Suggested order
 
-**First,** because it loses data and is small: **1.1**, with the drill-loop E2E
-test from 3.5 alongside it. Then **2.6**, which is nearly free once 1.1 lands.
+**Done:** **1.1**, with drill-loop tests (a partial answer to 3.5 — these run in
+jsdom against a fake IndexedDB rather than a real browser).
+
+**Next,** nearly free now that grades are durable: **2.6** (session resume).
 
 **Then the daily-feel batch,** all small and all independent: **2.1**
 (non-blocking startup), **2.5** (dark mode), **2.2** (stop rebuilding the DOM).

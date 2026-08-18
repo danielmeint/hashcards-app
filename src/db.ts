@@ -22,21 +22,16 @@ function getDb(): Promise<IDBPDatabase> {
   return dbPromise;
 }
 
-export async function getPerformance(hash: string): Promise<Performance> {
-  const db = await getDb();
-  const record = await db.get("performances", hash);
-  if (!record) {
-    return { type: "new" };
-  }
+function toRecord(hash: string, perf: ReviewedPerformance) {
   return {
-    type: "reviewed",
-    lastReviewedAt: record.lastReviewedAt,
-    stability: record.stability,
-    difficulty: record.difficulty,
-    intervalRaw: record.intervalRaw,
-    intervalDays: record.intervalDays,
-    dueDate: record.dueDate,
-    reviewCount: record.reviewCount,
+    hash,
+    lastReviewedAt: perf.lastReviewedAt,
+    stability: perf.stability,
+    difficulty: perf.difficulty,
+    intervalRaw: perf.intervalRaw,
+    intervalDays: perf.intervalDays,
+    dueDate: perf.dueDate,
+    reviewCount: perf.reviewCount,
   };
 }
 
@@ -78,32 +73,47 @@ export async function getAllReviews(): Promise<Review[]> {
   return db.getAll("reviews");
 }
 
-export async function saveSessionResults(
-  cache: Map<string, Performance>,
-  reviews: Review[]
+/**
+ * Durably record a single grade: the card's updated scheduling state and the
+ * review that produced it, in one transaction. Returns the review's key so the
+ * write can be reversed by `revertReview` if the user undoes the grade.
+ *
+ * Called on every grade rather than once per session — a drill interrupted by a
+ * crash or a backgrounded tab must not lose the reviews already answered.
+ */
+export async function persistReview(
+  hash: string,
+  perf: ReviewedPerformance,
+  review: Review
+): Promise<IDBValidKey> {
+  const db = await getDb();
+  const tx = db.transaction(["performances", "reviews"], "readwrite");
+  const reviewKey = tx.objectStore("reviews").add(review);
+  tx.objectStore("performances").put(toRecord(hash, perf));
+  const [key] = await Promise.all([reviewKey, tx.done]);
+  return key;
+}
+
+/**
+ * Reverse a `persistReview`, restoring the scheduling state the card held
+ * beforehand. A card whose previous state was "new" has its record deleted
+ * rather than overwritten, so it returns to the new-card pool.
+ */
+export async function revertReview(
+  hash: string,
+  prevPerf: Performance,
+  reviewKey: IDBValidKey | null
 ): Promise<void> {
   const db = await getDb();
   const tx = db.transaction(["performances", "reviews"], "readwrite");
-
-  for (const [hash, perf] of cache) {
-    if (perf.type === "reviewed") {
-      await tx.objectStore("performances").put({
-        hash,
-        lastReviewedAt: perf.lastReviewedAt,
-        stability: perf.stability,
-        difficulty: perf.difficulty,
-        intervalRaw: perf.intervalRaw,
-        intervalDays: perf.intervalDays,
-        dueDate: perf.dueDate,
-        reviewCount: perf.reviewCount,
-      });
-    }
+  if (prevPerf.type === "reviewed") {
+    tx.objectStore("performances").put(toRecord(hash, prevPerf));
+  } else {
+    tx.objectStore("performances").delete(hash);
   }
-
-  for (const review of reviews) {
-    await tx.objectStore("reviews").add(review);
+  if (reviewKey !== null) {
+    tx.objectStore("reviews").delete(reviewKey);
   }
-
   await tx.done;
 }
 
@@ -124,16 +134,7 @@ export async function importState(
   const db = await getDb();
   const tx = db.transaction("performances", "readwrite");
   for (const [hash, perf] of Object.entries(merged)) {
-    await tx.store.put({
-      hash,
-      lastReviewedAt: perf.lastReviewedAt,
-      stability: perf.stability,
-      difficulty: perf.difficulty,
-      intervalRaw: perf.intervalRaw,
-      intervalDays: perf.intervalDays,
-      dueDate: perf.dueDate,
-      reviewCount: perf.reviewCount,
-    });
+    tx.store.put(toRecord(hash, perf));
   }
   await tx.done;
 }

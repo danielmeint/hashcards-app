@@ -243,6 +243,9 @@ alongside. The revealed flag and undo stack are deliberately not persisted.
 
 ### 2.7 Mobile input is button-only
 
+**Fixed.** Tap-to-reveal and swipe-to-grade live in `attachCardGestures` in
+`src/views/drill.ts`, covered by the "drill input" tests. Original report below.
+
 Space and 1–4 are excellent on desktop. On a phone you are tapping into a row of
 small targets at the bottom of the screen.
 
@@ -251,6 +254,16 @@ small targets at the bottom of the screen.
 - **Swipe to grade** — left/right for the common grades, with the button row
   retained for the rest.
 - Both should respect the existing haptic setting.
+
+*As shipped:* right is Good, left is Forgot, and on a re-queued card the same
+two directions are Got it and Again. The card follows the finger and tilts, an
+indicator names what releasing would do, and the haptic fires once the gesture
+passes the point where it would commit. The gesture claims a drag only once it
+is unambiguously horizontal, with vertical winning ties, so long cards still
+scroll and text still selects; and a swipe before the answer is showing reveals
+rather than grades, so the gesture cannot grade a card that was never seen.
+Swiping is touch and pen only — mouse drags are text selection, and desktop has
+the keyboard — but tap-to-reveal works with a mouse too.
 
 ---
 
@@ -394,14 +407,6 @@ Carried forward, still open, none of it urgent.
 - **`manifest.json` has a fixed light `background_color`** — the PWA splash is
   white regardless of theme. A manifest cannot vary by colour scheme, so this
   needs either a compromise value or a generated per-theme manifest.
-- **The "Session Complete" screen is unreachable** — `doGrade` and `doRequeue`
-  both call `doEnd()` directly when the queue empties, which navigates away
-  before `render()` can show `renderFinished`. The end-of-session summary has
-  therefore never been visible. Either route the last card through `render()` or
-  delete the screen.
-- **Requeue keybinding is inconsistent** — Space means "reveal" everywhere except
-  on a requeued card, where it means "Again" (`src/views/drill.ts:351-354`).
-  Worth a second look.
 
 ---
 
@@ -425,21 +430,24 @@ Kept for history.
 - Shared `scanClozeBytes` helper extracted in the parser
 - Batched performance loading via a single `getAllPerformances()`
 - Keyboard listener cleanup via `AbortController`
+- The "Session Complete" screen made reachable — it reports the whole session,
+  including a sitting completed before a resume
+- Space made consistent: it reveals, and never grades
 
 ---
 
 ## Suggested order
 
 **Done:** **1.1** (durable grades), **2.6** (session resume), **2.5** (dark
-mode), **2.1** (non-blocking startup), **2.2** (incremental drill rendering) —
+mode), **2.1** (non-blocking startup), **2.2** (incremental drill rendering),
+**2.7** (touch gestures) —
 with drill-loop and deck-list tests as a partial answer to 3.5, running in jsdom
 against a fake IndexedDB rather than a real browser.
 
-**Next, the two remaining feel items:** **2.3** (stop re-fetching everything on
-every sync) and **2.4** (move cards out of localStorage). They are now the whole
-of what makes sync slow, and 2.1 made that cost visible rather than hidden
-behind a blank screen. **2.7** (mobile input) is independent of both and is the
-one that changes how the app feels in the hand.
+**Next:** the feel section is done. **2.3** (stop re-fetching everything on every
+sync) and **2.4** (move cards out of localStorage) are what is left of making
+sync fast, and 2.1 made that cost visible rather than hidden behind a blank
+screen.
 
 **Then correctness cleanup:** **1.2**, **1.3**, **1.5**, **3.1**.
 

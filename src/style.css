@@ -1019,6 +1019,26 @@ body {
   gap: 8px;
 }
 
+/*
+ * The directory a group of decks came from. Two files can share a name, so
+ * where they live is what tells them apart.
+ */
+.deck-group-name {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-top: 16px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-border-lighter);
+}
+
+.deck-group-name:first-child {
+  margin-top: 0;
+}
+
 .deck-card {
   display: flex;
   justify-content: space-between;

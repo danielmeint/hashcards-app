@@ -64,13 +64,20 @@ export function selectDueCards(
   return [...reviewDue, ...newCards.slice(0, budget)];
 }
 
-/** Count review-due and budget-capped new cards per deck. */
+/**
+ * Count review-due and unseen cards in a set.
+ *
+ * `newCount` is the raw supply, *not* capped by the day's budget. The budget is
+ * a single global pool, so a caller counting several decks must clamp once
+ * across all of them — clamping each deck separately and adding the results
+ * lets every deck claim the whole budget, and three decks with 20 new cards
+ * each read as "60 new" against a budget of 20.
+ */
 export function countDue(
   cards: Card[],
   performances: Map<string, ReviewedPerformance>,
   today: string = todayStr()
 ): { reviewDue: number; newCount: number; remainingBudget: number } {
-  const budget = remainingBudget(today);
   let reviewDue = 0;
   let newCount = 0;
 
@@ -83,9 +90,5 @@ export function countDue(
     }
   }
 
-  return {
-    reviewDue,
-    newCount: Math.min(newCount, budget),
-    remainingBudget: budget,
-  };
+  return { reviewDue, newCount, remainingBudget: remainingBudget(today) };
 }

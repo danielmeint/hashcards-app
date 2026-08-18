@@ -3,7 +3,13 @@ import { loadCachedCards, syncAll } from "../sync";
 import { getConfig } from "../github";
 import { getAllPerformances, loadSession, clearSession } from "../db";
 import { todayStr } from "../fsrs";
-import { getNewCardsPerDay, getIntroducedToday, selectDueCards, countDue } from "../new-card-budget";
+import {
+  getNewCardsPerDay,
+  getIntroducedToday,
+  selectDueCards,
+  countDue,
+  remainingBudget,
+} from "../new-card-budget";
 import {
   SyncStatus,
   formatSyncAge,
@@ -13,11 +19,22 @@ import {
 } from "../sync-state";
 
 type DeckInfo = {
+  /**
+   * Identity is the repo path, not the display name. `aws/Networking.md` and
+   * `misc/Networking.md` are two decks that happen to be called the same thing,
+   * and merging them silently loses one of them.
+   */
+  path: string;
   name: string;
+  /** Directory the file sits in; empty at the repo root. */
+  dir: string;
   total: number;
   reviewDue: number;
+  /** Genuine supply of unseen cards, before the day's global budget. */
   newCount: number;
 };
+
+type DeckGroup = { dir: string; decks: DeckInfo[] };
 
 /**
  * Only one deck list exists at a time, so its subscription can live here rather
@@ -25,10 +42,14 @@ type DeckInfo = {
  */
 let unsubscribe: (() => void) | null = null;
 
+/** Escapes quotes too, so it is safe for attribute values as well as text. */
 function escapeHtml(text: string): string {
-  const el = document.createElement("div");
-  el.textContent = text;
-  return el.innerHTML;
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /** What the status line should say, or null when there is nothing to report. */
@@ -100,30 +121,61 @@ export async function renderDeckList(
   const newPerDay = getNewCardsPerDay();
   const introducedToday = getIntroducedToday(today);
 
-  // Group by deck and compute counts
-  const deckCardMap = new Map<string, Card[]>();
+  // One deck per source file, keyed by path.
+  const byFile = new Map<string, Card[]>();
   for (const card of cards) {
-    if (!deckCardMap.has(card.deckName)) {
-      deckCardMap.set(card.deckName, []);
-    }
-    deckCardMap.get(card.deckName)!.push(card);
+    const deckCards = byFile.get(card.filePath);
+    if (deckCards) deckCards.push(card);
+    else byFile.set(card.filePath, [card]);
   }
 
   const decks: DeckInfo[] = [];
-  for (const [name, deckCards] of deckCardMap) {
+  for (const [path, deckCards] of byFile) {
     const counts = countDue(deckCards, performances, today);
     decks.push({
-      name,
+      path,
+      // Every card in a file shares its deck name, frontmatter override included.
+      name: deckCards[0].deckName,
+      dir: path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "",
       total: deckCards.length,
       reviewDue: counts.reviewDue,
       newCount: counts.newCount,
     });
   }
-  decks.sort((a, b) => a.name.localeCompare(b.name));
+  decks.sort(
+    (a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path)
+  );
+
+  // Grouped by directory, root first, so the list reads the way the repo looks
+  // — and so two decks with the same name are told apart by where they live.
+  const groups: DeckGroup[] = [];
+  for (const deck of decks) {
+    const group = groups.find((g) => g.dir === deck.dir);
+    if (group) group.decks.push(deck);
+    else groups.push({ dir: deck.dir, decks: [deck] });
+  }
+  groups.sort((a, b) =>
+    a.dir === "" ? -1 : b.dir === "" ? 1 : a.dir.localeCompare(b.dir)
+  );
 
   const totalReviews = decks.reduce((s, d) => s + d.reviewDue, 0);
-  const totalNew = decks.reduce((s, d) => s + d.newCount, 0);
+  // Clamped once, across every deck: the budget is one pool, and the button
+  // has to promise what pressing it will actually give you.
+  const totalNew = Math.min(
+    decks.reduce((s, d) => s + d.newCount, 0),
+    remainingBudget(today)
+  );
   const totalDue = totalReviews + totalNew;
+
+  const deckRow = (d: DeckInfo) => `
+    <div class="deck-card" data-path="${escapeHtml(d.path)}">
+      <div class="deck-info">
+        <span class="deck-name">${escapeHtml(d.name)}</span>
+        <span class="deck-counts">${d.total} cards · ${d.reviewDue} review${d.reviewDue === 1 ? "" : "s"} · ${d.newCount} new</span>
+      </div>
+      ${d.reviewDue + d.newCount > 0 ? `<button class="btn deck-drill-btn" data-path="${escapeHtml(d.path)}">Drill</button>` : ""}
+    </div>
+  `;
 
   container.innerHTML = `
     <div class="deck-list-view">
@@ -159,17 +211,11 @@ export async function renderDeckList(
           : `<div class="all-caught-up">All caught up!</div>`
       }
       <div class="deck-cards">
-        ${decks
+        ${groups
           .map(
-            (d) => `
-          <div class="deck-card" data-deck="${d.name}">
-            <div class="deck-info">
-              <span class="deck-name">${d.name}</span>
-              <span class="deck-counts">${d.total} cards · ${d.reviewDue} review${d.reviewDue === 1 ? "" : "s"} · ${d.newCount} new</span>
-            </div>
-            ${d.reviewDue + d.newCount > 0 ? `<button class="btn deck-drill-btn" data-deck="${d.name}">Drill</button>` : ""}
-          </div>
-        `
+            (g) =>
+              (g.dir ? `<div class="deck-group-name">${escapeHtml(g.dir)}</div>` : "") +
+              g.decks.map(deckRow).join("")
           )
           .join("")}
       </div>
@@ -223,8 +269,8 @@ export async function renderDeckList(
 
   container.querySelectorAll(".deck-drill-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      const deckName = (btn as HTMLElement).dataset.deck!;
-      const deckCards = cards.filter((c) => c.deckName === deckName);
+      const path = (btn as HTMLElement).dataset.path!;
+      const deckCards = cards.filter((c) => c.filePath === path);
       const due = selectDueCards(deckCards, performances, today);
       if (due.length > 0) onDrill(due);
     });

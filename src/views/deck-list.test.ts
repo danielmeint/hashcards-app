@@ -21,10 +21,14 @@ async function freshDeckList() {
   return { renderDeckList, ...syncState };
 }
 
-function card(n: number, deckName: string): Card {
+function card(
+  n: number,
+  deckName: string,
+  filePath = `${deckName}.md`
+): Card {
   return {
     deckName,
-    filePath: `${deckName}.md`,
+    filePath,
     range: [n, n + 1],
     content: { type: "basic", question: `Q${n}`, answer: `A${n}` },
     hash: `hash-${n}`,
@@ -137,5 +141,121 @@ describe("deck list", () => {
 
     await new Promise((r) => setTimeout(r, 20));
     expect(container.textContent).toBe("somewhere else");
+  });
+});
+
+/**
+ * Deck identity used to be the file's basename, so `aws/Networking.md` and
+ * `misc/Networking.md` silently merged into one deck — drilling either one
+ * drilled both. Identity is the path now, and the directory is what tells two
+ * same-named decks apart on screen.
+ */
+describe("deck identity", () => {
+  let container: HTMLElement;
+
+  beforeEach(() => {
+    localStorage.clear();
+    document.body.innerHTML = "";
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    globalThis.fetch = vi.fn(() =>
+      Promise.reject(new Error("no network in tests"))
+    ) as unknown as typeof fetch;
+  });
+
+  const counts = (container: HTMLElement) =>
+    [...container.querySelectorAll(".deck-counts")].map((el) => el.textContent!);
+
+  it("keeps same-named files in different directories apart", async () => {
+    const { renderDeckList } = await freshDeckList();
+    cache([
+      card(1, "Networking", "aws/Networking.md"),
+      card(2, "Networking", "aws/Networking.md"),
+      card(3, "Networking", "misc/Networking.md"),
+    ]);
+
+    await renderDeckList(container, () => {}, () => {}, () => {});
+
+    // Two decks, both displaying the same name.
+    expect(deckNames(container)).toEqual(["Networking", "Networking"]);
+    expect(counts(container)[0]).toContain("2 cards");
+    expect(counts(container)[1]).toContain("1 cards");
+  });
+
+  it("groups decks under their directory, repo root first", async () => {
+    const { renderDeckList } = await freshDeckList();
+    cache([
+      card(1, "DDIA", "DDIA.md"),
+      card(2, "S3", "aws/S3.md"),
+      card(3, "Networking", "misc/Networking.md"),
+    ]);
+
+    await renderDeckList(container, () => {}, () => {}, () => {});
+
+    expect(
+      [...container.querySelectorAll(".deck-group-name")].map(
+        (el) => el.textContent
+      )
+    ).toEqual(["aws", "misc"]);
+    // Root-level decks come first and get no header.
+    expect(deckNames(container)).toEqual(["DDIA", "S3", "Networking"]);
+  });
+
+  it("drills only the file that was asked for", async () => {
+    const { renderDeckList } = await freshDeckList();
+    cache([
+      card(1, "Networking", "aws/Networking.md"),
+      card(2, "Networking", "misc/Networking.md"),
+    ]);
+
+    const drilled: Card[][] = [];
+    await renderDeckList(container, (cards) => drilled.push(cards), () => {}, () => {});
+
+    const buttons = [...container.querySelectorAll(".deck-drill-btn")];
+    (buttons[0] as HTMLButtonElement).click();
+
+    expect(drilled).toHaveLength(1);
+    expect(drilled[0].map((c) => c.filePath)).toEqual(["aws/Networking.md"]);
+  });
+
+  it("shows each deck's real supply but promises only what the budget allows", async () => {
+    const { renderDeckList } = await freshDeckList();
+    localStorage.setItem("new_cards_per_day", "2");
+    cache([
+      card(1, "A", "a.md"),
+      card(2, "A", "a.md"),
+      card(3, "A", "a.md"),
+      card(4, "B", "b.md"),
+      card(5, "B", "b.md"),
+      card(6, "B", "b.md"),
+    ]);
+
+    await renderDeckList(container, () => {}, () => {}, () => {});
+
+    // Per deck: genuine supply, three each.
+    expect(counts(container)[0]).toContain("3 new");
+    expect(counts(container)[1]).toContain("3 new");
+    // The button has to promise what pressing it actually gives. Clamping each
+    // deck to the global budget and adding them up said "4 new" here.
+    expect(container.querySelector("#drill-all")!.textContent).toContain(
+      "2 new"
+    );
+  });
+
+  it("hands the drill only as many new cards as the budget allows", async () => {
+    const { renderDeckList } = await freshDeckList();
+    localStorage.setItem("new_cards_per_day", "2");
+    cache([
+      card(1, "A", "a.md"),
+      card(2, "A", "a.md"),
+      card(3, "B", "b.md"),
+      card(4, "B", "b.md"),
+    ]);
+
+    const drilled: Card[][] = [];
+    await renderDeckList(container, (cards) => drilled.push(cards), () => {}, () => {});
+    (container.querySelector("#drill-all") as HTMLButtonElement).click();
+
+    expect(drilled[0]).toHaveLength(2);
   });
 });

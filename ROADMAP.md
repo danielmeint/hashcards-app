@@ -48,6 +48,9 @@ of the save-and-sync logic.
 
 ### 1.2 The deck list inflates the "new" count
 
+**Fixed** alongside 1.3, which made it worse. `countDue` returns the genuine
+supply and `deck-list.ts` clamps once across all decks. Original report below.
+
 **P1.** The new-card budget is a single global pool (`remainingBudget()`), but
 `countDue` clamps *each deck independently* to that global remainder:
 
@@ -67,7 +70,16 @@ remaining budget displayed separately, as it already is in `.new-budget-status`)
 or be apportioned explicitly — but they must not each independently claim the
 whole budget.
 
+*As shipped:* per-deck rows report the deck's own supply and the Drill All button
+reports what pressing it actually gives. Splitting decks by path (1.3) creates
+more decks, each of which was claiming the whole budget again, so the two had to
+land together.
+
 ### 1.3 Deck names collide across directories
+
+**Fixed.** Decks are keyed by repo path and grouped by directory in
+`src/views/deck-list.ts`, covered by the "deck identity" tests. Original report
+below.
 
 **P1.** Deck name is derived from the basename only:
 
@@ -84,6 +96,10 @@ from being live.
 key on the path, and use the directory structure as a grouping level in the deck
 list (see 4.3). TOML frontmatter `name = "..."` continues to override the display
 name.
+
+*As shipped:* exactly that, and it needed no data change — every `Card` already
+carried `filePath`, so only the deck list's grouping was wrong. The merge was
+worse than a display bug: pressing Drill on either deck drilled cards from both.
 
 ### 1.4 Images are broken in private repos
 
@@ -467,9 +483,10 @@ Kept for history.
 drill-loop, deck-list and sync tests as a partial answer to 3.5, running in jsdom
 against a fake IndexedDB and a fake GitHub rather than a real browser.
 
-**Next, correctness cleanup:** **1.2**, **1.3**, **1.5**, **3.1**. 1.5 is
-part-done — sync now reports failures in the deck list — but the durable half
-(retry queue, unmissable banner) is still open.
+**Next, what is left of correctness:** **1.5** and **3.1**. 1.5 is part-done —
+sync reports failures in the deck list — but the durable half (retry queue,
+last-successful-sync warning) is open. 3.1 only bites with real multi-device
+concurrency, and 4.1 may rewrite that code anyway.
 
 **Then pick a bet.** **4.1** is the one that changes who can use this at all, and
 it makes 3.4 and the localStorage-credential problem disappear. **4.2 → 4.3** is

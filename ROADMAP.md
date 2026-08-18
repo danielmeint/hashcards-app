@@ -426,6 +426,9 @@ Carried forward, still open, none of it urgent.
   dynamic import, since it is not needed until the first card renders.
 - **DOM query boilerplate** — a small typed helper would remove a lot of repeated
   `querySelector` casting, mostly in the settings view.
+- **Demo mode used to spend the real new-card budget** — fixed when the drill was
+  split; kept here as a reminder that `dryRun` has to cover localStorage writes,
+  not just IndexedDB ones.
 - **`manifest.json` has a fixed light `background_color`** — the PWA splash is
   white regardless of theme. A manifest cannot vary by colour scheme, so this
   needs either a compromise value or a generated per-theme manifest.

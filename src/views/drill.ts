@@ -1,6 +1,12 @@
-import { Card, Grade, Performance, Review } from "../types";
+import { Card, DrillSession, Grade, Performance, Review } from "../types";
 import { updatePerformance, todayStr, formatInterval } from "../fsrs";
-import { getAllPerformances, persistReview, revertReview } from "../db";
+import {
+  getAllPerformances,
+  persistReview,
+  revertReview,
+  saveSession,
+  clearSession,
+} from "../db";
 import { renderFront, renderBack, postRender } from "../render";
 import { getConfig, getIntervalFuzz, getHapticFeedback } from "../github";
 import { recordIntroduced } from "../new-card-budget";
@@ -17,6 +23,8 @@ type SessionState = {
 type DrillOptions = {
   dryRun?: boolean;
   cache?: Map<string, Performance>;
+  /** Restore an interrupted drill instead of starting a fresh one. */
+  resume?: DrillSession;
 };
 
 export async function renderDrill(
@@ -25,22 +33,33 @@ export async function renderDrill(
   onEnd: () => void,
   options: DrillOptions = {}
 ): Promise<void> {
-  // Shuffle
-  const queue = [...dueCards];
-  for (let i = queue.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [queue[i], queue[j]] = [queue[j], queue[i]];
-  }
+  // A resumed drill keeps its original order, burial decisions and progress; a
+  // fresh one shuffles and buries cloze siblings.
+  const resume = options.resume;
+  let filtered: Card[];
 
-  // Bury cloze siblings: keep only first card per family hash
-  const seenFamilies = new Set<string>();
-  const filtered: Card[] = [];
-  for (const card of queue) {
-    if (card.familyHash) {
-      if (seenFamilies.has(card.familyHash)) continue;
-      seenFamilies.add(card.familyHash);
+  if (resume) {
+    const byHash = new Map(dueCards.map((c) => [c.hash, c]));
+    filtered = resume.queue
+      .map((hash) => byHash.get(hash))
+      .filter((c): c is Card => c !== undefined);
+  } else {
+    const queue = [...dueCards];
+    for (let i = queue.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [queue[i], queue[j]] = [queue[j], queue[i]];
     }
-    filtered.push(card);
+
+    // Bury cloze siblings: keep only first card per family hash
+    const seenFamilies = new Set<string>();
+    filtered = [];
+    for (const card of queue) {
+      if (card.familyHash) {
+        if (seenFamilies.has(card.familyHash)) continue;
+        seenFamilies.add(card.familyHash);
+      }
+      filtered.push(card);
+    }
   }
 
   // Populate cache from provided data or IndexedDB
@@ -65,7 +84,7 @@ export async function renderDrill(
   for (const [hash, perf] of cache) {
     if (perf.type === "new") newCardHashes.add(hash);
   }
-  const gradedNewCards = new Set<string>();
+  const gradedNewCards = new Set<string>(resume?.gradedNew ?? []);
 
   type UndoEntry =
     | {
@@ -79,9 +98,12 @@ export async function renderDrill(
       }
     | { type: "requeue"; cardHash: string; again: boolean };
 
-  const requeuedHashes = new Set<string>();
-  const completedHashes = new Set<string>();
+  // The undo stack is intentionally not persisted: undo is a within-sitting
+  // correction, and a resumed drill starts with a clean one.
+  const requeuedHashes = new Set<string>(resume?.requeued ?? []);
+  const completedHashes = new Set<string>(resume?.completed ?? []);
   const undoStack: UndoEntry[] = [];
+  const startedAt = resume?.startedAt ?? new Date().toISOString();
 
   // Grades are persisted as they happen rather than batched until the session
   // ends: a drill interrupted by a crash, a backgrounded tab, or the OS
@@ -103,8 +125,26 @@ export async function renderDrill(
     reviews: [],
     cache,
     revealed: false,
-    totalCards: filtered.length,
+    totalCards: resume?.totalCards ?? filtered.length,
   };
+
+  /** Current drill position, for persistence. */
+  function snapshot(): DrillSession {
+    return {
+      queue: state.queue.map((c) => c.hash),
+      requeued: [...requeuedHashes],
+      completed: [...completedHashes],
+      gradedNew: [...gradedNewCards],
+      totalCards: state.totalCards,
+      startedAt,
+    };
+  }
+
+  // Record the starting position, so a crash before the first grade still
+  // resumes this card set rather than reshuffling into a different one.
+  if (!options.dryRun) {
+    enqueueWrite(() => saveSession(snapshot()));
+  }
 
   function render() {
     if (state.queue.length === 0) {
@@ -280,8 +320,14 @@ export async function renderDrill(
     undoStack.push(undoEntry);
 
     if (!options.dryRun) {
+      const session = snapshot();
       enqueueWrite(async () => {
-        undoEntry.reviewKey = await persistReview(card.hash, newPerf, review);
+        undoEntry.reviewKey = await persistReview(
+          card.hash,
+          newPerf,
+          review,
+          session
+        );
       });
     }
 
@@ -306,6 +352,11 @@ export async function renderDrill(
     } else {
       requeuedHashes.delete(card.hash);
       completedHashes.add(card.hash);
+    }
+
+    if (!options.dryRun) {
+      const session = snapshot();
+      enqueueWrite(() => saveSession(session));
     }
 
     state.revealed = false;
@@ -335,6 +386,11 @@ export async function renderDrill(
         completedHashes.delete(card.hash);
       }
       state.queue.unshift(card);
+
+      if (!options.dryRun) {
+        const session = snapshot();
+        enqueueWrite(() => saveSession(session));
+      }
     } else {
       // Undo a real FSRS grade
       state.reviews.pop();
@@ -361,8 +417,14 @@ export async function renderDrill(
       // Reverse the persisted write. The queue is serialized, so the grade's
       // write has landed and its key is populated by the time this runs.
       if (!options.dryRun) {
+        const session = snapshot();
         await enqueueWrite(() =>
-          revertReview(entry.cardHash, entry.prevPerf, entry.reviewKey)
+          revertReview(
+            entry.cardHash,
+            entry.prevPerf,
+            entry.reviewKey,
+            session
+          )
         );
       }
       state.cache.set(card.hash, entry.prevPerf);
@@ -374,6 +436,7 @@ export async function renderDrill(
 
   async function doEnd() {
     if (!options.dryRun) {
+      enqueueWrite(() => clearSession());
       await writeChain;
 
       const config = getConfig();

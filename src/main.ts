@@ -5,14 +5,18 @@ import { renderDeckList } from "./views/deck-list";
 import { renderDrill } from "./views/drill";
 import { renderStats } from "./views/stats";
 import { getDemoData } from "./demo";
-import { Card } from "./types";
+import { Card, DrillSession } from "./types";
 import "./style.css";
 
 const app = document.getElementById("app")!;
 
 type View = "settings" | "decks" | "drill" | "stats";
 
-async function navigate(view: View, drillCards?: Card[]) {
+async function navigate(
+  view: View,
+  drillCards?: Card[],
+  resume?: DrillSession
+) {
   app.innerHTML = "";
 
   switch (view) {
@@ -23,7 +27,7 @@ async function navigate(view: View, drillCards?: Card[]) {
     case "decks":
       await renderDeckList(
         app,
-        (cards) => navigate("drill", cards),
+        (cards, session) => navigate("drill", cards, session),
         () => navigate("settings"),
         () => navigate("stats")
       );
@@ -31,7 +35,7 @@ async function navigate(view: View, drillCards?: Card[]) {
 
     case "drill":
       if (drillCards && drillCards.length > 0) {
-        await renderDrill(app, drillCards, () => navigate("decks"));
+        await renderDrill(app, drillCards, () => navigate("decks"), { resume });
       } else {
         await navigate("decks");
       }

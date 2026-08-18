@@ -42,17 +42,33 @@ function click(container: HTMLElement, selector: string): void {
   el.click();
 }
 
-/** Let the drill's serialized write queue drain. */
+/**
+ * Drain the drill's serialized write queue. Only sound for asserting that
+ * nothing was written — for anything else use `waitFor`, which does not assume
+ * how many event-loop turns an IndexedDB write takes.
+ */
 async function settle(): Promise<void> {
-  for (let i = 0; i < 20; i++) await Promise.resolve();
-  await new Promise((r) => setTimeout(r, 0));
+  for (let i = 0; i < 50; i++) await new Promise((r) => setTimeout(r, 0));
+}
+
+/** Poll until `predicate` holds, so tests never guess at write timing. */
+async function waitFor<T>(
+  read: () => Promise<T>,
+  predicate: (value: T) => boolean,
+  label: string
+): Promise<T> {
+  for (let i = 0; i < 200; i++) {
+    const value = await read();
+    if (predicate(value)) return value;
+    await new Promise((r) => setTimeout(r, 1));
+  }
+  throw new Error(`Timed out waiting for ${label}`);
 }
 
 /** Reveal the current card and grade it. */
-async function grade(container: HTMLElement, g: Grade): Promise<void> {
+function grade(container: HTMLElement, g: Grade): void {
   click(container, "#reveal-btn");
   click(container, `.grade-btn[data-grade="${g}"]`);
-  await settle();
 }
 
 describe("drill persistence", () => {
@@ -70,13 +86,16 @@ describe("drill persistence", () => {
       await freshDrill();
     await renderDrill(container, [basicCard(1), basicCard(2), basicCard(3)], () => {});
 
-    await grade(container, Grade.Good);
+    grade(container, Grade.Good);
 
     // No End, no Done — this is the interrupted-session case.
+    const reviews: Review[] = await waitFor(
+      getAllReviews,
+      (r) => r.length === 1,
+      "the grade to be persisted"
+    );
     const perfs = await getAllPerformances();
-    const reviews: Review[] = await getAllReviews();
 
-    expect(reviews).toHaveLength(1);
     expect(reviews[0].grade).toBe(Grade.Good);
     expect(perfs.size).toBe(1);
     expect(perfs.get(reviews[0].cardHash)!.reviewCount).toBe(1);
@@ -88,10 +107,11 @@ describe("drill persistence", () => {
     await renderDrill(container, [basicCard(1), basicCard(2), basicCard(3)], () => {});
 
     // Easy does not re-queue, so each grade retires one card.
-    await grade(container, Grade.Easy);
-    await grade(container, Grade.Easy);
+    grade(container, Grade.Easy);
+    await waitFor(getAllReviews, (r) => r.length === 1, "first grade");
+    grade(container, Grade.Easy);
+    await waitFor(getAllReviews, (r) => r.length === 2, "second grade");
 
-    expect(await getAllReviews()).toHaveLength(2);
     expect((await getAllPerformances()).size).toBe(2);
   });
 
@@ -100,15 +120,14 @@ describe("drill persistence", () => {
       await freshDrill();
     await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
 
-    await grade(container, Grade.Easy);
-    expect(await getAllReviews()).toHaveLength(1);
+    grade(container, Grade.Easy);
+    await waitFor(getAllReviews, (r) => r.length === 1, "the grade");
 
     click(container, "#undo-btn");
-    await settle();
 
     // The card was new before the grade, so its record should be gone
     // entirely rather than left behind with stale scheduling state.
-    expect(await getAllReviews()).toHaveLength(0);
+    await waitFor(getAllReviews, (r) => r.length === 0, "the undo");
     expect((await getAllPerformances()).size).toBe(0);
   });
 
@@ -117,18 +136,21 @@ describe("drill persistence", () => {
       await freshDrill();
     await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
 
-    await grade(container, Grade.Easy);
-    await grade(container, Grade.Easy);
-    expect(await getAllReviews()).toHaveLength(2);
+    grade(container, Grade.Easy);
+    await waitFor(getAllReviews, (r) => r.length === 1, "first grade");
+    grade(container, Grade.Easy);
+    await waitFor(getAllReviews, (r) => r.length === 2, "second grade");
 
     click(container, "#undo-btn");
-    await settle();
 
     // The queue is shuffled, so assert the surviving review and performance
     // describe the same card rather than naming one.
-    const reviews = await getAllReviews();
+    const reviews = await waitFor(
+      getAllReviews,
+      (r) => r.length === 1,
+      "the undo"
+    );
     const perfs = await getAllPerformances();
-    expect(reviews).toHaveLength(1);
     expect(perfs.size).toBe(1);
     expect([...perfs.keys()]).toEqual([reviews[0].cardHash]);
   });
@@ -138,13 +160,94 @@ describe("drill persistence", () => {
     await renderDrill(container, [basicCard(1)], () => {});
 
     // Forgot re-queues the card for reinforcement without further FSRS.
-    await grade(container, Grade.Forgot);
+    grade(container, Grade.Forgot);
+    await waitFor(getAllReviews, (r) => r.length === 1, "the grade");
 
     click(container, "#reveal-btn");
     click(container, '.requeue-btn[data-action="done"]');
     await settle();
 
     expect(await getAllReviews()).toHaveLength(1);
+  });
+
+  it("records drill position and clears it when the session ends", async () => {
+    const { renderDrill, getAllReviews, loadSession } = await freshDrill();
+    await renderDrill(container, [basicCard(1), basicCard(2), basicCard(3)], () => {});
+
+    grade(container, Grade.Easy);
+    await waitFor(getAllReviews, (r) => r.length === 1, "the grade");
+
+    const session = await waitFor(
+      loadSession,
+      (s) => s !== null && s.queue.length === 2,
+      "the drill position"
+    );
+    expect(session!.completed).toHaveLength(1);
+    expect(session!.totalCards).toBe(3);
+
+    click(container, "#end-btn");
+    await waitFor(loadSession, (s) => s === null, "the session to be cleared");
+  });
+
+  it("resumes an interrupted drill without re-asking graded cards", async () => {
+    const { renderDrill, getAllReviews, loadSession } = await freshDrill();
+    const cards = [basicCard(1), basicCard(2), basicCard(3)];
+    await renderDrill(container, cards, () => {});
+
+    grade(container, Grade.Easy);
+    const session = await waitFor(
+      loadSession,
+      (s) => s !== null && s.queue.length === 2,
+      "the drill position"
+    );
+
+    // Simulate a reopen: fresh container, same database, restored position.
+    document.body.innerHTML = "";
+    const resumed = document.createElement("div");
+    document.body.appendChild(resumed);
+    await renderDrill(resumed, cards, () => {}, { resume: session! });
+
+    grade(resumed, Grade.Easy);
+    await waitFor(getAllReviews, (r) => r.length === 2, "fourth grade");
+    grade(resumed, Grade.Easy);
+
+    const reviews = await waitFor(
+      getAllReviews,
+      (r) => r.length === 3,
+      "the drill to finish"
+    );
+
+    // Every card graded exactly once across the two sittings.
+    expect(new Set(reviews.map((r) => r.cardHash)).size).toBe(3);
+  });
+
+  it("drops cards that have left the repo when resuming", async () => {
+    const { renderDrill, getAllReviews, loadSession } = await freshDrill();
+    const cards = [basicCard(1), basicCard(2), basicCard(3)];
+    await renderDrill(container, cards, () => {});
+
+    grade(container, Grade.Easy);
+    const session = await waitFor(
+      loadSession,
+      (s) => s !== null && s.queue.length === 2,
+      "the drill position"
+    );
+
+    // One of the queued cards no longer exists in the synced card set.
+    const survivors = cards.filter((c) => c.hash !== session!.queue[0]);
+
+    document.body.innerHTML = "";
+    const resumed = document.createElement("div");
+    document.body.appendChild(resumed);
+    await renderDrill(resumed, survivors, () => {}, { resume: session! });
+
+    grade(resumed, Grade.Easy);
+    const reviews = await waitFor(
+      getAllReviews,
+      (r) => r.length === 2,
+      "the remaining card"
+    );
+    expect(reviews.map((r) => r.cardHash)).not.toContain(session!.queue[0]);
   });
 
   it("writes nothing in dry-run (demo) mode", async () => {
@@ -154,7 +257,8 @@ describe("drill persistence", () => {
       dryRun: true,
     });
 
-    await grade(container, Grade.Good);
+    grade(container, Grade.Good);
+    await settle();
 
     expect(await getAllReviews()).toHaveLength(0);
     expect((await getAllPerformances()).size).toBe(0);

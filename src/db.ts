@@ -1,8 +1,13 @@
 import { openDB, IDBPDatabase } from "idb";
-import { Performance, ReviewedPerformance, Review } from "./types";
+import {
+  DrillSession,
+  Performance,
+  ReviewedPerformance,
+  Review,
+} from "./types";
 
 const DB_NAME = "hashcards";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -15,6 +20,9 @@ function getDb(): Promise<IDBPDatabase> {
         }
         if (!db.objectStoreNames.contains("reviews")) {
           db.createObjectStore("reviews", { autoIncrement: true });
+        }
+        if (!db.objectStoreNames.contains("session")) {
+          db.createObjectStore("session");
         }
       },
     });
@@ -73,25 +81,49 @@ export async function getAllReviews(): Promise<Review[]> {
   return db.getAll("reviews");
 }
 
+const SESSION_KEY = "current";
+const SESSION_STORES = ["performances", "reviews", "session"] as const;
+
 /**
- * Durably record a single grade: the card's updated scheduling state and the
- * review that produced it, in one transaction. Returns the review's key so the
- * write can be reversed by `revertReview` if the user undoes the grade.
+ * Durably record a single grade: the card's updated scheduling state, the
+ * review that produced it, and the resulting drill position — all in one
+ * transaction. Returns the review's key so the write can be reversed by
+ * `revertReview` if the user undoes the grade.
  *
- * Called on every grade rather than once per session — a drill interrupted by a
- * crash or a backgrounded tab must not lose the reviews already answered.
+ * Called on every grade rather than once per session, because a drill
+ * interrupted by a crash or a backgrounded tab must not lose the reviews
+ * already answered. The session snapshot shares the transaction so the two can
+ * never disagree: a resume must not re-ask a card whose grade was recorded.
  */
 export async function persistReview(
   hash: string,
   perf: ReviewedPerformance,
-  review: Review
+  review: Review,
+  session: DrillSession
 ): Promise<IDBValidKey> {
   const db = await getDb();
-  const tx = db.transaction(["performances", "reviews"], "readwrite");
+  const tx = db.transaction(SESSION_STORES, "readwrite");
   const reviewKey = tx.objectStore("reviews").add(review);
   tx.objectStore("performances").put(toRecord(hash, perf));
+  tx.objectStore("session").put(session, SESSION_KEY);
   const [key] = await Promise.all([reviewKey, tx.done]);
   return key;
+}
+
+/** Record drill position with no accompanying grade (re-queue, session start). */
+export async function saveSession(session: DrillSession): Promise<void> {
+  const db = await getDb();
+  await db.put("session", session, SESSION_KEY);
+}
+
+export async function loadSession(): Promise<DrillSession | null> {
+  const db = await getDb();
+  return (await db.get("session", SESSION_KEY)) ?? null;
+}
+
+export async function clearSession(): Promise<void> {
+  const db = await getDb();
+  await db.delete("session", SESSION_KEY);
 }
 
 /**
@@ -102,10 +134,11 @@ export async function persistReview(
 export async function revertReview(
   hash: string,
   prevPerf: Performance,
-  reviewKey: IDBValidKey | null
+  reviewKey: IDBValidKey | null,
+  session: DrillSession
 ): Promise<void> {
   const db = await getDb();
-  const tx = db.transaction(["performances", "reviews"], "readwrite");
+  const tx = db.transaction(SESSION_STORES, "readwrite");
   if (prevPerf.type === "reviewed") {
     tx.objectStore("performances").put(toRecord(hash, prevPerf));
   } else {
@@ -114,6 +147,7 @@ export async function revertReview(
   if (reviewKey !== null) {
     tx.objectStore("reviews").delete(reviewKey);
   }
+  tx.objectStore("session").put(session, SESSION_KEY);
   await tx.done;
 }
 

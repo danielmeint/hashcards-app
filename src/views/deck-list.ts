@@ -1,7 +1,7 @@
-import { Card } from "../types";
+import { Card, DrillSession } from "../types";
 import { loadCachedCards, syncCards, fullSync } from "../sync";
 import { getConfig } from "../github";
-import { getAllPerformances } from "../db";
+import { getAllPerformances, loadSession, clearSession } from "../db";
 import { todayStr } from "../fsrs";
 import { getNewCardsPerDay, getIntroducedToday, selectDueCards, countDue } from "../new-card-budget";
 
@@ -14,7 +14,7 @@ type DeckInfo = {
 
 export async function renderDeckList(
   container: HTMLElement,
-  onDrill: (cards: Card[]) => void,
+  onDrill: (cards: Card[], resume?: DrillSession) => void,
   onSettings: () => void,
   onStats: () => void
 ): Promise<void> {
@@ -33,6 +33,16 @@ export async function renderDeckList(
 
   const performances = await getAllPerformances();
   const today = todayStr();
+
+  // An interrupted drill is offered back rather than resumed automatically —
+  // reopening the app is not always an intent to carry on where you left off.
+  const session = await loadSession();
+  const byHash = new Map(cards.map((c) => [c.hash, c]));
+  const resumable = session
+    ? session.queue.filter((hash) => byHash.has(hash))
+    : [];
+  // A session whose cards have all left the repo can never be resumed.
+  if (session && resumable.length === 0) await clearSession();
   const newPerDay = getNewCardsPerDay();
   const introducedToday = getIntroducedToday(today);
 
@@ -72,6 +82,22 @@ export async function renderDeckList(
         </div>
       </div>
       <div class="new-budget-status">New today: ${introducedToday}/${newPerDay}</div>
+      ${
+        resumable.length > 0
+          ? `
+        <div class="resume-banner">
+          <div class="resume-text">
+            <strong>Session in progress</strong>
+            <span>${resumable.length} card${resumable.length === 1 ? "" : "s"} left</span>
+          </div>
+          <div class="resume-actions">
+            <button id="resume-btn" class="btn btn-primary">Resume</button>
+            <button id="discard-btn" class="btn">Discard</button>
+          </div>
+        </div>
+      `
+          : ""
+      }
       ${
         totalDue > 0
           ? `<button class="btn btn-primary drill-all-btn" id="drill-all">Drill All (${totalReviews} review${totalReviews === 1 ? "" : "s"}, ${totalNew} new)</button>`
@@ -119,6 +145,18 @@ export async function renderDeckList(
       btn.disabled = false;
       btn.textContent = "⟳";
     }
+  });
+
+  container.querySelector("#resume-btn")?.addEventListener("click", () => {
+    // Completed cards travel too: undo needs to resolve any card in the session.
+    const hashes = new Set([...session!.queue, ...session!.completed]);
+    const sessionCards = cards.filter((c) => hashes.has(c.hash));
+    onDrill(sessionCards, session!);
+  });
+
+  container.querySelector("#discard-btn")?.addEventListener("click", async () => {
+    await clearSession();
+    renderDeckList(container, onDrill, onSettings, onStats);
   });
 
   container.querySelector("#drill-all")?.addEventListener("click", async () => {

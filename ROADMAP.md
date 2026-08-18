@@ -117,6 +117,10 @@ Nothing here is a bug. All of it is why the app reads as slower than it is.
 
 ### 2.1 Startup blocks on the network
 
+**Fixed.** The deck list paints from cache immediately and sync runs behind it;
+status lives in `src/sync-state.ts` and is rendered by the deck list, covered by
+`src/views/deck-list.test.ts`. Original report below.
+
 `init()` awaits a full card sync *and* a full state sync before rendering
 anything at all:
 
@@ -140,7 +144,23 @@ the background, and patch counts in when it resolves. This single change is the
 difference between an app that "loads" and one that "opens" — it is the highest
 feel-per-line-changed item in this document.
 
+*As shipped:* moving sync behind the UI meant it needed a progress channel it
+never had — the blank screen *was* the indicator. `sync-state.ts` is that
+channel, plus a "last synced" timestamp, so the deck list can distinguish a
+first sync in flight from an unconfigured app and can surface failures instead
+of leaving them in the console. Every sync now runs through one runner, so the
+settings view, the manual refresh and the post-session push can no longer
+interleave writes to the state file. Ending a drill stopped blocking on that
+push too: the grades are already durable locally (1.1), so waiting on the
+network on the way *out* of a drill was the same mistake in a different place.
+Views can now outlive their own render, so `navigate()` takes a teardown and a
+sync landing after the user has moved on cannot repaint a screen they have left.
+
 ### 2.2 Every interaction destroys and rebuilds the DOM
+
+**Fixed.** The drill chrome is built once and mutated; see `paint()` and the
+node cache in `src/views/drill.ts`, `renderCardBody` in `src/render.ts`, and the
+rendering tests in `src/views/drill.test.ts`. Original report below.
 
 Reveal, grade, requeue, and undo all funnel into `render()`, which replaces the
 entire subtree (`src/views/drill.ts:105`) and then re-runs KaTeX and highlight.js
@@ -156,6 +176,15 @@ rich the card is — a card with math and a code block pays the most.
 - **Pre-render card N+1** while card N is on screen. Typesetting happens during
   the seconds the user spends thinking, and the next card appears instantly.
   With this in place the perceived jank goes to zero.
+
+*As shipped:* all three, and cloze cards got the reveal-as-a-class treatment
+too — the prose either side of the deletion is identical on both faces, so it is
+parsed once and the placeholder becomes a slot holding the blank and the answer
+together. Built cards are retained only while they might be needed again (on
+screen, being prepared, or one undo away), since typeset DOM is not cheap to
+hold onto across a long session. Interval previews moved to card mount for the
+same reason: cheap arithmetic done up front rather than work standing between
+the tap and the grade buttons appearing.
 
 ### 2.3 Sync re-fetches everything, every time
 
@@ -402,12 +431,15 @@ Kept for history.
 ## Suggested order
 
 **Done:** **1.1** (durable grades), **2.6** (session resume), **2.5** (dark
-mode) — with drill-loop tests as a partial answer to 3.5, running in jsdom
+mode), **2.1** (non-blocking startup), **2.2** (incremental drill rendering) —
+with drill-loop and deck-list tests as a partial answer to 3.5, running in jsdom
 against a fake IndexedDB rather than a real browser.
 
-**Next, the remaining feel items:** **2.1** (non-blocking startup) and **2.2**
-(stop rebuilding the DOM). Both are small, independent, and change the
-experience of using the app every day.
+**Next, the two remaining feel items:** **2.3** (stop re-fetching everything on
+every sync) and **2.4** (move cards out of localStorage). They are now the whole
+of what makes sync slow, and 2.1 made that cost visible rather than hidden
+behind a blank screen. **2.7** (mobile input) is independent of both and is the
+one that changes how the app feels in the hand.
 
 **Then correctness cleanup:** **1.2**, **1.3**, **1.5**, **3.1**.
 

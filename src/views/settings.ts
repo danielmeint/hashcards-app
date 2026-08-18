@@ -1,6 +1,7 @@
 import { getConfig, saveConfig, listMdFiles, getIntervalFuzz, setIntervalFuzz, getHapticFeedback, setHapticFeedback, inspectToken, GitHubConfig } from "../github";
 import { getNewCardsPerDay, setNewCardsPerDay, getIntroducedToday, resetIntroduced } from "../new-card-budget";
 import { todayStr } from "../fsrs";
+import { getTheme, setTheme, Theme } from "../theme";
 import { syncCards, fullSync } from "../sync";
 
 export function renderSettings(
@@ -13,6 +14,7 @@ export function renderSettings(
   const introducedToday = getIntroducedToday(today);
   const fuzzOn = getIntervalFuzz();
   const hapticOn = getHapticFeedback();
+  const theme = getTheme();
 
   const isFirstRun = !config;
 
@@ -57,6 +59,19 @@ export function renderSettings(
             ${introducedToday > 0 ? `<button type="button" id="reset-new-btn" class="reset-btn">Reset</button>` : ""}
           </div>
         </div>
+        <div class="field-group">
+          <label for="theme">Theme</label>
+          <select id="theme">
+            ${(["system", "light", "dark"] as Theme[])
+              .map(
+                (t) =>
+                  `<option value="${t}"${t === theme ? " selected" : ""}>${
+                    t === "system" ? "Match system" : t === "light" ? "Light" : "Dark"
+                  }</option>`
+              )
+              .join("")}
+          </select>
+        </div>
         <label class="toggle-label">
           <input type="checkbox" id="interval-fuzz" ${fuzzOn ? "checked" : ""} />
           Interval fuzz (vary intervals slightly to avoid clustering)
@@ -96,6 +111,10 @@ export function renderSettings(
     setIntervalFuzz((container.querySelector("#interval-fuzz") as HTMLInputElement).checked);
     setHapticFeedback((container.querySelector("#haptic-feedback") as HTMLInputElement).checked);
   }
+
+  container.querySelector("#theme")!.addEventListener("change", (e) => {
+    setTheme((e.target as HTMLSelectElement).value as Theme);
+  });
 
   const tokenInfoEl = container.querySelector("#token-info") as HTMLElement;
 

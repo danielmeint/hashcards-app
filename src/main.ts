@@ -5,6 +5,7 @@ import { renderDeckList } from "./views/deck-list";
 import { renderDrill } from "./views/drill";
 import { renderStats } from "./views/stats";
 import { getDemoData } from "./demo";
+import { applyTheme, watchSystemTheme } from "./theme";
 import { Card, DrillSession } from "./types";
 import "./style.css";
 
@@ -48,6 +49,10 @@ async function navigate(
 }
 
 async function init() {
+  // Before any render, so the first paint is already in the right theme.
+  applyTheme();
+  watchSystemTheme();
+
   // Register service worker
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});

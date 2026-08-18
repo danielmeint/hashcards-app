@@ -174,11 +174,11 @@ export async function renderStats(
           <div class="heatmap-grid" id="heatmap"></div>
           <div class="heatmap-legend">
             <span>Less</span>
-            <span class="heatmap-cell" style="background: #ebedf0"></span>
-            <span class="heatmap-cell" style="background: #9be9a8"></span>
-            <span class="heatmap-cell" style="background: #40c463"></span>
-            <span class="heatmap-cell" style="background: #30a14e"></span>
-            <span class="heatmap-cell" style="background: #216e39"></span>
+            <span class="heatmap-cell heat-0"></span>
+            <span class="heatmap-cell heat-1"></span>
+            <span class="heatmap-cell heat-2"></span>
+            <span class="heatmap-cell heat-3"></span>
+            <span class="heatmap-cell heat-4"></span>
             <span>More</span>
           </div>
         </div>
@@ -228,16 +228,17 @@ export async function renderStats(
       const cell = document.createElement("div");
       cell.className = "heatmap-cell";
       const count = reviewsByDay.get(day) || 0;
+      // Intensity is a class rather than an inline colour so the palette can
+      // follow the theme.
       if (day < startDate || day > today) {
-        cell.style.background = "transparent";
+        cell.classList.add("heat-empty");
       } else if (count === 0) {
-        cell.style.background = "#ebedf0";
+        cell.classList.add("heat-0");
       } else {
         const intensity = count / maxReviews;
-        if (intensity < 0.25) cell.style.background = "#9be9a8";
-        else if (intensity < 0.5) cell.style.background = "#40c463";
-        else if (intensity < 0.75) cell.style.background = "#30a14e";
-        else cell.style.background = "#216e39";
+        const level =
+          intensity < 0.25 ? 1 : intensity < 0.5 ? 2 : intensity < 0.75 ? 3 : 4;
+        cell.classList.add(`heat-${level}`);
       }
       cell.title = `${day}: ${count} review${count === 1 ? "" : "s"}`;
       col.appendChild(cell);

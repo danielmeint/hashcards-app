@@ -185,6 +185,9 @@ same transaction semantics, no ceiling, no synchronous parse.
 
 ### 2.5 No dark mode
 
+**Fixed.** Full token set in `src/style.css`, theme selection in `src/theme.ts`,
+and a System/Light/Dark control in settings. Original report below.
+
 There is not one `prefers-color-scheme` rule in 1090 lines of `src/style.css`.
 Spaced repetition is a last-thing-before-bed activity; a full-brightness white
 card in a dark room is the most viscerally unpleasant thing about the app on a
@@ -195,11 +198,19 @@ The groundwork is already done — `:root` defines a complete token set
 redefining those tokens under a media query, plus an explicit override so a
 manual setting can win in both directions.
 
+*As shipped:* the existing token set turned out to cover about a third of the
+colours in use — roughly seventy were hardcoded, including every surface, the
+whole stats palette and the heatmap, whose intensity levels were inline styles
+in `stats.ts` and are now classes. All of them are tokens now. Syntax
+highlighting comes from a CDN rather than our tokens, so a dark highlight.js
+sheet loads alongside the light one, parked on a non-matching media query so it
+still downloads for offline use.
+
 ### 2.6 Session resume
 
-Once 1.1 lands, persist the remaining queue and revealed state too, and offer
-"Resume session?" on reopen. Closing the app mid-drill is normal mobile behavior,
-not an error, and should cost nothing.
+**Fixed.** Drill position is persisted to a `session` store (schema v2) in the
+same transaction as each grade, and the deck list offers it back with a Discard
+alongside. The revealed flag and undo stack are deliberately not persisted.
 
 ### 2.7 Mobile input is button-only
 
@@ -351,6 +362,9 @@ Carried forward, still open, none of it urgent.
   dynamic import, since it is not needed until the first card renders.
 - **DOM query boilerplate** — a small typed helper would remove a lot of repeated
   `querySelector` casting, mostly in the settings view.
+- **`manifest.json` has a fixed light `background_color`** — the PWA splash is
+  white regardless of theme. A manifest cannot vary by colour scheme, so this
+  needs either a compromise value or a generated per-theme manifest.
 - **The "Session Complete" screen is unreachable** — `doGrade` and `doRequeue`
   both call `doEnd()` directly when the queue empties, which navigates away
   before `render()` can show `renderFinished`. The end-of-session summary has
@@ -387,14 +401,13 @@ Kept for history.
 
 ## Suggested order
 
-**Done:** **1.1**, with drill-loop tests (a partial answer to 3.5 — these run in
-jsdom against a fake IndexedDB rather than a real browser).
+**Done:** **1.1** (durable grades), **2.6** (session resume), **2.5** (dark
+mode) — with drill-loop tests as a partial answer to 3.5, running in jsdom
+against a fake IndexedDB rather than a real browser.
 
-**Next,** nearly free now that grades are durable: **2.6** (session resume).
-
-**Then the daily-feel batch,** all small and all independent: **2.1**
-(non-blocking startup), **2.5** (dark mode), **2.2** (stop rebuilding the DOM).
-These three are what change the experience of using the app every day.
+**Next, the remaining feel items:** **2.1** (non-blocking startup) and **2.2**
+(stop rebuilding the DOM). Both are small, independent, and change the
+experience of using the app every day.
 
 **Then correctness cleanup:** **1.2**, **1.3**, **1.5**, **3.1**.
 

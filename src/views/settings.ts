@@ -150,14 +150,16 @@ export function renderSettings(
     }
     statusEl.textContent = "Testing connection...";
     try {
-      const [files, tokenInfo] = await Promise.all([
+      // Unconditional, so this always comes back with the listing.
+      const [listing, tokenInfo] = await Promise.all([
         listMdFiles(cfg),
         inspectToken(cfg),
       ]);
+      const count = listing.changed ? listing.files.length : 0;
       saveConfig(cfg);
       savePrefs();
 
-      let detail = `Connected as ${tokenInfo.username}. Found ${files.length} .md file${files.length === 1 ? "" : "s"}.`;
+      let detail = `Connected as ${tokenInfo.username}. Found ${count} .md file${count === 1 ? "" : "s"}.`;
       if (tokenInfo.tokenType === "classic" && tokenInfo.scopes) {
         detail += ` Scopes: ${tokenInfo.scopes}.`;
       }

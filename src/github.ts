@@ -91,14 +91,33 @@ export type FileEntry = {
   sha: string;
 };
 
-export async function listMdFiles(config: GitHubConfig): Promise<FileEntry[]> {
+export type TreeListing =
+  /** The tree is byte-for-byte what the caller already has. */
+  | { changed: false }
+  | { changed: true; files: FileEntry[]; etag: string | null };
+
+/**
+ * List the repo's Markdown files, with each file's blob SHA so a caller can
+ * tell which ones actually changed.
+ *
+ * Pass the ETag from a previous call to make the request conditional. The
+ * overwhelmingly common case is that nothing has changed since the last sync,
+ * and GitHub answers that with a 304 that costs one round trip and does not
+ * count against the rate limit.
+ */
+export async function listMdFiles(
+  config: GitHubConfig,
+  etag?: string | null
+): Promise<TreeListing> {
   const res = await apiFetch(
     config,
-    `/repos/${config.owner}/${config.repo}/git/trees/${config.branch}?recursive=1`
+    `/repos/${config.owner}/${config.repo}/git/trees/${config.branch}?recursive=1`,
+    etag ? { headers: { "If-None-Match": etag } } : undefined
   );
+  if (res.status === 304) return { changed: false };
   if (!res.ok) throw new Error(await apiError(res));
   const data = await res.json();
-  return data.tree
+  const files: FileEntry[] = data.tree
     .filter(
       (item: { path: string; type: string }) =>
         item.type === "blob" && item.path.endsWith(".md")
@@ -107,6 +126,7 @@ export async function listMdFiles(config: GitHubConfig): Promise<FileEntry[]> {
       path: item.path,
       sha: item.sha,
     }));
+  return { changed: true, files, etag: res.headers.get("etag") };
 }
 
 export async function getFileContent(

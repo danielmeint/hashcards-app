@@ -91,7 +91,7 @@ async function init() {
   // Paint from cache first, then sync behind the UI. A cold open used to wait
   // on a tree call, N content calls and a state read before showing anything;
   // now the deck list is on screen immediately and updates when sync lands.
-  loadCachedCards();
+  await loadCachedCards();
   await navigate("decks");
 
   // Started after the first render, so the deck list is already subscribed and

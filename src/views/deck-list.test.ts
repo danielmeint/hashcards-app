@@ -73,7 +73,10 @@ describe("deck list", () => {
     expect(container.textContent).toContain("No cards loaded");
 
     setSyncStatus({ phase: "syncing", detail: null });
-    expect(container.textContent).toContain("Loading your cards");
+    // Cards come from IndexedDB now, so the re-render lands a tick later.
+    await vi.waitFor(() =>
+      expect(container.textContent).toContain("Loading your cards")
+    );
   });
 
   it("surfaces a sync failure rather than swallowing it", async () => {

@@ -78,7 +78,7 @@ export async function renderDeckList(
     syncAll(config);
   };
 
-  const cards = loadCachedCards();
+  const cards = await loadCachedCards();
   if (cards.length === 0) {
     renderEmpty(container, onSettings, startSync);
     unsubscribe = onSyncStatus(refresh);

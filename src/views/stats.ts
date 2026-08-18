@@ -7,11 +7,11 @@ export async function renderStats(
   container: HTMLElement,
   onBack: () => void
 ): Promise<void> {
-  const [reviews, performances] = await Promise.all([
+  const [reviews, performances, cards] = await Promise.all([
     getAllReviews(),
     getAllPerformances(),
+    loadCachedCards(),
   ]);
-  const cards = loadCachedCards();
   const today = todayStr();
 
   // --- Aggregate stats ---

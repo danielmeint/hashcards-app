@@ -8,7 +8,15 @@ import {
   writeStateFile,
   StateFile,
 } from "./github";
-import { exportState, importState } from "./db";
+import {
+  DeckFile,
+  exportState,
+  getAllDeckFiles,
+  getMeta,
+  importState,
+  setMeta,
+  updateDeckFiles,
+} from "./db";
 import { parseFile } from "./parser";
 import { recordSyncSuccess, setSyncStatus } from "./sync-state";
 
@@ -75,45 +83,95 @@ async function runSync(
   }
 }
 
+const TREE_ETAG_KEY = "tree_etag";
+
+/** Display name for a file, before any frontmatter `name` overrides it. */
+function deckNameFor(path: string): string {
+  return path
+    .split("/")
+    .pop()!
+    .replace(/\.md$/, "");
+}
+
+/**
+ * Bring the local card set up to date with the repo.
+ *
+ * Two things keep this cheap. The tree request is conditional, so the ordinary
+ * case — nothing has changed since last time — costs a single 304 that does not
+ * count against the rate limit. When the tree *has* changed, only files whose
+ * blob SHA moved are fetched; the rest keep the cards they were already parsed
+ * into. Before this, every startup listed the tree and then fetched every file
+ * in the repo, whether or not a single byte had changed.
+ */
 export async function syncCards(
   config: GitHubConfig,
   onProgress?: (progress: SyncProgress) => void
 ): Promise<Card[]> {
-  onProgress?.({ phase: "Listing files" });
-  const files = await listMdFiles(config);
-  const paths = files.map((f) => f.path);
+  onProgress?.({ phase: "Checking for changes" });
+  const etag = await getMeta<string>(TREE_ETAG_KEY);
+  const listing = await listMdFiles(config, etag);
 
-  const contents = await getFilesContent(config, paths, onProgress);
+  if (!listing.changed) return loadCards();
 
-  onProgress?.({ phase: "Parsing cards" });
-  const allCards: Card[] = [];
-  for (const [path, content] of contents) {
-    const deckName = path
-      .split("/")
-      .pop()!
-      .replace(/\.md$/, "");
-    try {
-      const cards = await parseFile(content, path, deckName);
-      allCards.push(...cards);
-    } catch (e) {
-      console.warn(`Failed to parse ${path}:`, e);
+  const stored = new Map(
+    (await getAllDeckFiles()).map((file) => [file.path, file])
+  );
+  const wanted = new Set(listing.files.map((f) => f.path));
+  const stale = listing.files.filter(
+    (f) => stored.get(f.path)?.sha !== f.sha
+  );
+  const removed = [...stored.keys()].filter((path) => !wanted.has(path));
+
+  const updated: DeckFile[] = [];
+  if (stale.length > 0) {
+    const contents = await getFilesContent(
+      config,
+      stale.map((f) => f.path),
+      onProgress
+    );
+
+    onProgress?.({ phase: "Parsing cards" });
+    for (const file of stale) {
+      const content = contents.get(file.path);
+      if (content === undefined) continue;
+      let cards: Card[] = [];
+      try {
+        cards = await parseFile(content, file.path, deckNameFor(file.path));
+      } catch (e) {
+        // Recorded anyway, with the SHA and no cards: re-fetching the same
+        // bytes cannot parse differently, and editing the file to fix it will
+        // move the SHA and bring it back.
+        console.warn(`Failed to parse ${file.path}:`, e);
+      }
+      updated.push({ path: file.path, sha: file.sha, cards });
     }
   }
 
-  // Store in localStorage for offline use
-  localStorage.setItem("cached_cards", JSON.stringify(allCards));
-  cachedCards = allCards;
-  return allCards;
+  await updateDeckFiles(updated, removed);
+  // Only now, and only if every fetch above succeeded — a failure throws out of
+  // here, so the tag is never recorded for a state we did not reach. Recording
+  // it early would make the next sync report "nothing changed" over files we
+  // never actually got.
+  await setMeta(TREE_ETAG_KEY, listing.etag);
+
+  return loadCards();
 }
 
-export function loadCachedCards(): Card[] {
-  if (cachedCards) return cachedCards;
-  const stored = localStorage.getItem("cached_cards");
-  if (stored) {
-    cachedCards = JSON.parse(stored);
-    return cachedCards!;
-  }
-  return [];
+/** Every card currently known, from the deck store. */
+async function loadCards(): Promise<Card[]> {
+  const files = await getAllDeckFiles();
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  cachedCards = files.flatMap((f) => f.cards);
+  return cachedCards;
+}
+
+/**
+ * Cards for rendering, from memory if this session has already read them.
+ * Kept in memory because the deck list re-reads on every render and after every
+ * sync, and the whole point of the startup path is that it does no waiting.
+ */
+export async function loadCachedCards(): Promise<Card[]> {
+  return cachedCards ?? loadCards();
 }
 
 export async function fullSync(

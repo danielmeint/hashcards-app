@@ -333,6 +333,11 @@ single tarball/zipball request unpacked client-side.
 
 ### 3.4 Token type detection is prefix-based
 
+**Fixed** alongside 4.1. `inspectConnection` reads the credential's own kind for
+App tokens, and tells a classic PAT from a fine-grained one by whether GitHub
+sends an `x-oauth-scopes` header — a property of the token rather than of its
+text. Covered by `src/github.test.ts`. Original report below.
+
 `inspectToken` (`src/github.ts:65-75`) hits `/user` for the username but still
 classifies the token by string prefix (`github_pat_` / `ghp_`). Largely moot if
 4.1 lands, since OAuth removes user-supplied tokens entirely.
@@ -352,6 +357,12 @@ These change what the app is, rather than how well it does what it already does.
 
 ### 4.1 Replace the PAT with a GitHub App
 
+**Fixed.** Sign-in lives in `src/auth.ts`, the connection UI in
+`src/views/auth-panel.ts`, and the code exchange in `functions/api/auth/`.
+Covered by `src/auth.test.ts`, `src/github.test.ts`,
+`src/views/auth-panel.test.ts` and `functions/api/auth/_exchange.test.ts`.
+Original report below.
+
 Onboarding today is: go to GitHub settings, create a fine-grained token, scope it
 correctly, copy it, paste it into a web page. That is a wall, and it is the
 reason this is a tool for one person rather than a tool anyone uses. The settings
@@ -366,6 +377,30 @@ It also fixes a real security posture problem: a long-lived, write-scoped
 credential currently sits in localStorage (`src/github.ts:9`) where any XSS can
 lift it. Short-lived installation tokens scoped to a single repo are strictly
 better.
+
+*As shipped:* the authorize redirect plus a Cloudflare Pages Function for the
+exchange, since a browser cannot call GitHub's token endpoint itself — it is not
+CORS-enabled and it needs the client secret. Onboarding is now sign in, then
+pick a repo from the ones you granted; the branch comes from the repository
+rather than defaulting to `main`, which for a repo on `master` used to produce a
+404 that read like a permissions problem.
+
+The credential left `GitHubConfig` entirely. `apiFetch` picks one up itself, so
+no token travels through the views, the sync runner, or an error message — and
+that is what made renewal invisible: a 401 buys one refresh-and-retry, once,
+with no caller aware of it. Two rules decide whether a failure costs the user
+their session: a refresh GitHub *rejects* signs out, a refresh that could not be
+*sent* does not, because a captive portal is not GitHub saying no. Refreshes are
+single-flighted, since GitHub rotates the refresh token on every use and two
+concurrent attempts would spend the same single-use token twice.
+
+The token path stays, one disclosure down. Existing installs are on it, a fork
+with no GitHub App of its own has nothing else, and the app is deliberately
+buildable without one — `src/github-app.ts` ships with an empty client ID, which
+simply hides the sign-in button. Tokens moved out of localStorage into their own
+IndexedDB store, carried over on first read; the win over a PAT is not the
+storage though, it is that the token expires in eight hours, reaches only the
+repositories the user picked, and dies when they uninstall the app.
 
 ### 4.2 Write, don't just read
 

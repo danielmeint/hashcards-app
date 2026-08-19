@@ -701,6 +701,31 @@ feature costs.
 
 ### 5.1 The view layer is string templates and selector casts
 
+**Fixed.** Every view is a `lit-html` template of its own state. What that
+turned into, measured the same way as the report below: **52 → 5** selector
+casts in view code, **21 → 0** `escapeHtml` calls (`src/escape.ts` is deleted;
+interpolations are escaped by the library, and the one place that genuinely
+renders HTML — a card body that markdown already produced — says so with
+`unsafeHTML`), and no view assigns `innerHTML`. Bundle: 36.90 → 40.19 kB
+gzipped, of which lit-html is ~3.1 kB.
+
+The five casts that remain are all reaching for something a template cannot
+own: gestures finding the card currently under the finger, the drill toggling
+`revealed` on a cached node it deliberately did not rebuild, and the mount
+point the connection panel renders into.
+
+Three things fell out along the way rather than being aimed at. Preferences
+save when they change instead of when you leave the screen. Picking a
+repository no longer assigns to three input elements by hand to keep the manual
+fields in step. And the stats heatmap and forecast are in the template, under a
+comment that used to explain there were too many cells for a template string.
+
+One trap worth writing down: `main.ts` cleared the container before each view,
+and lit-html keeps its render state on the container it was handed — so
+rendering into one that something else emptied updates nodes that are no longer
+in the document, silently, with nothing thrown. Each view gets a fresh element
+now (`freshHost` in `main.ts`). Original report below.
+
 Every view builds a template string, assigns it to `innerHTML`, and then goes
 looking for its own elements again. As of this writing that is roughly 1,700
 lines across six views, **52** `querySelector(...) as T` or `!` assertions, and
@@ -846,7 +871,7 @@ Carried forward, still open, none of it urgent.
   that string renders the wrong blank. Vanishingly unlikely and trivially
   avoidable: a `marked` extension would do the substitution on the AST instead
   of on its output.
-- ~~**DOM query boilerplate**~~ — folded into 5.1, which removes the casting
+- ~~**DOM query boilerplate**~~ — done with 5.1, which removed the casting
   rather than making it terser.
 - **Demo mode used to spend the real new-card budget** — fixed when the drill was
   split; kept here as a reminder that `dryRun` has to cover localStorage writes,
@@ -912,7 +937,7 @@ owns every setting key.
 
 ---
 
-### Phase 2 — The view layer · ~6 evenings
+### Phase 2 — The view layer · ~6 evenings — **done**
 
 **5.1**, `lit-html`, one view per commit, in this order:
 

@@ -3,11 +3,15 @@
 A single prioritized backlog for the app. Supersedes the old `TODO.md` and
 `IMPROVEMENTS.md`.
 
-Sections are ordered by leverage, not by effort: **Defects** are things that are
-wrong today, **Feel** is why the app reads as slow, **Robustness** is what breaks
-as the collection grows, **Big bets** are the changes that alter what the app
-*is*. Line references are to the state of the tree as of this writing and will
-drift — treat them as pointers, not addresses.
+Read it in two halves. **Sections 1–7 are the catalogue**: every known item,
+grouped by kind and ordered by leverage rather than by effort — **Defects** are
+things that are wrong today, **Feel** is why the app reads as slow,
+**Robustness** is what breaks as the collection grows, **Big bets** are the
+changes that alter what the app *is*, **Foundations** are what decides the cost
+of everything after them. **The plan at the end is the order**, in phases, and
+it is the part to read first if the question is "what now". Line references are
+to the state of the tree as of this writing and will drift — treat them as
+pointers, not addresses.
 
 ---
 
@@ -721,13 +725,33 @@ touch handling that a VDOM makes harder to reason about, not easier. Svelte
 would mean a compiler and `.svelte` files: the right answer if this became a
 product with a team, and a large tax on a 4,000-line app with one author.
 
-**Why not the complete rewrite.** The 208 tests assert on rendered DOM — what is
-on screen, not how it got there — so a view converted to `lit-html` is verified
-by the tests that already exist. A big-bang rewrite gives up that safety net to
-arrive at the same place. Suggested order, easiest first so the pattern is
-settled before it matters: `stats.ts`, then `settings.ts` and `auth-panel.ts`,
-then `deck-list.ts`, and `drill/view.ts` last, where the win is biggest and the
-tests are thickest.
+**Why not the complete rewrite.** The tests assert on rendered DOM — what is on
+screen, not how it got there — so a view converted to `lit-html` is verified by
+the tests that already exist. A big-bang rewrite gives up that safety net to
+arrive at the same place.
+
+Which means the order follows the tests, not the line counts:
+
+| View | Lines | Tests |
+|---|---|---|
+| `views/card-editor.ts` | 195 | 9 |
+| `views/settings.ts` | 187 | **none** |
+| `views/drill/view.ts` | 298 | 29 (+9 session) |
+| `views/auth-panel.ts` | 304 | 5 |
+| `views/deck-list.ts` | 340 | 10 |
+| `views/stats.ts` | 386 | **none** |
+
+The two biggest string blobs are the two with no safety net, so they are not the
+place to learn the pattern — they are the place to write a render smoke test
+first, which is worth having regardless and is a down payment on 3.5.
+
+**The discipline that makes it safe:** a migration commit changes how the DOM is
+built and nothing else. Same elements, same classes, same text, same tests
+passing untouched. If a view also wants a fix, that is a separate commit before
+or after — never inside the conversion, where a green suite would stop meaning
+anything. And no `View` interface, lifecycle base class, or component
+abstraction up front: convert two views, see what actually repeats, extract that
+and nothing more.
 
 **The honest cost.** This buys the user nothing on the day it ships. It competes
 for the same evenings as 1.4 and 1.6, which fix things that are actually wrong.
@@ -793,8 +817,8 @@ Carried forward, still open, none of it urgent.
   that string renders the wrong blank. Vanishingly unlikely and trivially
   avoidable: a `marked` extension would do the substitution on the AST instead
   of on its output.
-- **DOM query boilerplate** — a small typed helper would remove a lot of repeated
-  `querySelector` casting, mostly in the settings view.
+- ~~**DOM query boilerplate**~~ — folded into 5.1, which removes the casting
+  rather than making it terser.
 - **Demo mode used to spend the real new-card budget** — fixed when the drill was
   split; kept here as a reminder that `dryRun` has to cover localStorage writes,
   not just IndexedDB ones.
@@ -830,31 +854,141 @@ Kept for history.
 
 ---
 
-## Suggested order
+## The plan
 
-**Done:** the whole of section 2, plus **1.1** (durable grades) — with
-drill-loop, deck-list and sync tests as a partial answer to 3.5, running in jsdom
-against a fake IndexedDB and a fake GitHub rather than a real browser.
+Phases, not a queue. Each one is a set of things that belong together — they
+touch the same code, or one is only cheap because another already happened — and
+each ends somewhere the app is shippable and better. Sizes are honest guesses in
+evenings, not estimates.
 
-**Correctness, now done:** **1.5** and **3.1**. What is left of that section is
-1.4 (images in private repos, latent until the first diagram), 1.6 (state
-scoped to the repo that holds the cards, which is also 4.6's design work) and
-1.7 (the identity question behind editing a card).
+**Shipped so far:** the whole of section 2 (Feel), **1.1** durable grades,
+**1.2**/**1.3** the deck-list counts and names, **1.5** visible sync failures,
+**3.1** the conflict retry, **3.4** token detection, **4.1** sign-in with GitHub,
+**4.2**'s deep link and in-app editor, and **4.3** the leech list.
 
-**Bets taken:** **4.1** (sign-in, which changed who can use this at all and made
-3.4 and the localStorage credential disappear) and **4.2 → 4.3** (the leech list
-and the editor it opens, which is the pair that most improves the collection
-itself).
+---
 
-**Next.** Two small things first, both cheap and both real: **1.8**, the edit /
-sync race left over from 4.2, and **5.2**, the second reading of the config in
-`render.ts`. Then the fork:
+### Phase 1 — Loose ends · ~2 evenings
 
-- **1.6** if the app should hold more than one card repo, since it is 4.6's
-  design work wearing a smaller hat.
-- **1.4** the first time a card wants a diagram — latent until then, and
-  immediately P0 after.
-- **5.1** if the next thing planned is a *feature* rather than a fix. Everything
-  still open in 4.2 (preview, drill-time editing, quick capture) is forms and
-  partial updates, which is where the current view layer is most expensive.
-  Doing it before those is cheaper than doing it after them.
+**1.8** (a card edit joining sync's single-flight) and **5.2** (one typed home
+for the nine `localStorage` keys, which retires the second reading of the config
+in `render.ts`).
+
+*Why together:* both are small corrections to things already shipped, and both
+sit underneath Phase 2. Migrating a view that reads `localStorage` directly
+means touching it twice, so 5.2 goes first or the saving is spent twice.
+
+*Done when:* an edit and a background sync cannot interleave, and one module
+owns every setting key.
+
+---
+
+### Phase 2 — The view layer · ~6 evenings
+
+**5.1**, `lit-html`, one view per commit, in this order:
+
+1. `card-editor.ts` — smallest, newest, 9 tests, and the most state transitions
+   of any view. The pattern gets settled where it is most exercised and least
+   entangled.
+2. `settings.ts` + `auth-panel.ts` — a render smoke test for `settings.ts`
+   first, since it has none.
+3. `deck-list.ts` — the first with a subscription and a teardown, which is where
+   the question "what replaces `disposeView`" gets answered.
+4. `stats.ts` — the largest template in the app, and a smoke test before it for
+   the same reason as `settings.ts`.
+5. `drill/view.ts` — last, and the payoff: `paint()`'s hand-written
+   build-once-and-mutate becomes what the library does anyway.
+
+*Why in this phase and not later:* everything in Phase 3 and Phase 4 is forms
+and partial updates. Doing them on string templates and then converting is
+paying twice.
+
+*Done when:* no view assigns `innerHTML`, `escapeHtml` has no callers left in
+`src/views`, and the suite is unchanged except for the two new smoke tests.
+
+---
+
+### Phase 3 — The render path · ~3 evenings
+
+A `marked` extension that substitutes cloze deletions on the AST instead of
+`String.replace`-ing a magic placeholder out of its output, plus lazy-loading
+`marked`, KaTeX and the syntax highlighter behind dynamic imports.
+
+*Why together:* both are `render.ts`, and both are easier once views are
+templates rather than strings — an async `import()` mid-render is a state
+transition, which is Phase 2's whole subject. The bundle-size half is the only
+user-visible startup win left on the board, and it more than pays back the 4 KB
+`lit-html` costs.
+
+*Done when:* a cold start ships neither KaTeX nor the highlighter, and the
+placeholder constant is gone.
+
+---
+
+### Phase 4 — Authoring · ~8 evenings
+
+The rest of **4.2**: editing from *inside* the drill, and quick capture.
+
+Drill-time editing is the one that needs care, and it is not the UI that makes
+it hard — the session queue holds hashes, so rewriting the card in front of you
+changes the identity of the card you are part-way through. The editor already
+knows both hashes (`carryHistory`), so the queue substitution is the work:
+replace the hash in `queue`/`requeued`/`completed`, keep the position, do not
+re-ask a card that was already graded this session.
+
+Quick capture appends to a deck file rather than splicing into it, which is the
+same machinery with a simpler shape.
+
+*Why here:* this is where the app stops being a reader of a repo and becomes the
+place cards are made, and it is the reason Phase 2 is worth doing first.
+
+*Done when:* a card can be written, fixed, and deleted without ever opening
+GitHub.
+
+---
+
+### Phase 5 — More than one repo · ~8 evenings
+
+**1.6** then **4.6**. 1.6 is the data half: a hash → repo association, and an
+export scoped to the cards a repo holds plus the orphans last seen in it. 4.6 is
+the visible half: a list of repos instead of one, and read-only subscriptions to
+other people's decks.
+
+*Why in this order and why after Phase 2:* 1.6 is a correctness fix that 4.6
+cannot be built on top of without, and 4.6 is mostly deck-list and settings
+work — the two views Phase 2 will have just rewritten.
+
+*Done when:* two card repos can be configured without either one's state file
+mentioning the other's cards.
+
+---
+
+### Phase 6 — Media · ~4 evenings, and it jumps the queue
+
+**1.4**, plus the audio cards from the backlog on the same pipeline: fetch
+blobs through the authenticated API during `syncCards`, store them keyed by repo
+path and content type, serve them as object URLs.
+
+*Why it floats:* it is latent until the first card wants a diagram and P0 the
+day one does. If that day arrives during Phase 2, this phase goes first.
+
+---
+
+### Not in a phase
+
+**Triggered by scale, not by schedule.** **3.2** rate limiting and **3.3** large
+repos both wait for a repo big enough to need them; **3.5**'s browser-level E2E
+waits for a bug the jsdom tests miss. Doing any of them now is guessing.
+
+**Waiting on a corpus.** FSRS parameter fitting needs a meaningful review
+history before it can be honest, and the desired-retention setting is more
+useful once there is something to tune it against.
+
+**Waiting on a decision.** **1.7**'s remaining half — scheduling that survives a
+card edited *outside* the app — needs the stable-card-id design, which is a
+change to the file format and therefore a conversation with the CLI. **4.4**,
+generating cards from source material, is the largest bet on the board and the
+only one that adds a dependency on someone else's API.
+
+**Any evening.** **4.5** push notifications is small, self-contained, and the
+single change most likely to turn this into a daily habit. It fits in any gap.

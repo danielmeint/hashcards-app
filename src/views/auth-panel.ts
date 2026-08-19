@@ -1,3 +1,4 @@
+import { html, render, TemplateResult } from "lit-html";
 import {
   GitHubConfig,
   RepoRef,
@@ -7,14 +8,12 @@ import {
   saveConfig,
 } from "../github";
 import {
-  Credential,
   beginSignIn,
   loadCredential,
   saveCredential,
   signOut,
 } from "../auth";
 import { installUrl, signInAvailable } from "../github-app";
-import { escapeHtml } from "../escape";
 
 /**
  * The connection half of Settings: how the app authenticates, and which
@@ -25,45 +24,63 @@ import { escapeHtml } from "../escape";
  * against it. With a GitHub App configured that becomes sign in, pick a repo.
  * The token path stays, one `<details>` down, because existing installs use it
  * and a fork with no App of its own has nothing else.
- *
- * Renders itself into `host` and re-renders in place on every change, so
- * callers never track which of the three states it is in.
  */
+
+/** What the repository picker has to show, which is mostly not a list. */
+type Repos =
+  | { kind: "loading" }
+  | { kind: "offline" }
+  | { kind: "failed"; message: string }
+  | { kind: "list"; repos: RepoRef[] };
+
 export async function renderAuthPanel(
   host: HTMLElement,
   onConnected: () => void
 ): Promise<void> {
-  const credential = await loadCredential();
   const config = getConfig();
-  const rerender = () => void renderAuthPanel(host, onConnected);
-
-  host.innerHTML = `
-    <div class="auth-panel">
-      ${credential ? connected(credential, config) : signedOut()}
-      <div class="auth-status" id="auth-status"></div>
-    </div>
-  `;
-
-  const status = host.querySelector("#auth-status") as HTMLElement;
-  const say = (message: string, error = false) => {
-    status.textContent = message;
-    status.classList.toggle("auth-status-error", error);
+  const state = {
+    credential: await loadCredential(),
+    /** The form's fields, which the repo picker also writes to. */
+    token: "",
+    owner: config?.owner ?? "",
+    repo: config?.repo ?? "",
+    branch: config?.branch ?? "main",
+    status: null as { message: string; error: boolean } | null,
+    repos: { kind: "loading" } as Repos,
   };
 
-  host.querySelector("#signin-btn")?.addEventListener("click", () => {
-    say("Redirecting to GitHub…");
-    beginSignIn();
+  const paint = () => render(view(), host);
+  const say = (message: string, error = false) => {
+    state.status = { message, error };
+    paint();
+  };
+
+  const draft = (): GitHubConfig => ({
+    owner: state.owner.trim(),
+    repo: state.repo.trim(),
+    branch: state.branch.trim() || "main",
   });
 
-  host.querySelector("#signout-btn")?.addEventListener("click", async () => {
-    await signOut();
-    rerender();
-  });
+  async function verify(): Promise<void> {
+    say("Checking connection…");
+    try {
+      const connection = await inspectConnection();
+      let detail = `Connected as ${connection.username}.`;
+      if (connection.credential === "classic") {
+        detail += ` Classic token${
+          connection.scopes ? ` (scopes: ${connection.scopes})` : ""
+        } — a fine-grained token scoped to one repo would be safer.`;
+      }
+      say(detail);
+      onConnected();
+    } catch (e) {
+      say((e as Error).message, true);
+    }
+  }
 
-  host.querySelector("#connect-pat-btn")?.addEventListener("click", async () => {
-    const token = value(host, "#pat");
-    const manual = manualConfig(host);
-    if (!token) {
+  async function connectWithToken(): Promise<void> {
+    const manual = draft();
+    if (!state.token.trim()) {
       say("Paste a personal access token first.", true);
       return;
     }
@@ -71,234 +88,275 @@ export async function renderAuthPanel(
       say("Fill in the repository owner and name.", true);
       return;
     }
-    await saveCredential({ kind: "pat", token });
+    await saveCredential({ kind: "pat", token: state.token.trim() });
     saveConfig(manual);
-    await verify(say, onConnected);
-    rerender();
-  });
+    state.credential = await loadCredential();
+    await verify();
+  }
 
-  host.querySelector("#test-connection-btn")?.addEventListener("click", async () => {
-    const token = value(host, "#pat");
+  async function testConnection(): Promise<void> {
     // Blank means "leave the stored one alone" — the field is never populated
     // with the current token, so there is nothing to preserve by typing it out.
-    if (token) await saveCredential({ kind: "pat", token });
-    const manual = manualConfig(host);
+    if (state.token.trim()) {
+      await saveCredential({ kind: "pat", token: state.token.trim() });
+    }
+    const manual = draft();
     if (manual.owner && manual.repo) saveConfig(manual);
-    await verify(say, onConnected);
-  });
-
-  host.querySelector("#branch")?.addEventListener("change", () => {
-    const current = getConfig();
-    if (current) saveConfig({ ...current, branch: value(host, "#branch") || "main" });
-  });
-
-  if (credential?.kind === "app") {
-    await mountRepoPicker(host, say, onConnected);
-  }
-}
-
-// --- The three states ---
-
-function signedOut(): string {
-  const pat = patFields(null, "Connect");
-  if (!signInAvailable()) {
-    return `
-      <p class="auth-lead">Connect the GitHub repository your cards live in.</p>
-      ${pat}
-    `;
-  }
-  return `
-    <button type="button" id="signin-btn" class="btn btn-primary btn-signin">
-      Sign in with GitHub
-    </button>
-    <p class="auth-lead">
-      Hashcards can reach only the repositories you pick, with a token that
-      expires — revoke it any time by uninstalling the app on GitHub.
-    </p>
-    <details class="auth-fallback">
-      <summary>Use a personal access token instead</summary>
-      ${pat}
-    </details>
-  `;
-}
-
-function connected(credential: Credential, config: GitHubConfig | null): string {
-  if (credential.kind === "app") {
-    const who = credential.login ? `@${escapeHtml(credential.login)}` : "GitHub";
-    return `
-      <div class="auth-identity">
-        <span>Signed in as <strong>${who}</strong></span>
-        <button type="button" id="signout-btn" class="btn btn-small">Sign out</button>
-      </div>
-      <div class="field-group">
-        <label for="repo-select">Repository</label>
-        <div id="repo-picker">Loading repositories…</div>
-        <a href="${installUrl()}" target="_blank" rel="noopener" class="auth-link">
-          Add or remove repositories on GitHub
-        </a>
-      </div>
-      ${branchField(config)}
-      <details class="auth-fallback">
-        <summary>Enter a repository manually</summary>
-        ${repoFields(config)}
-      </details>
-    `;
-  }
-  return `
-    <div class="auth-identity">
-      <span>Connected with a personal access token</span>
-      <button type="button" id="signout-btn" class="btn btn-small">Disconnect</button>
-    </div>
-    ${patFields(config, "Test connection")}
-  `;
-}
-
-function patFields(config: GitHubConfig | null, action: string): string {
-  const testing = action === "Test connection";
-  return `
-    <div class="field-group">
-      <label for="pat">GitHub Personal Access Token</label>
-      <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener" class="pat-help-link">Create a fine-grained token</a>
-      <input type="password" id="pat" autocomplete="off"
-             placeholder="${testing ? "Stored — type a new one to replace it" : "github_pat_…"}" />
-    </div>
-    ${repoFields(config)}
-    ${branchField(config)}
-    <button type="button" class="btn btn-primary"
-            id="${testing ? "test-connection-btn" : "connect-pat-btn"}">${action}</button>
-  `;
-}
-
-function repoFields(config: GitHubConfig | null): string {
-  return `
-    <label>
-      Repository Owner
-      <input type="text" id="owner" value="${escapeHtml(config?.owner ?? "")}" placeholder="username" />
-    </label>
-    <label>
-      Repository Name
-      <input type="text" id="repo" value="${escapeHtml(config?.repo ?? "")}" placeholder="my-flashcards" />
-    </label>
-  `;
-}
-
-function branchField(config: GitHubConfig | null): string {
-  return `
-    <label>
-      Branch
-      <input type="text" id="branch" value="${escapeHtml(config?.branch ?? "main")}" placeholder="main" />
-    </label>
-  `;
-}
-
-// --- The repo picker ---
-
-/**
- * Fills the picker in behind the panel rather than blocking on it. Settings has
- * to work offline — it is where you go to find out *why* nothing is syncing —
- * so a failure here degrades to the manual owner/repo fields rather than
- * leaving the page half-rendered.
- */
-async function mountRepoPicker(
-  host: HTMLElement,
-  say: (message: string, error?: boolean) => void,
-  onConnected: () => void
-): Promise<void> {
-  const picker = host.querySelector("#repo-picker") as HTMLElement;
-  if (!picker) return;
-
-  if (!navigator.onLine) {
-    picker.innerHTML = `<p class="auth-note">Offline — reconnect to list your repositories.</p>`;
-    return;
+    await verify();
   }
 
-  let repos: RepoRef[];
-  try {
-    repos = await listAccessibleRepos();
-  } catch (e) {
-    picker.innerHTML = `<p class="auth-note">Could not list repositories: ${escapeHtml(
-      (e as Error).message
-    )}</p>`;
-    return;
-  }
-
-  if (repos.length === 0) {
-    picker.innerHTML = `
-      <p class="auth-note">This account has not given Hashcards access to any repository yet.</p>
-      <a href="${installUrl()}" target="_blank" rel="noopener" class="btn">Choose repositories</a>
-    `;
-    return;
-  }
-
-  const current = getConfig();
-  const selected = current ? `${current.owner}/${current.repo}` : "";
-  picker.innerHTML = `
-    <select id="repo-select">
-      <option value=""${selected ? "" : " selected"}>Choose a repository…</option>
-      ${repos
-        .map((r) => {
-          const full = `${r.owner}/${r.repo}`;
-          return `<option value="${escapeHtml(full)}"${
-            full === selected ? " selected" : ""
-          }>${escapeHtml(full)}${r.private ? " (private)" : ""}</option>`;
-        })
-        .join("")}
-    </select>
-  `;
-
-  picker.querySelector("#repo-select")!.addEventListener("change", async (e) => {
-    const full = (e.target as HTMLSelectElement).value;
-    if (!full) return;
-    const chosen = repos.find((r) => `${r.owner}/${r.repo}` === full)!;
+  async function chooseRepo(full: string): Promise<void> {
+    if (state.repos.kind !== "list") return;
+    const chosen = state.repos.repos.find((r) => `${r.owner}/${r.repo}` === full);
+    if (!chosen) return;
     // The repo's own default branch, not whatever was left in the field from
     // the last repository — picking `main` for a repo whose branch is `master`
-    // fails with a 404 that reads like a permissions problem.
-    saveConfig({
-      owner: chosen.owner,
-      repo: chosen.repo,
-      branch: chosen.defaultBranch,
-    });
-    const branch = host.querySelector("#branch") as HTMLInputElement | null;
-    if (branch) branch.value = chosen.defaultBranch;
-    const owner = host.querySelector("#owner") as HTMLInputElement | null;
-    if (owner) owner.value = chosen.owner;
-    const repo = host.querySelector("#repo") as HTMLInputElement | null;
-    if (repo) repo.value = chosen.repo;
-    await verify(say, onConnected);
-  });
-}
-
-// --- Shared helpers ---
-
-async function verify(
-  say: (message: string, error?: boolean) => void,
-  onConnected: () => void
-): Promise<void> {
-  say("Checking connection…");
-  try {
-    const connection = await inspectConnection();
-    let detail = `Connected as ${connection.username}.`;
-    if (connection.credential === "classic") {
-      detail += ` Classic token${
-        connection.scopes ? ` (scopes: ${connection.scopes})` : ""
-      } — a fine-grained token scoped to one repo would be safer.`;
-    }
-    say(detail);
-    onConnected();
-  } catch (e) {
-    say((e as Error).message, true);
+    // fails with a 404 that reads like a permissions problem. The manual fields
+    // below follow along because they read the same state; they used to be
+    // assigned one by one, and a field added to the form was a field left
+    // stale.
+    state.owner = chosen.owner;
+    state.repo = chosen.repo;
+    state.branch = chosen.defaultBranch;
+    saveConfig(draft());
+    paint();
+    await verify();
   }
-}
 
-function value(host: HTMLElement, selector: string): string {
-  const input = host.querySelector(selector) as HTMLInputElement | null;
-  return input?.value.trim() ?? "";
-}
+  // --- The three states ---
 
-function manualConfig(host: HTMLElement): GitHubConfig {
-  return {
-    owner: value(host, "#owner"),
-    repo: value(host, "#repo"),
-    branch: value(host, "#branch") || "main",
-  };
+  function view(): TemplateResult {
+    return html`<div class="auth-panel">
+      ${state.credential ? connected() : signedOut()}
+      <div
+        class="auth-status ${state.status?.error ? "auth-status-error" : ""}"
+        id="auth-status"
+      >
+        ${state.status?.message ?? ""}
+      </div>
+    </div>`;
+  }
+
+  function signedOut(): TemplateResult {
+    if (!signInAvailable()) {
+      return html`<p class="auth-lead">
+          Connect the GitHub repository your cards live in.
+        </p>
+        ${patFields("Connect")}`;
+    }
+    return html`<button
+        type="button"
+        id="signin-btn"
+        class="btn btn-primary btn-signin"
+        @click=${() => {
+          say("Redirecting to GitHub…");
+          beginSignIn();
+        }}
+      >
+        Sign in with GitHub
+      </button>
+      <p class="auth-lead">
+        Hashcards can reach only the repositories you pick, with a token that
+        expires — revoke it any time by uninstalling the app on GitHub.
+      </p>
+      <details class="auth-fallback">
+        <summary>Use a personal access token instead</summary>
+        ${patFields("Connect")}
+      </details>`;
+  }
+
+  function connected(): TemplateResult {
+    if (state.credential?.kind === "app") {
+      const who = state.credential.login
+        ? `@${state.credential.login}`
+        : "GitHub";
+      return html`<div class="auth-identity">
+          <span>Signed in as <strong>${who}</strong></span>
+          <button
+            type="button"
+            id="signout-btn"
+            class="btn btn-small"
+            @click=${async () => {
+              await signOut();
+              state.credential = null;
+              state.status = null;
+              paint();
+            }}
+          >
+            Sign out
+          </button>
+        </div>
+        <div class="field-group">
+          <label for="repo-select">Repository</label>
+          <div id="repo-picker">${repoPicker()}</div>
+          <a
+            href=${installUrl()}
+            target="_blank"
+            rel="noopener"
+            class="auth-link"
+            >Add or remove repositories on GitHub</a
+          >
+        </div>
+        ${branchField()}
+        <details class="auth-fallback">
+          <summary>Enter a repository manually</summary>
+          ${repoFields()}
+        </details>`;
+    }
+    return html`<div class="auth-identity">
+        <span>Connected with a personal access token</span>
+        <button
+          type="button"
+          id="signout-btn"
+          class="btn btn-small"
+          @click=${async () => {
+            await signOut();
+            state.credential = null;
+            state.status = null;
+            paint();
+          }}
+        >
+          Disconnect
+        </button>
+      </div>
+      ${patFields("Test connection")}`;
+  }
+
+  function patFields(action: string): TemplateResult {
+    const testing = action === "Test connection";
+    return html`<div class="field-group">
+        <label for="pat">GitHub Personal Access Token</label>
+        <a
+          href="https://github.com/settings/personal-access-tokens/new"
+          target="_blank"
+          rel="noopener"
+          class="pat-help-link"
+          >Create a fine-grained token</a
+        >
+        <input
+          type="password"
+          id="pat"
+          autocomplete="off"
+          placeholder=${testing
+            ? "Stored — type a new one to replace it"
+            : "github_pat_…"}
+          .value=${state.token}
+          @input=${(e: Event) => {
+            state.token = (e.target as HTMLInputElement).value;
+          }}
+        />
+      </div>
+      ${repoFields()} ${branchField()}
+      <button
+        type="button"
+        class="btn btn-primary"
+        id=${testing ? "test-connection-btn" : "connect-pat-btn"}
+        @click=${() => void (testing ? testConnection() : connectWithToken())}
+      >
+        ${action}
+      </button>`;
+  }
+
+  function repoFields(): TemplateResult {
+    return html`<label>
+        Repository Owner
+        <input
+          type="text"
+          id="owner"
+          .value=${state.owner}
+          placeholder="username"
+          @input=${(e: Event) => {
+            state.owner = (e.target as HTMLInputElement).value;
+          }}
+        />
+      </label>
+      <label>
+        Repository Name
+        <input
+          type="text"
+          id="repo"
+          .value=${state.repo}
+          placeholder="my-flashcards"
+          @input=${(e: Event) => {
+            state.repo = (e.target as HTMLInputElement).value;
+          }}
+        />
+      </label>`;
+  }
+
+  function branchField(): TemplateResult {
+    return html`<label>
+      Branch
+      <input
+        type="text"
+        id="branch"
+        .value=${state.branch}
+        placeholder="main"
+        @input=${(e: Event) => {
+          state.branch = (e.target as HTMLInputElement).value;
+        }}
+        @change=${() => {
+          const manual = draft();
+          if (manual.owner && manual.repo) saveConfig(manual);
+        }}
+      />
+    </label>`;
+  }
+
+  /**
+   * Settings has to work offline — it is where you go to find out *why* nothing
+   * is syncing — so every way this can fail degrades to the manual owner/repo
+   * fields rather than leaving the page half-rendered.
+   */
+  function repoPicker(): TemplateResult {
+    if (state.repos.kind === "loading") {
+      return html`<span>Loading repositories…</span>`;
+    }
+    if (state.repos.kind === "offline") {
+      return html`<p class="auth-note">
+        Offline — reconnect to list your repositories.
+      </p>`;
+    }
+    if (state.repos.kind === "failed") {
+      return html`<p class="auth-note">
+        Could not list repositories: ${state.repos.message}
+      </p>`;
+    }
+    if (state.repos.repos.length === 0) {
+      return html`<p class="auth-note">
+          This account has not given Hashcards access to any repository yet.
+        </p>
+        <a href=${installUrl()} target="_blank" rel="noopener" class="btn"
+          >Choose repositories</a
+        >`;
+    }
+    const selected = `${state.owner}/${state.repo}`;
+    return html`<select
+      id="repo-select"
+      @change=${(e: Event) => void chooseRepo((e.target as HTMLSelectElement).value)}
+    >
+      <option value="" ?selected=${!state.owner}>Choose a repository…</option>
+      ${state.repos.repos.map((r) => {
+        const full = `${r.owner}/${r.repo}`;
+        return html`<option value=${full} ?selected=${full === selected}>
+          ${full}${r.private ? " (private)" : ""}
+        </option>`;
+      })}
+    </select>`;
+  }
+
+  paint();
+
+  if (state.credential?.kind === "app") {
+    if (!navigator.onLine) {
+      state.repos = { kind: "offline" };
+    } else {
+      try {
+        state.repos = { kind: "list", repos: await listAccessibleRepos() };
+      } catch (e) {
+        state.repos = { kind: "failed", message: (e as Error).message };
+      }
+    }
+    paint();
+  }
 }

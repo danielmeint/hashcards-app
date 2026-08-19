@@ -14,6 +14,21 @@ import "./style.css";
 
 const app = document.getElementById("app")!;
 
+/**
+ * An empty element for a view to render into, replacing whatever was there.
+ *
+ * A fresh element each time rather than emptying the old one: lit-html keeps
+ * its render state on the container it was handed, and a container something
+ * else has emptied leaves it updating nodes that are no longer in the document
+ * — silently, since nothing throws.
+ */
+function freshHost(): HTMLElement {
+  app.replaceChildren();
+  const host = document.createElement("div");
+  app.append(host);
+  return host;
+}
+
 type View = "settings" | "decks" | "drill" | "stats";
 
 /**
@@ -33,17 +48,18 @@ async function navigate(
 ) {
   disposeView?.();
   disposeView = null;
-  app.innerHTML = "";
+
+  const host = freshHost();
 
   switch (view) {
     case "settings":
-      await renderSettings(app, () => navigate("decks"), settingsNotice);
+      await renderSettings(host, () => navigate("decks"), settingsNotice);
       settingsNotice = undefined;
       break;
 
     case "decks":
       disposeView = await renderDeckList(
-        app,
+        host,
         (cards, session) => navigate("drill", cards, session),
         () => navigate("settings"),
         () => navigate("stats")
@@ -52,14 +68,14 @@ async function navigate(
 
     case "drill":
       if (drillCards && drillCards.length > 0) {
-        await renderDrill(app, drillCards, () => navigate("decks"), { resume });
+        await renderDrill(host, drillCards, () => navigate("decks"), { resume });
       } else {
         await navigate("decks");
       }
       break;
 
     case "stats":
-      await renderStats(app, () => navigate("decks"));
+      await renderStats(host, () => navigate("decks"));
       break;
   }
 }
@@ -94,7 +110,7 @@ async function init() {
   // Demo mode: #demo launches a drill with fake cards, no persistence
   if (window.location.hash === "#demo") {
     const demo = await getDemoData();
-    await renderDrill(app, demo.cards, () => navigate("decks"), {
+    await renderDrill(freshHost(), demo.cards, () => navigate("decks"), {
       dryRun: true,
       cache: demo.cache,
     });

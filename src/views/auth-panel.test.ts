@@ -60,6 +60,13 @@ function mockGitHubApi() {
 describe("the connection panel", () => {
   let host: HTMLElement;
 
+  /** What typing does: sets the value *and* says so. */
+  const type = (selector: string, text: string) => {
+    const field = host.querySelector(selector) as HTMLInputElement;
+    field.value = text;
+    field.dispatchEvent(new Event("input"));
+  };
+
   beforeEach(() => {
     localStorage.clear();
     document.body.innerHTML = "";
@@ -100,9 +107,9 @@ describe("the connection panel", () => {
     ) as unknown as typeof fetch;
 
     await renderAuthPanel(host, () => {});
-    (host.querySelector("#pat") as HTMLInputElement).value = "github_pat_x";
-    (host.querySelector("#owner") as HTMLInputElement).value = "me";
-    (host.querySelector("#repo") as HTMLInputElement).value = "cards";
+    type("#pat", "github_pat_x");
+    type("#owner", "me");
+    type("#repo", "cards");
     (host.querySelector("#connect-pat-btn") as HTMLButtonElement).click();
 
     await vi.waitFor(async () => {

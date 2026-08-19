@@ -168,7 +168,12 @@ describe("the card editor", () => {
   it("starts the card over when the offer is declined", async () => {
     const { done } = await openSheet({ reviewed: true });
 
-    $<HTMLInputElement>(".editor-keep input").checked = false;
+    const keep = $<HTMLInputElement>(".editor-keep input");
+    keep.checked = false;
+    // What a tap on the checkbox does. Setting `.checked` alone tells whoever
+    // reads the DOM at commit time and nobody else, which is a fact about how
+    // the view is built rather than about what the user did.
+    keep.dispatchEvent(new Event("change"));
     textarea().value = "Q: Something else entirely\nA: Indeed";
     textarea().dispatchEvent(new Event("input"));
     save().click();

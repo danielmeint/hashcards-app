@@ -5,10 +5,15 @@ type DeckMetadata = {
   name: string | null;
 };
 
-function extractFrontmatter(text: string): { metadata: DeckMetadata; content: string } {
+function extractFrontmatter(text: string): {
+  metadata: DeckMetadata;
+  content: string;
+  /** Lines removed from the top, so line numbers can be made absolute again. */
+  lineOffset: number;
+} {
   const lines = text.split("\n");
   if (lines.length === 0 || lines[0].trim() !== "---") {
-    return { metadata: { name: null }, content: text };
+    return { metadata: { name: null }, content: text, lineOffset: 0 };
   }
 
   let closingIdx = -1;
@@ -33,7 +38,7 @@ function extractFrontmatter(text: string): { metadata: DeckMetadata; content: st
   }
 
   const content = lines.slice(closingIdx + 1).join("\n");
-  return { metadata: { name }, content };
+  return { metadata: { name }, content, lineOffset: closingIdx + 1 };
 }
 
 enum LineType {
@@ -79,16 +84,18 @@ type State =
   | { type: "readingCloze"; text: string; startLine: number }
   | { type: "end" };
 
-type RawCard =
+/** Line numbers are 0-based and relative to the post-frontmatter content. */
+type RawCard = { startLine: number; endLine: number } & (
   | { type: "basic"; question: string; answer: string }
-  | { type: "clozeGroup"; text: string };
+  | { type: "clozeGroup"; text: string }
+);
 
 export async function parseFile(
   text: string,
   filePath: string,
   defaultDeckName: string
 ): Promise<Card[]> {
-  const { metadata, content } = extractFrontmatter(text);
+  const { metadata, content, lineOffset } = extractFrontmatter(text);
   const deckName = metadata.name ?? defaultDeckName;
 
   const rawCards: RawCard[] = [];
@@ -102,6 +109,19 @@ export async function parseFile(
   }
   parseLine(state, { type: LineType.Eof }, lastLine, rawCards, filePath);
 
+  /**
+   * Where a card lives in the file it came from: absolute, 1-based, inclusive
+   * — the form a `#L12-L18` link wants, and the form a person reading an error
+   * message expects.
+   */
+  function rangeOf(raw: RawCard): [number, number] {
+    let end = Math.max(raw.startLine, raw.endLine);
+    // The separator that ended the card is not part of it, and neither are the
+    // blank lines people leave before one.
+    while (end > raw.startLine && lines[end]?.trim() === "") end--;
+    return [lineOffset + raw.startLine + 1, lineOffset + end + 1];
+  }
+
   const cards: Card[] = [];
   const seenHashes = new Set<string>();
 
@@ -113,14 +133,19 @@ export async function parseFile(
         cards.push({
           deckName,
           filePath,
-          range: [0, 0],
+          range: rangeOf(raw),
           content: { type: "basic", question: raw.question, answer: raw.answer },
           hash,
           familyHash: null,
         });
       }
     } else {
-      const clozeCards = await parseClozeCards(raw.text, deckName, filePath);
+      const clozeCards = await parseClozeCards(
+        raw.text,
+        deckName,
+        filePath,
+        rangeOf(raw)
+      );
       for (const card of clozeCards) {
         if (!seenHashes.has(card.hash)) {
           seenHashes.add(card.hash);
@@ -140,6 +165,10 @@ function parseLine(
   cards: RawCard[],
   filePath: string
 ): State {
+  // Whatever ends a card is itself the next card's first line — except at end
+  // of file, where the card runs to the line we were handed.
+  const endLine = line.type === LineType.Eof ? lineNum : lineNum - 1;
+
   switch (state.type) {
     case "start":
       switch (line.type) {
@@ -198,7 +227,7 @@ function parseLine(
         case LineType.StartQuestion: {
           const q = state.question.trim();
           const a = state.answer.trim();
-          cards.push({ type: "basic", question: q, answer: a });
+          cards.push({ type: "basic", question: q, answer: a, startLine: state.startLine, endLine });
           return { type: "readingQuestion", question: line.text, startLine: lineNum };
         }
         case LineType.StartAnswer:
@@ -208,13 +237,13 @@ function parseLine(
         case LineType.StartCloze: {
           const q = state.question.trim();
           const a = state.answer.trim();
-          cards.push({ type: "basic", question: q, answer: a });
+          cards.push({ type: "basic", question: q, answer: a, startLine: state.startLine, endLine });
           return { type: "readingCloze", text: line.text, startLine: lineNum };
         }
         case LineType.Separator: {
           const q = state.question.trim();
           const a = state.answer.trim();
-          cards.push({ type: "basic", question: q, answer: a });
+          cards.push({ type: "basic", question: q, answer: a, startLine: state.startLine, endLine });
           return { type: "start" };
         }
         case LineType.Text:
@@ -227,7 +256,7 @@ function parseLine(
         case LineType.Eof: {
           const q = state.question.trim();
           const a = state.answer.trim();
-          cards.push({ type: "basic", question: q, answer: a });
+          cards.push({ type: "basic", question: q, answer: a, startLine: state.startLine, endLine });
           return { type: "end" };
         }
       }
@@ -236,17 +265,17 @@ function parseLine(
     case "readingCloze":
       switch (line.type) {
         case LineType.StartQuestion:
-          cards.push({ type: "clozeGroup", text: state.text });
+          cards.push({ type: "clozeGroup", text: state.text, startLine: state.startLine, endLine });
           return { type: "readingQuestion", question: line.text, startLine: lineNum };
         case LineType.StartAnswer:
           throw new Error(
             `Found answer tag while reading a cloze card. Location: ${filePath}:${lineNum + 1}`
           );
         case LineType.StartCloze:
-          cards.push({ type: "clozeGroup", text: state.text });
+          cards.push({ type: "clozeGroup", text: state.text, startLine: state.startLine, endLine });
           return { type: "readingCloze", text: line.text, startLine: lineNum };
         case LineType.Separator:
-          cards.push({ type: "clozeGroup", text: state.text });
+          cards.push({ type: "clozeGroup", text: state.text, startLine: state.startLine, endLine });
           return { type: "start" };
         case LineType.Text:
           return {
@@ -255,7 +284,7 @@ function parseLine(
             startLine: state.startLine,
           };
         case LineType.Eof:
-          cards.push({ type: "clozeGroup", text: state.text });
+          cards.push({ type: "clozeGroup", text: state.text, startLine: state.startLine, endLine });
           return { type: "end" };
       }
       break;
@@ -330,10 +359,15 @@ function scanClozeBytes(
   }
 }
 
+/**
+ * Every deletion in one `C:` block is a separate card, and they all share the
+ * block's line range — editing any of them means editing the same lines.
+ */
 async function parseClozeCards(
   rawText: string,
   deckName: string,
-  filePath: string
+  filePath: string,
+  range: [number, number]
 ): Promise<Card[]> {
   const text = rawText.trim();
   const textBytes = new TextEncoder().encode(text);
@@ -358,7 +392,7 @@ async function parseClozeCards(
       cards.push({
         deckName,
         filePath,
-        range: [0, 0],
+        range,
         content: { type: "cloze", text: cleanText, start, end: end - 1 },
         hash: "", // filled below
         familyHash: null, // filled below

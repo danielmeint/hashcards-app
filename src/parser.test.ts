@@ -190,3 +190,87 @@ describe("Parser", () => {
     expect(cards[0].hash).not.toBe(cards[1].hash);
   });
 });
+
+/**
+ * Every card carried `range: [0, 0]`, so nothing could point at where a card
+ * actually lives. These are what an "Edit this card" link is built from, and a
+ * range that is merely plausible sends you to the wrong part of the file — the
+ * one failure mode that makes the feature worse than not having it.
+ */
+describe("card line ranges", () => {
+  it("covers the lines a basic card was parsed from", async () => {
+    const cards = await parseFile("Q: one\nA: two", "test.md", "test");
+    // 1-based and inclusive, the way GitHub and people count lines.
+    expect(cards[0].range).toEqual([1, 2]);
+  });
+
+  it("spans a card's continuation lines", async () => {
+    const cards = await parseFile(
+      "Q: one\ncontinued\nA: two\nalso two",
+      "test.md",
+      "test"
+    );
+    expect(cards[0].range).toEqual([1, 4]);
+  });
+
+  it("gives each card in a file its own range", async () => {
+    const cards = await parseFile(
+      "Q: one\nA: two\n\n---\n\nQ: three\nA: four",
+      "test.md",
+      "test"
+    );
+    expect(cards.map((c) => c.range)).toEqual([
+      [1, 2],
+      [6, 7],
+    ]);
+  });
+
+  it("counts the frontmatter it stripped", async () => {
+    const cards = await parseFile(
+      '---\nname = "Deck"\n---\nQ: one\nA: two',
+      "test.md",
+      "test"
+    );
+    // Parsing sees line 1; the file has it on line 4.
+    expect(cards[0].range).toEqual([4, 5]);
+  });
+
+  it("stops at the card, not at the blank lines after it", async () => {
+    const cards = await parseFile(
+      "Q: one\nA: two\n\n\n---\nQ: three\nA: four",
+      "test.md",
+      "test"
+    );
+    expect(cards[0].range).toEqual([1, 2]);
+  });
+
+  it("runs a final card to the end of the file", async () => {
+    const cards = await parseFile("Q: one\nA: two\nmore answer", "test.md", "test");
+    expect(cards[0].range).toEqual([1, 3]);
+  });
+
+  it("gives every deletion in a cloze block the block's range", async () => {
+    const cards = await parseFile(
+      "Q: first\nA: card\n---\nC: [Alpha] and [Beta] and [Gamma].",
+      "test.md",
+      "test"
+    );
+    const cloze = cards.filter((c) => c.content.type === "cloze");
+    expect(cloze).toHaveLength(3);
+    // Three cards, one block: editing any of them means editing line 4.
+    expect(cloze.map((c) => c.range)).toEqual([
+      [4, 4],
+      [4, 4],
+      [4, 4],
+    ]);
+  });
+
+  it("spans a multi-line cloze block", async () => {
+    const cards = await parseFile(
+      "C: [Alpha] is\nspread over [two] lines.",
+      "test.md",
+      "test"
+    );
+    expect(cards[0].range).toEqual([1, 2]);
+  });
+});

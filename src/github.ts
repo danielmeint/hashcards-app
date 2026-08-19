@@ -1,3 +1,4 @@
+import { Card } from "./types";
 import { getAccessToken, loadCredential, recordLogin, refreshCredential } from "./auth";
 
 /**
@@ -23,6 +24,23 @@ export function saveConfig(config: GitHubConfig): void {
   localStorage.setItem("github_owner", config.owner);
   localStorage.setItem("github_repo", config.repo);
   localStorage.setItem("github_branch", config.branch);
+}
+
+/**
+ * A link to the lines a card was parsed from.
+ *
+ * Every `Card` has carried `filePath` and `range` from the start; until the
+ * parser filled `range` in they were a promise the app could not keep. Noticing
+ * a stale or badly-worded answer mid-drill and fixing it there and then is the
+ * difference between a card that gets rewritten and one you resolve to rewrite.
+ */
+export function cardSourceUrl(config: GitHubConfig, card: Card): string {
+  // Encoded per segment: a path may contain spaces, but its slashes are
+  // structure and must survive.
+  const path = card.filePath.split("/").map(encodeURIComponent).join("/");
+  const [start, end] = card.range;
+  const lines = end > start ? `#L${start}-L${end}` : `#L${start}`;
+  return `https://github.com/${config.owner}/${config.repo}/blob/${config.branch}/${path}${lines}`;
 }
 
 export function getIntervalFuzz(): boolean {

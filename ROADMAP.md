@@ -461,10 +461,16 @@ button that deep-links to `github.com/{owner}/{repo}/blob/{branch}/{path}#L12-L1
 You are drilling, you notice a stale or badly-worded answer, you fix it in ten
 seconds instead of resolving to do it later and not doing it.
 
-*Prerequisite:* cloze cards are currently constructed with `range: [0, 0]`
-(`src/parser.ts`, in `parseClozeCards`) — the parser knows the line range for
-basic cards but does not thread it through for cloze. That needs fixing first,
-and it is small.
+*Prerequisite: done, and the deep link with it.* The parser tracked `startLine`
+in its state machine and dropped it on the way out, so **both** kinds of card
+were built with `range: [0, 0]`, not just cloze. `RawCard` carries the range
+now, ranges are absolute, 1-based and inclusive — what a `#L12-L18` link means
+by a line number — and the frontmatter the parser strips is counted back in.
+Every deletion in a `C:` block shares the block's range, since editing any of
+them means editing the same lines. The link itself is `cardSourceUrl` in
+`src/github.ts`, rendered in the drill header and repointed on every card.
+
+Still open below: inline edit, and quick capture.
 
 The larger versions, in order of ambition:
 

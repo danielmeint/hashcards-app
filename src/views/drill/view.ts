@@ -1,4 +1,5 @@
 import { Card, Grade, Review } from "../../types";
+import { cardSourceUrl, getConfig } from "../../github";
 import { renderCardBody, postRender } from "../../render";
 import { attachCardGestures } from "./gestures";
 import { Session } from "./session";
@@ -12,6 +13,7 @@ import { Session } from "./session";
 
 type Chrome = {
   progressFill: HTMLElement;
+  editLink: HTMLAnchorElement;
   writeError: HTMLElement;
   cardContainer: HTMLElement;
   swipeHint: HTMLElement;
@@ -27,11 +29,18 @@ export type DrillView = {
   paint(): void;
 };
 
+export type ViewOptions = {
+  /** Demo cards have no repo behind them, so they get no edit link. */
+  sourceLinks?: boolean;
+};
+
 export function createView(
   container: HTMLElement,
   session: Session,
-  onFinish: () => void
+  onFinish: () => void,
+  options: ViewOptions = {}
 ): DrillView {
+  const repo = options.sourceLinks === false ? null : getConfig();
   let chrome: Chrome | null = null;
   let summaryShown = false;
   let buildingSummary = false;
@@ -41,8 +50,11 @@ export function createView(
     root.className = "root";
     root.innerHTML = `
       <div class="header">
-        <div class="progress-bar">
-          <div class="progress-fill"></div>
+        <div class="header-row">
+          <div class="progress-bar">
+            <div class="progress-fill"></div>
+          </div>
+          <a class="edit-link" id="edit-link" target="_blank" rel="noopener" hidden>Edit</a>
         </div>
         <div class="write-error" role="alert" hidden>Couldn't save progress on this device — reviews from this session may be lost.</div>
       </div>
@@ -74,6 +86,7 @@ export function createView(
 
     const mounted: Chrome = {
       progressFill: pick(".progress-fill"),
+      editLink: pick<HTMLAnchorElement>("#edit-link"),
       writeError: pick(".write-error"),
       cardContainer: pick(".card-container"),
       swipeHint: pick(".swipe-hint"),
@@ -195,6 +208,11 @@ export function createView(
 
     view.progressFill.style.width = `${session.progress * 100}%`;
     view.writeError.hidden = !session.writeFailed;
+
+    // Points at the card on screen, so it follows the drill rather than being
+    // set once and quietly going stale.
+    view.editLink.hidden = repo === null;
+    if (repo) view.editLink.href = cardSourceUrl(repo, card);
 
     const node = cardNode(card);
     const mountedCard = view.cardContainer.querySelector(".card");

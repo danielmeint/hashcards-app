@@ -612,3 +612,97 @@ describe("drill summary", () => {
     );
   });
 });
+
+/**
+ * Every `Card` has carried `filePath` and `range` from the start, but the
+ * parser filled `range` with `[0, 0]`, so the app could not point at a card it
+ * was showing. Noticing a badly-worded answer mid-drill and fixing it there and
+ * then is the difference between a card that gets rewritten and one you resolve
+ * to rewrite.
+ */
+describe("editing the card on screen", () => {
+  let container: HTMLElement;
+
+  beforeEach(() => {
+    localStorage.clear();
+    document.body.innerHTML = "";
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    localStorage.setItem("github_owner", "someone");
+    localStorage.setItem("github_repo", "cards");
+    localStorage.setItem("github_branch", "trunk");
+  });
+
+  const editLink = () =>
+    container.querySelector("#edit-link") as HTMLAnchorElement;
+
+  const sourced = (n: number, filePath: string, range: [number, number]): Card => ({
+    ...basicCard(n),
+    filePath,
+    range,
+  });
+
+  it("links to the lines the card was parsed from, on the configured branch", async () => {
+    const { renderDrill } = await freshDrill();
+    await renderDrill(container, [sourced(1, "aws/Networking.md", [12, 18])], () => {});
+
+    expect(editLink().href).toBe(
+      "https://github.com/someone/cards/blob/trunk/aws/Networking.md#L12-L18"
+    );
+    expect(editLink().hidden).toBe(false);
+  });
+
+  it("links to a single line without a range", async () => {
+    const { renderDrill } = await freshDrill();
+    await renderDrill(container, [sourced(1, "a.md", [7, 7])], () => {});
+
+    expect(editLink().href).toBe(
+      "https://github.com/someone/cards/blob/trunk/a.md#L7"
+    );
+  });
+
+  it("escapes a path with a space, without escaping its slashes", async () => {
+    const { renderDrill } = await freshDrill();
+    await renderDrill(container, [sourced(1, "my notes/deep dive.md", [1, 2])], () => {});
+
+    expect(editLink().href).toContain("/blob/trunk/my%20notes/deep%20dive.md#L1-L2");
+  });
+
+  it("follows the drill rather than going stale after the first card", async () => {
+    const { renderDrill } = await freshDrill();
+    await renderDrill(
+      container,
+      [sourced(1, "one.md", [1, 2]), sourced(2, "two.md", [30, 31])],
+      () => {}
+    );
+
+    const seen = [editLink().href];
+    click(container, "#reveal-btn");
+    click(container, '.grade-btn[data-grade="4"]');
+    seen.push(editLink().href);
+
+    // The queue is shuffled, so which card comes first is not knowable — only
+    // that the link moved with it. Set once at mount, both would be the same.
+    expect(seen.map((href) => href.split("/blob/trunk/")[1]).sort()).toEqual([
+      "one.md#L1-L2",
+      "two.md#L30-L31",
+    ]);
+  });
+
+  it("is absent when no repo is configured", async () => {
+    localStorage.clear();
+    const { renderDrill } = await freshDrill();
+    await renderDrill(container, [sourced(1, "a.md", [1, 2])], () => {});
+
+    expect(editLink().hidden).toBe(true);
+  });
+
+  it("is absent in demo mode, whose cards are in no repo at all", async () => {
+    const { renderDrill } = await freshDrill();
+    await renderDrill(container, [sourced(1, "demo.md", [1, 2])], () => {}, {
+      dryRun: true,
+    });
+
+    expect(editLink().hidden).toBe(true);
+  });
+});

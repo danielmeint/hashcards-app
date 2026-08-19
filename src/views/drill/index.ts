@@ -28,7 +28,9 @@ export async function renderDrill(
     onEnd();
   }
 
-  const view = createView(container, session, () => void finish());
+  const view = createView(container, session, () => void finish(), {
+    sourceLinks: !options.dryRun,
+  });
   session.onChange(() => view.paint());
   view.paint();
 }

@@ -342,6 +342,29 @@ body {
   align-items: center;
 }
 
+.root .header .header-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Quiet by design: it sits above the card for the moment you notice a bad one,
+   and must never compete with the grade buttons for attention. */
+.root .header .edit-link {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--color-text-muted);
+  text-decoration: none;
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.root .header .edit-link:hover {
+  color: var(--color-link);
+  background: var(--color-bg-hover);
+}
+
 .root .header .write-error {
   flex-basis: 100%;
   font-family: var(--font-ui);
@@ -1221,6 +1244,16 @@ body {
 
   .root .header {
     padding: 16px;
+  }
+
+  /* The bar gives up its fixed width so the link always has room beside it. */
+  .root .header .header-row {
+    width: 100%;
+  }
+
+  .root .header .progress-bar {
+    width: auto;
+    flex: 1;
   }
 
   .finished {

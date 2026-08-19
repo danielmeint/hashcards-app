@@ -23,6 +23,11 @@ export type CardContent = BasicCard | ClozeCard;
 export type Card = {
   deckName: string;
   filePath: string;
+  /**
+   * The lines of `filePath` this card was parsed from: absolute, 1-based and
+   * inclusive, counting the frontmatter. That is what a `#L12-L18` link on
+   * GitHub means by a line number, and what a person reading the file expects.
+   */
   range: [number, number];
   content: CardContent;
   hash: string;

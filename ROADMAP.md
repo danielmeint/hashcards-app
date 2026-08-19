@@ -112,6 +112,11 @@ for private repos, and an `<img>` tag cannot carry an `Authorization` header.
 content, store them in IndexedDB, and serve them as object URLs. This also makes
 images work offline, which the current approach never can.
 
+Two details worth settling before starting: `CacheStorage` is the other home for
+the blobs and is the better fit if the service worker should serve them, and the
+audio cards in the smaller backlog want the identical pipeline — so whatever
+this becomes should be keyed by repo path and content type, not by "image".
+
 ### 1.5 Sync failures are silent
 
 **Fixed.** The notice ladder is `src/sync-notice.ts`, the retry triggers are
@@ -169,6 +174,12 @@ all. It does not cover two valid card repos.
 because a card temporarily absent from the repo must not lose its scheduling.
 Anki keeps orphaned state for exactly that reason. Whatever shape this takes is
 the same shape 4.6 needs.
+
+The rule that makes both halves work: export the hashes this repo currently
+holds, **plus** the orphans that were last seen in it. That needs a hash → repo
+association in IndexedDB, which is also what tells 4.6 which state file a
+performance belongs in. Without the second half, every card that leaves the repo
+for an afternoon comes back new.
 
 ### 1.7 Editing a card discards its scheduling
 
@@ -250,6 +261,27 @@ store keeps parsed cards *with* their old hashes, so a re-key migration has both
 sides available.) Settle first whether the upstream CLI is ever meant to read
 `hashcards-state.json`, because if so the hash is a shared contract rather than
 ours to change.
+
+### 1.8 A card edit can race a background sync
+
+**P2, and mine.** `syncAll`, `syncStateOnly` and `adoptRepo` all go through
+`start()` in `src/sync.ts`, which single-flights them — two writers interleaving
+on the state file is how a merge gets lost. `commitCardEdit` does not join that
+lock. It writes to GitHub and updates the deck store on its own.
+
+The interleaving that bites: a sync lists the tree, an edit commits, and then
+the sync writes the *pre-edit* file into the deck store and records the tree
+ETag for the tree it listed. The edit is now invisible locally. It self-heals —
+that ETag is stale, so the next sync gets a 200 and refetches — but "self-heals
+on the next sync" is not the same as "correct", and auto-sync fires on
+`visibilitychange`, which is exactly when a phone comes back from the editor.
+
+**Fix:** put card edits through the same single-flight as everything else, so an
+edit either waits for the sync in progress or the sync waits for it.
+
+*Not* a rollback problem, incidentally: the commit goes to GitHub first and the
+local stores are updated only after it lands, so a rejected write leaves nothing
+local to undo. That ordering is deliberate.
 
 ---
 
@@ -650,7 +682,96 @@ pull-requestable, which no other SRS tool can do naturally.
 
 ---
 
-## 5. Smaller backlog
+## 5. Foundations
+
+Not features, and not defects. These are the things that decide what the next
+feature costs.
+
+### 5.1 The view layer is string templates and selector casts
+
+Every view builds a template string, assigns it to `innerHTML`, and then goes
+looking for its own elements again. As of this writing that is roughly 1,700
+lines across six views, **52** `querySelector(...) as T` or `!` assertions, and
+**21** `escapeHtml` call sites — each one a place a future edit can forget, with
+nothing to catch it. `drill/view.ts` already hand-rolls "build the chrome once
+and mutate it" (2.2) because rebuilding on every card was visibly slow. That is
+precisely the job a template library does, and does better.
+
+**Recommendation: `lit-html`, one view at a time — not a rewrite.**
+
+Why `lit-html` specifically:
+
+- **It is scoped to the three things that actually hurt.** Escaping is automatic
+  (interpolations are values, not text), events bind in the template rather than
+  by selector afterwards, and re-rendering updates only the parts that changed —
+  which is `drill/view.ts`'s hand-written `paint()`, for free and more precisely.
+- **~4 KB gzipped**, against a 36 KB gzipped bundle today. Lazy-loading KaTeX
+  would pay for it several times over.
+- **No build change and no new file type.** Tagged template literals compile as
+  they are; Vite needs nothing.
+- **It migrates per view.** `render(template, container)` is a drop-in for one
+  `innerHTML` assignment, so every step is shippable on its own.
+
+Why not something heavier. React or Preact would add a virtual DOM to solve what
+template parts already solve, and their real gift — a component model and an
+ecosystem — answers problems this app does not have: there is no routing, no
+shared reactive state beyond a handful of module-level values, and no forms of
+consequence. The most intricate UI code here is `drill/gestures.ts`, direct
+touch handling that a VDOM makes harder to reason about, not easier. Svelte
+would mean a compiler and `.svelte` files: the right answer if this became a
+product with a team, and a large tax on a 4,000-line app with one author.
+
+**Why not the complete rewrite.** The 208 tests assert on rendered DOM — what is
+on screen, not how it got there — so a view converted to `lit-html` is verified
+by the tests that already exist. A big-bang rewrite gives up that safety net to
+arrive at the same place. Suggested order, easiest first so the pattern is
+settled before it matters: `stats.ts`, then `settings.ts` and `auth-panel.ts`,
+then `deck-list.ts`, and `drill/view.ts` last, where the win is biggest and the
+tests are thickest.
+
+**The honest cost.** This buys the user nothing on the day it ships. It competes
+for the same evenings as 1.4 and 1.6, which fix things that are actually wrong.
+What it buys is the *next* features: a preview pane in the card editor,
+drill-time editing, quick capture — all of them partial updates and forms, which
+is exactly where string templates stop being cheap.
+
+### 5.2 Settings live in two places, and one module reads around them
+
+Configuration is nine raw `localStorage` keys (`github_owner`, `github_repo`,
+`github_branch`, `new_cards_per_day`, `interval_fuzz`, `haptic_feedback`,
+`theme`, `last_synced_at`, `last_pushed_at`) with their accessors spread across
+`github.ts`, `theme.ts`, `budget.ts` and `sync-state.ts`, while everything else
+lives in IndexedDB. Nothing validates a key, nothing migrates one, and the names
+are string literals at each use.
+
+The concrete bug this shape produces is already in the tree: `render.ts:7-9`
+reads `github_owner`, `github_repo` and `github_branch` straight out of
+`localStorage` rather than calling `getConfig()`, so image URLs are built from a
+second, independent reading of the configuration.
+
+**Fix:** one typed module owning the keys, their defaults, and their migrations,
+with the existing accessors kept as its surface so callers do not all change at
+once. `adoptLegacySyncTimestamp` shows the shape a migration wants. Stop short
+of a settings *object* threaded through every view — see 5.3.
+
+### 5.3 Declined: a services container
+
+The suggestion that prompted 5.1 and 5.2 also proposed replacing the
+module-level singletons (`cachedCards`, the cached credential, sync's
+`inFlight`) with instantiable services in an `AppServices` container, so tests
+could build isolated harnesses instead of calling `vi.resetModules()`.
+
+Recorded here as considered and declined. The whole suite is 208 tests in about
+two seconds, and the isolation boilerplate is four lines in a helper per test
+file. Rewriting every module's shape to remove four lines is a poor trade, and
+the singletons are load-bearing in a way a container would not improve: one
+in-flight sync, one credential, one card cache is the *correctness* requirement,
+not an accident of style. If test setup ever becomes the friction, extract a
+shared `freshApp()` helper first and see what is left to complain about.
+
+---
+
+## 6. Smaller backlog
 
 Carried forward, still open, none of it urgent.
 
@@ -663,7 +784,15 @@ Carried forward, still open, none of it urgent.
   and render an `<audio>` element. Shares the private-repo blob-fetching work
   from 1.4.
 - **Bundle size** — `marked` dominates the ~68 KB bundle; lazy-load it via
-  dynamic import, since it is not needed until the first card renders.
+  dynamic import, since it is not needed until the first card renders. KaTeX and
+  the syntax highlighter are the same argument and are larger: neither is needed
+  until a card that uses them renders, and most do not.
+- **The cloze placeholder is a magic string** — `render.ts` swaps the deletion
+  for the literal `CLOZE_DELETION_PLACEHOLDER`, renders Markdown, then
+  `String.replace`s the first occurrence back. A card whose own text contains
+  that string renders the wrong blank. Vanishingly unlikely and trivially
+  avoidable: a `marked` extension would do the substitution on the AST instead
+  of on its output.
 - **DOM query boilerplate** — a small typed helper would remove a lot of repeated
   `querySelector` casting, mostly in the settings view.
 - **Demo mode used to spend the real new-card budget** — fixed when the drill was
@@ -675,7 +804,7 @@ Carried forward, still open, none of it urgent.
 
 ---
 
-## 6. Done
+## 7. Done
 
 Kept for history.
 
@@ -712,7 +841,20 @@ against a fake IndexedDB and a fake GitHub rather than a real browser.
 scoped to the repo that holds the cards, which is also 4.6's design work) and
 1.7 (the identity question behind editing a card).
 
-**Then pick a bet.** **4.1** is the one that changes who can use this at all, and
-it makes 3.4 and the localStorage-credential problem disappear. **4.2 → 4.3** is
-the one that most improves the collection itself, and 4.2 is unusually cheap for
-what it delivers.
+**Bets taken:** **4.1** (sign-in, which changed who can use this at all and made
+3.4 and the localStorage credential disappear) and **4.2 → 4.3** (the leech list
+and the editor it opens, which is the pair that most improves the collection
+itself).
+
+**Next.** Two small things first, both cheap and both real: **1.8**, the edit /
+sync race left over from 4.2, and **5.2**, the second reading of the config in
+`render.ts`. Then the fork:
+
+- **1.6** if the app should hold more than one card repo, since it is 4.6's
+  design work wearing a smaller hat.
+- **1.4** the first time a card wants a diagram — latent until then, and
+  immediately P0 after.
+- **5.1** if the next thing planned is a *feature* rather than a fix. Everything
+  still open in 4.2 (preview, drill-time editing, quick capture) is forms and
+  partial updates, which is where the current view layer is most expensive.
+  Doing it before those is cheaper than doing it after them.

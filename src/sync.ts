@@ -7,6 +7,7 @@ import {
   readStateFile,
   writeStateFile,
   StateFile,
+  ConflictError,
 } from "./github";
 import {
   DeckFile,
@@ -199,29 +200,17 @@ export async function loadCachedCards(): Promise<Card[]> {
 }
 
 /**
- * Merge review state with the repo, last-write-wins per card.
+ * Merge remote scheduling into local, last-write-wins per card.
  *
- * Returns whether remote is now in step with local — false when there was a
- * difference this call declined to push. The caller records that, so a run of
- * declined or skipped pushes is visible as reviews that never left the device
- * rather than as a "Synced just now" that means nothing.
+ * Pure, and idempotent: merging an already-merged set against a newer remote
+ * gives the same answer as merging both from scratch. That is what makes the
+ * conflict retry below safe to do without asking anyone.
  */
-export async function fullSync(
-  config: GitHubConfig,
-  push: boolean = true,
-  onProgress?: (progress: SyncProgress) => void
-): Promise<boolean> {
-  // 1. Fetch remote state
-  onProgress?.({ phase: "Fetching review state" });
-  const remote = await readStateFile(config);
-
-  // 2. Read local state
-  const local = await exportState();
-
-  // 3. Merge: LWW per card
+function mergeState(
+  local: Record<string, ReviewedPerformance>,
+  remoteCards: Record<string, unknown>
+): Record<string, ReviewedPerformance> {
   const merged: Record<string, ReviewedPerformance> = {};
-
-  const remoteCards = remote?.data?.cards || {};
   const allHashes = new Set([
     ...Object.keys(local),
     ...Object.keys(remoteCards),
@@ -233,11 +222,10 @@ export async function fullSync(
 
     if (localPerf && remotePerf) {
       // LWW: keep the one with the later lastReviewedAt
-      if (localPerf.lastReviewedAt >= remotePerf.lastReviewedAt) {
-        merged[hash] = localPerf;
-      } else {
-        merged[hash] = { ...remotePerf, type: "reviewed" };
-      }
+      merged[hash] =
+        localPerf.lastReviewedAt >= remotePerf.lastReviewedAt
+          ? localPerf
+          : { ...remotePerf, type: "reviewed" };
     } else if (localPerf) {
       merged[hash] = localPerf;
     } else if (remotePerf) {
@@ -245,10 +233,11 @@ export async function fullSync(
     }
   }
 
-  // 4. Write merged state to IndexedDB
-  await importState(merged);
+  return merged;
+}
 
-  // 5. Write merged state to GitHub (skip if unchanged)
+/** The merged set as the repo stores it — scheduling only, no local bookkeeping. */
+function toStateFile(merged: Record<string, ReviewedPerformance>): StateFile {
   const stateFile: StateFile = { version: 1, cards: {} };
   for (const [hash, perf] of Object.entries(merged)) {
     stateFile.cards[hash] = {
@@ -261,19 +250,68 @@ export async function fullSync(
       reviewCount: perf.reviewCount,
     };
   }
+  return stateFile;
+}
 
-  // A repo we hold no cards for is not a repo whose scheduling we own, so
-  // writing a state file into it says something untrue about it. This is the
-  // backstop under `adoptRepo`: it also catches a repo that was configured by
-  // hand, and one whose card files have all been deleted.
-  const canPush = push && (await loadCachedCards()).length > 0;
+/**
+ * How many times a push will re-merge and try again before reporting failure.
+ * Bounded because a conflict that keeps recurring is no longer a race with one
+ * other device — it is something that will still be true on the next attempt,
+ * and hammering the contents API is not a way to find out which.
+ */
+const CONFLICT_RETRIES = 2;
 
-  const remoteJson = remote ? JSON.stringify(remote.data) : null;
-  const mergedJson = JSON.stringify(stateFile);
-  if (remoteJson === mergedJson) return true;
-  if (!canPush) return false;
+/**
+ * Merge review state with the repo, last-write-wins per card.
+ *
+ * The SHA sent with a write is the one read at the top of this function, so a
+ * second device committing in between makes GitHub refuse the push — correctly,
+ * since accepting it would drop whatever that device had recorded. Losing that
+ * race is not a failure worth showing anyone: the merge is per-card LWW and
+ * idempotent, so the answer is to read the new state, merge again, and push
+ * that. Before 1.5 this surfaced as nothing at all; now it would surface as a
+ * red "Try again" for something the app can settle by itself.
+ *
+ * Returns whether remote is now in step with local — false when there was a
+ * difference this call declined to push. The caller records that, so a run of
+ * declined or skipped pushes is visible as reviews that never left the device
+ * rather than as a "Synced just now" that means nothing.
+ */
+export async function fullSync(
+  config: GitHubConfig,
+  push: boolean = true,
+  onProgress?: (progress: SyncProgress) => void
+): Promise<boolean> {
+  for (let attempt = 0; ; attempt++) {
+    onProgress?.({
+      phase: attempt === 0 ? "Fetching review state" : "Merging a newer change",
+    });
+    const remote = await readStateFile(config);
 
-  onProgress?.({ phase: "Saving review state" });
-  await writeStateFile(config, stateFile, remote?.sha);
-  return true;
+    // Local is re-read on every attempt, not just the first: a merge writes
+    // back into IndexedDB, and a retry has to build on that rather than on the
+    // state this sync started with.
+    const merged = mergeState(await exportState(), remote?.data?.cards || {});
+    await importState(merged);
+
+    const stateFile = toStateFile(merged);
+
+    // A repo we hold no cards for is not a repo whose scheduling we own, so
+    // writing a state file into it says something untrue about it. This is the
+    // backstop under `adoptRepo`: it also catches a repo that was configured by
+    // hand, and one whose card files have all been deleted.
+    const canPush = push && (await loadCachedCards()).length > 0;
+
+    const remoteJson = remote ? JSON.stringify(remote.data) : null;
+    if (remoteJson === JSON.stringify(stateFile)) return true;
+    if (!canPush) return false;
+
+    onProgress?.({ phase: "Saving review state" });
+    try {
+      await writeStateFile(config, stateFile, remote?.sha);
+      return true;
+    } catch (e) {
+      if (!(e instanceof ConflictError) || attempt >= CONFLICT_RETRIES) throw e;
+    }
+  }
 }

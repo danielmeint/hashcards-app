@@ -427,6 +427,15 @@ the keyboard — but tap-to-reveal works with a mouse too.
 
 ### 3.1 Multi-device conflict handling
 
+**Fixed.** `writeStateFile` now tells a lost race from a real failure
+(`ConflictError` in `src/github.ts`) and `fullSync` answers one by reading the
+new remote state, merging again, and pushing that — twice at most, since a
+conflict that keeps recurring is not a race with one other device. Both shapes
+GitHub uses are handled: a 409 when the SHA we sent is stale, and a 422 naming
+`sha` when the file was created after we read a 404 for it. A 422 about anything
+else is not retried. Covered by `src/sync.test.ts`, whose fake repo now enforces
+the SHA on writes the way GitHub does. Original report below.
+
 `fullSync` merges last-write-wins per card (`src/sync.ts:81-97`), which is a
 sound model, but the write path is not defended: `writeStateFile` sends the SHA
 read at the *start* of the sync, so a push racing another device fails, and per
@@ -434,6 +443,12 @@ read at the *start* of the sync, so a push racing another device fails, and per
 
 **Fix:** on a 409, re-read remote state, re-merge, and retry. LWW per card makes
 this safe to do automatically — the merge is already idempotent.
+
+*As shipped:* the retry re-reads **local** state too, not just remote. A merge
+writes back into IndexedDB, so a second attempt has to build on what the first
+one left there rather than on the state the sync started with. Shipping 1.5 is
+what made this worth doing now — the failure did not become more likely, it
+became visible, as a red "Try again" for something the app can settle itself.
 
 ### 3.2 Rate limiting
 
@@ -673,10 +688,10 @@ Kept for history.
 drill-loop, deck-list and sync tests as a partial answer to 3.5, running in jsdom
 against a fake IndexedDB and a fake GitHub rather than a real browser.
 
-**Next, what is left of correctness:** **1.5** and **3.1**. 1.5 is part-done —
-sync reports failures in the deck list — but the durable half (retry queue,
-last-successful-sync warning) is open. 3.1 only bites with real multi-device
-concurrency, and 4.1 may rewrite that code anyway.
+**Correctness, now done:** **1.5** and **3.1**. What is left of that section is
+1.4 (images in private repos, latent until the first diagram), 1.6 (state
+scoped to the repo that holds the cards, which is also 4.6's design work) and
+1.7 (the identity question behind editing a card).
 
 **Then pick a bet.** **4.1** is the one that changes who can use this at all, and
 it makes 3.4 and the localStorage-credential problem disappear. **4.2 → 4.3** is

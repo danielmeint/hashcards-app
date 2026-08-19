@@ -25,8 +25,12 @@ class FakeRepo {
   treeRequests: { conditional: boolean }[] = [];
   /** The repo's `hashcards-state.json`, base64 as the contents API returns it. */
   state: { content: string; sha: string } | null = null;
-  /** Every state file this repo was asked to commit. */
+  /** Every state file this repo accepted a commit of. */
   stateWrites: unknown[] = [];
+  /** Every state file it was asked to commit, including the refused ones. */
+  writeAttempts: unknown[] = [];
+  /** Runs after each read of the state file, to stand in for another device. */
+  onStateRead: (() => void) | null = null;
 
   set(path: string, content: string, sha: string): void {
     this.files.set(path, { sha, content });
@@ -64,13 +68,37 @@ class FakeRepo {
 
     if (url.includes("/contents/hashcards-state.json")) {
       if (init?.method === "PUT") {
-        const body = JSON.parse(String(init.body)) as { content: string };
+        const body = JSON.parse(String(init.body)) as {
+          content: string;
+          sha?: string;
+        };
+        this.writeAttempts.push(JSON.parse(atob(body.content)));
+        // GitHub refuses a write built on a SHA that is no longer current —
+        // accepting it would silently drop whatever moved the file. It has two
+        // ways of saying so, and they are not the same status code.
+        if (this.state && !body.sha) {
+          return new Response(
+            JSON.stringify({ message: 'Invalid request.\n\n"sha" wasn\'t supplied.' }),
+            { status: 422 }
+          );
+        }
+        if ((body.sha ?? null) !== (this.state?.sha ?? null)) {
+          return new Response(
+            JSON.stringify({
+              message: "hashcards-state.json does not match the file's SHA",
+            }),
+            { status: 409 }
+          );
+        }
         this.stateWrites.push(JSON.parse(atob(body.content)));
         this.state = { content: body.content, sha: `state-${this.stateWrites.length}` };
         return new Response(JSON.stringify({}), { status: 200 });
       }
-      if (!this.state) return new Response(null, { status: 404 });
-      return new Response(JSON.stringify(this.state), { status: 200 });
+      const res = this.state
+        ? new Response(JSON.stringify(this.state), { status: 200 })
+        : new Response(null, { status: 404 });
+      this.onStateRead?.();
+      return res;
     }
 
     const contents = url.match(/\/contents\/(.+)\?/);
@@ -329,6 +357,127 @@ describe("state sync", () => {
     const status = getSyncStatus();
     expect(status.phase).toBe("error");
     expect(status.phase === "error" && status.needsSignIn).toBe(true);
+  });
+
+  it("re-merges and pushes again when another device commits first", async () => {
+    repo.set("a.md", card("one"), "sha-a");
+    repo.setState({ version: 1, cards: { shared: performance("2026-02-01") } });
+    const { syncAll } = await freshSync();
+    const { importState, getAllPerformances } = await import("./db");
+    await importState({ "on-this-device": performance("2026-02-01") });
+
+    // The phone commits in the window between our read and our write, which is
+    // exactly what the SHA we are about to send is there to catch.
+    repo.onStateRead = () => {
+      repo.onStateRead = null;
+      repo.state = {
+        content: btoa(
+          JSON.stringify({
+            version: 1,
+            cards: {
+              shared: performance("2026-02-01"),
+              "on-the-phone": performance("2026-04-01"),
+            },
+          })
+        ),
+        sha: "state-from-the-phone",
+      };
+    };
+
+    expect(await syncAll(CONFIG)).toBe(true);
+
+    // The refused push, then one built on what the phone actually left behind.
+    expect(repo.writeAttempts).toHaveLength(2);
+    expect(repo.stateWrites).toHaveLength(1);
+    expect(
+      Object.keys((repo.stateWrites[0] as { cards: object }).cards).sort()
+    ).toEqual(["on-the-phone", "on-this-device", "shared"]);
+    // And the phone's card is scheduled here too, not merely preserved there.
+    expect([...(await getAllPerformances()).keys()]).toContain("on-the-phone");
+  });
+
+  it("re-merges when the state file appears between the read and the write", async () => {
+    // No state file at all, so nothing to send a SHA for — and then the phone
+    // creates one. GitHub reports that as a 422 about a missing `sha`, not a
+    // 409, but it is the same lost race.
+    repo.set("a.md", card("one"), "sha-a");
+    const { syncAll } = await freshSync();
+    const { importState } = await import("./db");
+    await importState({ "on-this-device": performance("2026-02-01") });
+
+    repo.onStateRead = () => {
+      repo.onStateRead = null;
+      repo.state = {
+        content: btoa(
+          JSON.stringify({
+            version: 1,
+            cards: { "on-the-phone": performance("2026-04-01") },
+          })
+        ),
+        sha: "created-by-the-phone",
+      };
+    };
+
+    expect(await syncAll(CONFIG)).toBe(true);
+
+    expect(repo.stateWrites).toHaveLength(1);
+    expect(
+      Object.keys((repo.stateWrites[0] as { cards: object }).cards).sort()
+    ).toEqual(["on-the-phone", "on-this-device"]);
+  });
+
+  it("does not retry a 422 that has nothing to do with a lost race", async () => {
+    repo.set("a.md", card("one"), "sha-a");
+    const { syncAll } = await freshSync();
+    const { importState } = await import("./db");
+    await importState({ "hash-1": performance("2026-02-01") });
+
+    // 422 is GitHub's general validation status. Re-merging cannot make a
+    // branch exist, so retrying one is two more requests and the same answer.
+    let attempts = 0;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "PUT" && url.includes("hashcards-state.json")) {
+        attempts++;
+        return new Response(
+          JSON.stringify({ message: "Branch cards-v2 not found" }),
+          { status: 422 }
+        );
+      }
+      return repo.handler(url, init);
+    }) as unknown as typeof fetch;
+
+    expect(await syncAll(CONFIG)).toBe(false);
+
+    expect(attempts).toBe(1);
+    const { getSyncStatus } = await import("./sync-state");
+    const status = getSyncStatus();
+    expect(status.phase === "error" && status.message).toContain("Branch");
+  });
+
+  it("stops re-merging a conflict that never clears", async () => {
+    repo.set("a.md", card("one"), "sha-a");
+    repo.setState({ version: 1, cards: {} });
+    const { syncAll } = await freshSync();
+    const { importState } = await import("./db");
+    const { getSyncStatus } = await import("./sync-state");
+    await importState({ "hash-1": performance("2026-02-01") });
+
+    // Something is moving the file every single time. Retrying is no longer
+    // racing one other device, and it will still be true on the next attempt.
+    let n = 0;
+    repo.onStateRead = () => {
+      repo.state = { content: btoa("{}"), sha: `moved-again-${++n}` };
+    };
+
+    expect(await syncAll(CONFIG)).toBe(false);
+
+    expect(repo.writeAttempts).toHaveLength(3);
+    expect(repo.stateWrites).toEqual([]);
+    // Reported as a failure the user can retry, not swallowed as a success.
+    const status = getSyncStatus();
+    expect(status.phase).toBe("error");
+    expect(status.phase === "error" && status.needsSignIn).toBe(false);
   });
 
   it("adopts a repo by pulling its scheduling, not by committing to it", async () => {

@@ -327,6 +327,13 @@ export async function readStateFile(
   return { data: JSON.parse(decodeBase64(data.content)), sha: data.sha };
 }
 
+/**
+ * A write that lost a race: the state file moved between the read this push was
+ * built on and the push itself. Distinguished from every other failure because
+ * it is the one the app can resolve by itself — see the retry in `fullSync`.
+ */
+export class ConflictError extends Error {}
+
 export async function writeStateFile(
   config: GitHubConfig,
   state: StateFile,
@@ -344,5 +351,15 @@ export async function writeStateFile(
     `/repos/${config.owner}/${config.repo}/contents/hashcards-state.json`,
     { method: "PUT", body: JSON.stringify(body) }
   );
-  if (!res.ok) throw new Error(await apiError(res));
+  if (res.ok) return;
+
+  const message = await apiError(res);
+  // Two shapes of the same event. A 409 is the SHA we sent no longer being
+  // current — another device committed after our read. A 422 naming `sha` is
+  // that race won from the other side: we read a 404, so we sent no SHA at
+  // all, and by the time the write landed the file existed.
+  if (res.status === 409 || (res.status === 422 && /\bsha\b/i.test(message))) {
+    throw new ConflictError(message);
+  }
+  throw new Error(message);
 }

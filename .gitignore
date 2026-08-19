@@ -21,3 +21,6 @@ coverage/
 
 # Local Pages Function variables
 .dev.vars
+
+# GitHub App credentials from scripts/create-github-app.mjs
+.github-app/

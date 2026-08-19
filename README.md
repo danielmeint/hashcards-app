@@ -71,16 +71,38 @@ npm run build     # production build
 
 A browser cannot complete an OAuth exchange by itself: GitHub's token endpoint is not CORS-enabled and requires a client secret. `functions/api/auth/` is the smallest thing that closes that gap. It holds no state, sets no cookies, and never sees your cards.
 
-1. Create a GitHub App at [github.com/settings/apps/new](https://github.com/settings/apps/new):
-   - **Callback URL** `https://your-domain/` (add `http://localhost:8788/` too, for local development)
-   - **Request user authorization (OAuth) during installation** — on
-   - **Expire user authorization tokens** — on, so tokens last 8 hours and renew from a refresh token
-   - **Webhook → Active** — off
-   - **Repository permissions → Contents** — Read and write
-2. Generate a client secret, and note the Client ID and the app slug (the last part of the app's public URL).
-3. Put the **Client ID** and **slug** in `src/github-app.ts`. Both are public and belong in the repo; the secret does not.
-4. In the Cloudflare Pages project, under **Settings → Variables and secrets**, add `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` for Production and Preview.
-5. Install the App on your card repo.
+```bash
+node scripts/create-github-app.mjs --name "My Hashcards" --url https://your-domain
+```
+
+Open the URL it prints, press **Create GitHub App**, and it writes to `.github-app/` (gitignored):
+
+| | |
+|---|---|
+| `github-app.public.json` | id, slug, client ID — public, these go in the repo |
+| `github-app.secret` | client secret, `0600` |
+| `github-app.private-key.pem` | `0600`; unused here, but the only copy |
+
+The script goes through GitHub's [App Manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest), so permissions, callback URLs and the install-time OAuth step come from one reviewed object rather than from ten form fields — see `buildManifest` for what it asks for and why. Then:
+
+1. Put the **client ID** and **slug** from `github-app.public.json` into `src/github-app.ts`. Both are public and belong in the repo; the secret does not.
+2. Push the credentials to your Pages project. Piping keeps the secret out of your shell history and out of `ps`:
+   ```bash
+   npx wrangler pages secret put GITHUB_CLIENT_SECRET \
+     --project-name hashcards-app < .github-app/github-app.secret
+   npx wrangler pages secret put GITHUB_CLIENT_ID --project-name hashcards-app
+   ```
+3. Install the App on your card repo — the script prints the link.
+4. Confirm **user-to-server token expiration** is on, at the App's settings page. It is the default for new apps and cannot be set from a manifest. With it on you get 8-hour tokens and a refresh token, which is what `src/auth.ts` expects; with it off the token is permanent and `expiresAt` is simply null.
+
+Delete `.github-app/` once the secret is in Cloudflare, keeping the private key if you want it.
+
+<details>
+<summary>Creating the App by hand instead</summary>
+
+At [github.com/settings/apps/new](https://github.com/settings/apps/new): **Callback URL** `https://your-domain/` and `http://localhost:8788/`; **Request user authorization (OAuth) during installation** on; **Expire user authorization tokens** on; **Webhook → Active** off; **Repository permissions → Contents** Read and write. Then generate a client secret and follow the numbered steps above.
+
+</details>
 
 For local development, `vite` does not serve `/api/auth/*`. Put the two variables in a `.dev.vars` file (gitignored) and run the Functions alongside the built site:
 

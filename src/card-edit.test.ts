@@ -17,9 +17,19 @@ class FakeRepo {
     this.files.set(path, { text, sha: `sha-${++this.n}` });
   }
 
-  handler = (url: string, init?: RequestInit): Response => {
+  /** Blob SHAs the tree reports, when they should differ from the files. */
+  treeShas: Map<string, string> | null = null;
+  /** Held requests, so a test can pin down an interleaving exactly. */
+  hold: { match: string; release: Promise<void> } | null = null;
+
+  handler = async (url: string, init?: RequestInit): Promise<Response> => {
     if (url.includes("/git/trees/")) {
-      return new Response(JSON.stringify({ tree: [] }), { status: 200 });
+      const tree = [...this.files].map(([path, f]) => ({
+        path,
+        sha: this.treeShas?.get(path) ?? f.sha,
+        type: "blob",
+      }));
+      return new Response(JSON.stringify({ tree }), { status: 200 });
     }
     const match = url.match(/\/contents\/([^?]+)/);
     if (!match) throw new Error(`Unexpected request: ${url}`);
@@ -54,12 +64,14 @@ class FakeRepo {
     }
 
     if (!existing) return new Response(null, { status: 404 });
+    // Snapshotted before the wait, not after: a slow response carries the state
+    // the server had when it was asked, which is the whole point of the race.
     const content = btoa(
       String.fromCharCode(...new TextEncoder().encode(existing.text))
     );
-    return new Response(JSON.stringify({ content, sha: existing.sha }), {
-      status: 200,
-    });
+    const body = JSON.stringify({ content, sha: existing.sha });
+    if (this.hold && url.includes(this.hold.match)) await this.hold.release;
+    return new Response(body, { status: 200 });
   };
 }
 
@@ -71,7 +83,7 @@ async function freshEdit(path: string, text: string) {
   vi.resetModules();
   repo = new FakeRepo();
   repo.set(path, text);
-  globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+  globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
     repo.handler(String(input), init)
   ) as unknown as typeof fetch;
 
@@ -322,6 +334,95 @@ C: The capital of [France] is [Paris]
     expect(
       stored.cards.map((c) => (c.content.type === "basic" ? c.content.question : ""))
     ).toContain("Durable?");
+  });
+
+  it("does not commit into the window a sync is holding open", async () => {
+    const { readCardSource, commitCardEdit, db, sync } = await freshEdit("a.md", FILE);
+    const card = (await sync.loadCachedCards())[1];
+    const source = await readCardSource(CONFIG, card);
+
+    // A sync is pulling a change another device made to this same file, and its
+    // content fetch is slow. Everything it is about to write into the deck
+    // store was read before the edit below existed.
+    repo.treeShas = new Map([["a.md", "sha-from-another-device"]]);
+    let release!: () => void;
+    repo.hold = {
+      match: "/contents/a.md",
+      release: new Promise<void>((r) => (release = r)),
+    };
+
+    const syncing = sync.syncAll(CONFIG);
+    await new Promise((r) => setTimeout(r, 0));
+
+    const editing = commitCardEdit(
+      CONFIG,
+      card,
+      source,
+      "Q: How durable is S3?\nA: 99.999999999%",
+      { keepScheduling: true }
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    release();
+    await Promise.all([syncing, editing]);
+
+    // Interleaved, the sync writes the pre-edit parse of the file over the
+    // edit, and records a tree ETag saying that is current. The next sync
+    // repairs it — one sync too late, and auto-sync fires on the visibility
+    // change that follows closing the editor.
+    const [stored] = await db.getAllDeckFiles();
+    const questions = stored.cards.map((c) =>
+      c.content.type === "basic" ? c.content.question : ""
+    );
+    expect(questions).toContain("How durable is S3?");
+    expect(questions).not.toContain("What is the default S3 durability?");
+    expect(stored.sha).toBe(repo.files.get("a.md")!.sha);
+  });
+
+  it("serialises two edits rather than letting the second read stale cards", async () => {
+    const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
+    const cards = await sync.loadCachedCards();
+    const source = await readCardSource(CONFIG, cards[1]);
+
+    // Both were opened against the same read of the file, so the second commit
+    // has to be built on what the first one left behind — which is only true if
+    // it waits for it.
+    const first = commitCardEdit(CONFIG, cards[1], source, "Q: One?\nA: Yes", {
+      keepScheduling: true,
+    });
+    const second = commitCardEdit(CONFIG, cards[1], source, "Q: Two?\nA: Also", {
+      keepScheduling: true,
+    });
+
+    await first;
+    // The second is built on a SHA the first has already moved, and says so
+    // rather than overwriting it.
+    await expect(second).rejects.toBeInstanceOf(
+      (await import("./github")).ConflictError
+    );
+    expect(repo.files.get("a.md")!.text).toContain("Q: One?");
+  });
+
+  it("keeps the queue moving after a commit fails", async () => {
+    const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
+    const card = (await sync.loadCachedCards())[1];
+    const source = await readCardSource(CONFIG, card);
+    repo.set("a.md", FILE); // moves the SHA out from under the edit
+
+    await expect(
+      commitCardEdit(CONFIG, card, source, "Q: Durable?\nA: Very", {
+        keepScheduling: true,
+      })
+    ).rejects.toThrow();
+
+    // A rejection that stayed in the chain would leave every later sync waiting
+    // on a promise that will never settle — and the thing a user does after a
+    // failed save is try again.
+    const hung = Symbol("hung");
+    const outcome = await Promise.race([
+      sync.syncAll(CONFIG),
+      new Promise((r) => setTimeout(() => r(hung), 500)),
+    ]);
+    expect(outcome).toBe(true);
   });
 
   it("refuses to overwrite a file that moved since it was opened", async () => {

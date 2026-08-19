@@ -2,7 +2,7 @@ import { Card } from "./types";
 import { GitHubConfig, deleteFile, readFile, writeFile } from "./github";
 import { parseFile } from "./parser";
 import { getAllPerformances, migrateCardHistory, updateDeckFiles } from "./db";
-import { deckNameFor, loadCachedCards, loadCards } from "./sync";
+import { deckNameFor, exclusive, loadCachedCards, loadCards } from "./sync";
 
 /**
  * Editing a card in the app rather than on GitHub.
@@ -73,7 +73,19 @@ export type EditResult = {
  * SHA is what makes a file that changed underneath us fail loudly rather than
  * quietly overwrite whatever moved it.
  */
-export async function commitCardEdit(
+export function commitCardEdit(
+  config: GitHubConfig,
+  card: Card,
+  source: CardSource,
+  replacement: string,
+  options: { keepScheduling: boolean }
+): Promise<EditResult> {
+  // Queued behind any sync in progress, and any sync queued behind it. Both
+  // write the deck store, and this one also writes the repo.
+  return exclusive(() => runEdit(config, card, source, replacement, options));
+}
+
+async function runEdit(
   config: GitHubConfig,
   card: Card,
   source: CardSource,

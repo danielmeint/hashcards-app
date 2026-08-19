@@ -70,10 +70,40 @@ type SyncScope = { cards: boolean; push: boolean };
 
 function start(config: GitHubConfig, scope: SyncScope): Promise<boolean> {
   if (inFlight) return inFlight;
-  inFlight = runSync(config, scope).finally(() => {
+  inFlight = exclusive(() => runSync(config, scope)).finally(() => {
     inFlight = null;
   });
   return inFlight;
+}
+
+/** The chain every repository operation hangs off, so no two overlap. */
+let queue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Run `work` with nothing else touching the repository or the deck store.
+ *
+ * Two different waits, which is why this is not just `inFlight`. A second sync
+ * *joins* the one in progress, because it would do the same work — that is
+ * `start` above. Anything else **queues**: a card edit handed back the result
+ * of a sync that happened to be running would be a write that never happened.
+ *
+ * Without this, an edit could commit in the window between a sync listing the
+ * tree and writing what it found, leaving the deck store holding the pre-edit
+ * file under an ETag saying it is current. The next sync repairs that, since
+ * the ETag is stale — but "repaired one sync later" is not the same as right,
+ * and auto-sync fires on `visibilitychange`, which is exactly when a phone
+ * comes back from the editor.
+ *
+ * A failure must not poison the chain: the queue advances on rejection, and the
+ * rejection goes to the caller rather than to whoever is next in line.
+ */
+export function exclusive<T>(work: () => Promise<T>): Promise<T> {
+  const run = queue.then(work, work);
+  queue = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
 }
 
 async function runSync(

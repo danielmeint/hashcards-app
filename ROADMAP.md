@@ -268,6 +268,14 @@ ours to change.
 
 ### 1.8 A card edit can race a background sync
 
+**Fixed.** Everything that touches the repo or the deck store now goes through
+`exclusive()` in `src/sync.ts`. Two waits, deliberately different: a second sync
+*joins* the one in progress, because it would do the same work, while a card
+edit *queues*, because handing it back the result of someone else's sync would
+be a write that never happened. Covered by `src/card-edit.test.ts`, whose fake
+repo can hold a request open and answer with the state it saw when it was asked.
+Original report below.
+
 **P2, and mine.** `syncAll`, `syncStateOnly` and `adoptRepo` all go through
 `start()` in `src/sync.ts`, which single-flights them — two writers interleaving
 on the state file is how a merge gets lost. `commitCardEdit` does not join that

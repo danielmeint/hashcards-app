@@ -1,8 +1,13 @@
-import { Card, DrillSession } from "../types";
-import { escapeHtml } from "../escape";
+import { html, nothing, render, TemplateResult } from "lit-html";
+import { Card, DrillSession, ReviewedPerformance } from "../types";
 import { loadCachedCards, syncAll } from "../sync";
 import { getConfig } from "../github";
-import { getAllPerformances, getReviewsSince, loadSession, clearSession } from "../db";
+import {
+  getAllPerformances,
+  getReviewsSince,
+  loadSession,
+  clearSession,
+} from "../db";
 import { todayStr } from "../fsrs";
 import {
   getNewCardsPerDay,
@@ -12,7 +17,6 @@ import {
   remainingBudget,
 } from "../new-card-budget";
 import {
-  SyncStatus,
   getLastPushedAt,
   getLastSyncedAt,
   getSyncStatus,
@@ -38,23 +42,27 @@ type DeckInfo = {
 
 type DeckGroup = { dir: string; decks: DeckInfo[] };
 
+/** Everything on screen that comes from storage rather than from sync status. */
+type Model = {
+  cards: Card[];
+  performances: Map<string, ReviewedPerformance>;
+  today: string;
+  session: DrillSession | null;
+  resumable: string[];
+  groups: DeckGroup[];
+  newPerDay: number;
+  introducedToday: number;
+  totalReviews: number;
+  totalNew: number;
+  lastPushedAt: string | null;
+  unsynced: number;
+};
+
 /**
  * Only one deck list exists at a time, so its subscription can live here rather
  * than being threaded through every internal re-render.
  */
 let unsubscribe: (() => void) | null = null;
-
-/**
- * Reviews that have not left the device.
- *
- * Taken from the review log rather than from a flag the app has to remember to
- * set: reviews recorded after the last confirmed push are exactly the ones
- * still owed, and a crash mid-drill cannot lose track of that the way a flag
- * can. No push has ever landed means every review is owed.
- */
-async function unsyncedReviewCount(lastPushedAt: string | null): Promise<number> {
-  return (await getReviewsSince(lastPushedAt ?? "")).length;
-}
 
 /**
  * Renders the deck list and returns a teardown. Sync runs behind this view, so
@@ -74,9 +82,14 @@ export async function renderDeckList(
     unsubscribe = null;
   };
 
-  const refresh = () => {
-    renderDeckList(container, onDrill, onSettings, onStats);
-  };
+  let model = await load();
+  let status = getSyncStatus();
+  const paint = () => render(view(), container);
+
+  async function reload(): Promise<void> {
+    model = await load();
+    paint();
+  }
 
   const startSync = () => {
     const config = getConfig();
@@ -88,15 +101,262 @@ export async function renderDeckList(
     syncAll(config);
   };
 
+  function notice() {
+    return syncNotice({
+      status,
+      lastSyncedAt: getLastSyncedAt(),
+      lastPushedAt: model.lastPushedAt,
+      unsyncedReviews: model.unsynced,
+      online: navigator.onLine,
+    });
+  }
+
+  function view(): TemplateResult {
+    return model.cards.length === 0 ? empty() : decks();
+  }
+
+  /**
+   * No cached cards. Which of the three reasons applies is the whole message:
+   * a first sync in flight is not the same as an unconfigured app, and neither
+   * is a sync that failed.
+   */
+  function empty(): TemplateResult {
+    if (status.phase === "syncing") {
+      return html`<div class="deck-list-view deck-list-empty">
+        <h1>Loading your cards…</h1>
+        <p>${status.detail ?? "Fetching from GitHub"}</p>
+      </div>`;
+    }
+    if (status.phase === "error") {
+      return html`<div class="deck-list-view deck-list-empty">
+        <h1>
+          ${status.needsSignIn
+            ? "Signed out of GitHub"
+            : "Couldn't load your cards"}
+        </h1>
+        <p class="sync-status-error">${status.message}</p>
+        <div class="empty-actions">
+          ${status.needsSignIn
+            ? html`<button
+                id="goto-settings"
+                class="btn btn-primary"
+                @click=${onSettings}
+              >
+                Sign in
+              </button>`
+            : html`<button
+                  id="retry-btn"
+                  class="btn btn-primary"
+                  @click=${startSync}
+                >
+                  Try again
+                </button>
+                <button id="goto-settings" class="btn" @click=${onSettings}>
+                  Settings
+                </button>`}
+        </div>
+      </div>`;
+    }
+    return html`<div class="deck-list-view deck-list-empty">
+      <h1>No cards loaded</h1>
+      <p>Configure your GitHub repo and sync first.</p>
+      <div class="empty-actions">
+        <button id="goto-settings" class="btn" @click=${onSettings}>
+          Settings
+        </button>
+      </div>
+    </div>`;
+  }
+
+  function decks(): TemplateResult {
+    const line = notice();
+    const syncing = status.phase === "syncing";
+    const totalDue = model.totalReviews + model.totalNew;
+
+    return html`<div class="deck-list-view">
+      <div class="deck-list-header">
+        <h1>Decks</h1>
+        <div class="deck-list-actions">
+          <button id="stats-btn" class="btn" title="Statistics" @click=${onStats}>
+            Stats
+          </button>
+          <button
+            id="sync-btn"
+            class="btn"
+            title="Sync"
+            ?disabled=${syncing}
+            @click=${startSync}
+          >${syncing ? "…" : "⟳"}</button>
+          <button
+            id="settings-btn"
+            class="btn"
+            title="Settings"
+            @click=${onSettings}
+          >⚙</button>
+        </div>
+      </div>
+      <div class="new-budget-status">
+        ${`New today: ${model.introducedToday}/${model.newPerDay}`}
+      </div>
+      <div
+        class="sync-status ${line?.level === "error"
+          ? "sync-status-error"
+          : line?.level === "warn"
+          ? "sync-status-warn"
+          : ""}"
+        id="sync-status"
+        ?hidden=${line === null}
+      >
+        <span id="sync-status-text">${line?.text ?? ""}</span>
+        <button
+          id="sync-action"
+          class="btn btn-small"
+          ?hidden=${!line?.action}
+          @click=${() => (line?.action === "sign-in" ? onSettings() : startSync())}
+        >${line?.action === "sign-in" ? "Sign in" : "Try again"}</button>
+      </div>
+      ${model.resumable.length > 0 ? resumeBanner() : nothing}
+      ${totalDue > 0
+        ? html`<button
+            class="btn btn-primary drill-all-btn"
+            id="drill-all"
+            @click=${() => {
+              const due = selectDueCards(model.cards, model.performances, model.today);
+              if (due.length > 0) onDrill(due);
+            }}
+          >${drillAllLabel()}</button>`
+        : html`<div class="all-caught-up">All caught up!</div>`}
+      <div class="deck-cards">
+        ${model.groups.map(
+          (group) => html`
+            ${group.dir
+              ? html`<div class="deck-group-name">${group.dir}</div>`
+              : nothing}
+            ${group.decks.map(deckRow)}
+          `
+        )}
+      </div>
+    </div>`;
+  }
+
+  function drillAllLabel(): string {
+    const reviews = `${model.totalReviews} review${
+      model.totalReviews === 1 ? "" : "s"
+    }`;
+    return `Drill All (${reviews}, ${model.totalNew} new)`;
+  }
+
+  function resumeBanner(): TemplateResult {
+    const left = model.resumable.length;
+    return html`<div class="resume-banner">
+      <div class="resume-text">
+        <strong>Session in progress</strong>
+        <span>${`${left} card${left === 1 ? "" : "s"} left`}</span>
+      </div>
+      <div class="resume-actions">
+        <button
+          id="resume-btn"
+          class="btn btn-primary"
+          @click=${() => {
+            // Completed cards travel too: undo needs to resolve any card in
+            // the session.
+            const session = model.session!;
+            const hashes = new Set([...session.queue, ...session.completed]);
+            onDrill(
+              model.cards.filter((c) => hashes.has(c.hash)),
+              session
+            );
+          }}
+        >
+          Resume
+        </button>
+        <button
+          id="discard-btn"
+          class="btn"
+          @click=${async () => {
+            await clearSession();
+            await reload();
+          }}
+        >
+          Discard
+        </button>
+      </div>
+    </div>`;
+  }
+
+  function deckRow(deck: DeckInfo): TemplateResult {
+    const counts = `${deck.total} cards · ${deck.reviewDue} review${
+      deck.reviewDue === 1 ? "" : "s"
+    } · ${deck.newCount} new`;
+    return html`<div class="deck-card" data-path=${deck.path}>
+      <div class="deck-info">
+        <span class="deck-name">${deck.name}</span>
+        <span class="deck-counts">${counts}</span>
+      </div>
+      ${deck.reviewDue + deck.newCount > 0
+        ? html`<button
+            class="btn deck-drill-btn"
+            @click=${() => {
+              const deckCards = model.cards.filter(
+                (c) => c.filePath === deck.path
+              );
+              const due = selectDueCards(deckCards, model.performances, model.today);
+              if (due.length > 0) onDrill(due);
+            }}
+          >
+            Drill
+          </button>`
+        : nothing}
+    </div>`;
+  }
+
+  paint();
+
+  // A progress tick moves only the status line, and repainting the whole view
+  // for one is what lit-html is for. Anything else can have changed the counts,
+  // so those are re-read from storage first — which is the only part that costs
+  // anything.
+  unsubscribe = onSyncStatus((next) => {
+    status = next;
+    if (next.phase === "syncing") paint();
+    else void reload();
+  });
+
+  return dispose;
+}
+
+/**
+ * Reviews that have not left the device.
+ *
+ * Taken from the review log rather than from a flag the app has to remember to
+ * set: reviews recorded after the last confirmed push are exactly the ones
+ * still owed, and a crash mid-drill cannot lose track of that the way a flag
+ * can. No push has ever landed means every review is owed.
+ */
+async function load(): Promise<Model> {
   const cards = await loadCachedCards();
+  const today = todayStr();
+  const lastPushedAt = getLastPushedAt();
+  const unsynced = (await getReviewsSince(lastPushedAt ?? "")).length;
+
   if (cards.length === 0) {
-    renderEmpty(container, onSettings, startSync);
-    unsubscribe = onSyncStatus(refresh);
-    return dispose;
+    return {
+      cards,
+      performances: new Map(),
+      today,
+      session: null,
+      resumable: [],
+      groups: [],
+      newPerDay: getNewCardsPerDay(),
+      introducedToday: 0,
+      totalReviews: 0,
+      totalNew: 0,
+      lastPushedAt,
+      unsynced,
+    };
   }
 
   const performances = await getAllPerformances();
-  const today = todayStr();
 
   // An interrupted drill is offered back rather than resumed automatically —
   // reopening the app is not always an intent to carry on where you left off.
@@ -107,8 +367,6 @@ export async function renderDeckList(
     : [];
   // A session whose cards have all left the repo can never be resumed.
   if (session && resumable.length === 0) await clearSession();
-  const newPerDay = getNewCardsPerDay();
-  const introducedToday = getIntroducedToday(today);
 
   // One deck per source file, keyed by path.
   const byFile = new Map<string, Card[]>();
@@ -147,194 +405,23 @@ export async function renderDeckList(
     a.dir === "" ? -1 : b.dir === "" ? 1 : a.dir.localeCompare(b.dir)
   );
 
-  const totalReviews = decks.reduce((s, d) => s + d.reviewDue, 0);
-  // Clamped once, across every deck: the budget is one pool, and the button
-  // has to promise what pressing it will actually give you.
-  const totalNew = Math.min(
-    decks.reduce((s, d) => s + d.newCount, 0),
-    remainingBudget(today)
-  );
-  const totalDue = totalReviews + totalNew;
-
-  const deckRow = (d: DeckInfo) => `
-    <div class="deck-card" data-path="${escapeHtml(d.path)}">
-      <div class="deck-info">
-        <span class="deck-name">${escapeHtml(d.name)}</span>
-        <span class="deck-counts">${d.total} cards · ${d.reviewDue} review${d.reviewDue === 1 ? "" : "s"} · ${d.newCount} new</span>
-      </div>
-      ${d.reviewDue + d.newCount > 0 ? `<button class="btn deck-drill-btn" data-path="${escapeHtml(d.path)}">Drill</button>` : ""}
-    </div>
-  `;
-
-  container.innerHTML = `
-    <div class="deck-list-view">
-      <div class="deck-list-header">
-        <h1>Decks</h1>
-        <div class="deck-list-actions">
-          <button id="stats-btn" class="btn" title="Statistics">Stats</button>
-          <button id="sync-btn" class="btn" title="Sync">⟳</button>
-          <button id="settings-btn" class="btn" title="Settings">⚙</button>
-        </div>
-      </div>
-      <div class="new-budget-status">New today: ${introducedToday}/${newPerDay}</div>
-      <div class="sync-status" id="sync-status" hidden>
-        <span id="sync-status-text"></span>
-        <button id="sync-action" class="btn btn-small" hidden></button>
-      </div>
-      ${
-        resumable.length > 0
-          ? `
-        <div class="resume-banner">
-          <div class="resume-text">
-            <strong>Session in progress</strong>
-            <span>${resumable.length} card${resumable.length === 1 ? "" : "s"} left</span>
-          </div>
-          <div class="resume-actions">
-            <button id="resume-btn" class="btn btn-primary">Resume</button>
-            <button id="discard-btn" class="btn">Discard</button>
-          </div>
-        </div>
-      `
-          : ""
-      }
-      ${
-        totalDue > 0
-          ? `<button class="btn btn-primary drill-all-btn" id="drill-all">Drill All (${totalReviews} review${totalReviews === 1 ? "" : "s"}, ${totalNew} new)</button>`
-          : `<div class="all-caught-up">All caught up!</div>`
-      }
-      <div class="deck-cards">
-        ${groups
-          .map(
-            (g) =>
-              (g.dir ? `<div class="deck-group-name">${escapeHtml(g.dir)}</div>` : "") +
-              g.decks.map(deckRow).join("")
-          )
-          .join("")}
-      </div>
-    </div>
-  `;
-
-  const statusEl = container.querySelector("#sync-status") as HTMLElement;
-  const textEl = container.querySelector("#sync-status-text") as HTMLElement;
-  const actionBtn = container.querySelector("#sync-action") as HTMLButtonElement;
-  const syncBtn = container.querySelector("#sync-btn") as HTMLButtonElement;
-
-  // Read once per render. Progress ticks repaint this line several times a
-  // sync, and neither figure can change in between.
-  const lastPushedAt = getLastPushedAt();
-  const unsynced = await unsyncedReviewCount(lastPushedAt);
-
-  function applyStatus(status: SyncStatus): void {
-    const notice = syncNotice({
-      status,
-      lastSyncedAt: getLastSyncedAt(),
-      lastPushedAt,
-      unsyncedReviews: unsynced,
-      online: navigator.onLine,
-    });
-
-    statusEl.hidden = notice === null;
-    textEl.textContent = notice?.text ?? "";
-    statusEl.classList.toggle("sync-status-error", notice?.level === "error");
-    statusEl.classList.toggle("sync-status-warn", notice?.level === "warn");
-
-    actionBtn.hidden = !notice?.action;
-    actionBtn.dataset.action = notice?.action ?? "";
-    actionBtn.textContent = notice?.action === "sign-in" ? "Sign in" : "Try again";
-
-    const syncing = status.phase === "syncing";
-    syncBtn.disabled = syncing;
-    syncBtn.textContent = syncing ? "…" : "⟳";
-  }
-
-  applyStatus(getSyncStatus());
-
-  actionBtn.addEventListener("click", () => {
-    if (actionBtn.dataset.action === "sign-in") onSettings();
-    else startSync();
-  });
-
-  // Progress ticks patch the status line; anything else changes the counts, so
-  // re-render rather than trying to reconcile them by hand.
-  unsubscribe = onSyncStatus((status) => {
-    if (status.phase === "syncing") applyStatus(status);
-    else refresh();
-  });
-
-  // Event handlers
-  container.querySelector("#settings-btn")!.addEventListener("click", onSettings);
-  container.querySelector("#stats-btn")!.addEventListener("click", onStats);
-  syncBtn.addEventListener("click", startSync);
-
-  container.querySelector("#resume-btn")?.addEventListener("click", () => {
-    // Completed cards travel too: undo needs to resolve any card in the session.
-    const hashes = new Set([...session!.queue, ...session!.completed]);
-    const sessionCards = cards.filter((c) => hashes.has(c.hash));
-    onDrill(sessionCards, session!);
-  });
-
-  container.querySelector("#discard-btn")?.addEventListener("click", async () => {
-    await clearSession();
-    refresh();
-  });
-
-  container.querySelector("#drill-all")?.addEventListener("click", async () => {
-    const due = selectDueCards(cards, performances, today);
-    if (due.length > 0) onDrill(due);
-  });
-
-  container.querySelectorAll(".deck-drill-btn").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const path = (btn as HTMLElement).dataset.path!;
-      const deckCards = cards.filter((c) => c.filePath === path);
-      const due = selectDueCards(deckCards, performances, today);
-      if (due.length > 0) onDrill(due);
-    });
-  });
-
-  return dispose;
-}
-
-/**
- * No cached cards. Which of the three reasons applies is the whole message:
- * a first sync in flight is not the same as an unconfigured app, and neither
- * is a sync that failed.
- */
-function renderEmpty(
-  container: HTMLElement,
-  onSettings: () => void,
-  onRetry: () => void
-): void {
-  const status = getSyncStatus();
-
-  const body =
-    status.phase === "syncing"
-      ? `
-        <h1>Loading your cards…</h1>
-        <p>${escapeHtml(status.detail ?? "Fetching from GitHub")}</p>
-      `
-      : status.phase === "error"
-      ? `
-        <h1>${status.needsSignIn ? "Signed out of GitHub" : "Couldn't load your cards"}</h1>
-        <p class="sync-status-error">${escapeHtml(status.message)}</p>
-        <div class="empty-actions">
-          ${
-            status.needsSignIn
-              ? `<button id="goto-settings" class="btn btn-primary">Sign in</button>`
-              : `<button id="retry-btn" class="btn btn-primary">Try again</button>
-                 <button id="goto-settings" class="btn">Settings</button>`
-          }
-        </div>
-      `
-      : `
-        <h1>No cards loaded</h1>
-        <p>Configure your GitHub repo and sync first.</p>
-        <div class="empty-actions">
-          <button id="goto-settings" class="btn">Settings</button>
-        </div>
-      `;
-
-  container.innerHTML = `<div class="deck-list-view deck-list-empty">${body}</div>`;
-  container.querySelector("#goto-settings")?.addEventListener("click", onSettings);
-  container.querySelector("#retry-btn")?.addEventListener("click", onRetry);
+  return {
+    cards,
+    performances,
+    today,
+    session,
+    resumable,
+    groups,
+    newPerDay: getNewCardsPerDay(),
+    introducedToday: getIntroducedToday(today),
+    totalReviews: decks.reduce((s, d) => s + d.reviewDue, 0),
+    // Clamped once, across every deck: the budget is one pool, and the button
+    // has to promise what pressing it will actually give you.
+    totalNew: Math.min(
+      decks.reduce((s, d) => s + d.newCount, 0),
+      remainingBudget(today)
+    ),
+    lastPushedAt,
+    unsynced,
+  };
 }

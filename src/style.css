@@ -1392,6 +1392,75 @@ body {
   font-size: 14px;
 }
 
+/* Leeches */
+
+.leech-intro,
+.leech-note,
+.leech-empty {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.leech-intro {
+  margin-bottom: 12px;
+}
+
+.leech-note {
+  margin-top: 10px;
+  color: var(--color-text-muted);
+}
+
+.leech-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.leech-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: 8px;
+}
+
+.leech-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Long enough to recognise the card, short enough that ten of them fit on a
+   screen — this is a list you scan, not one you read. */
+.leech-text {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  color: var(--color-text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.leech-meta {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.leech-edit {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  font-size: 13px;
+  text-decoration: none;
+}
+
 /* Retention bar */
 .retention-bar-container {
   position: relative;

@@ -170,6 +170,79 @@ because a card temporarily absent from the repo must not lose its scheduling.
 Anki keeps orphaned state for exactly that reason. Whatever shape this takes is
 the same shape 4.6 needs.
 
+### 1.7 Editing a card discards its scheduling
+
+**P2, and a design question more than a bug.** Card identity is a SHA-256 of
+content and nothing else (`src/hash.ts`) — no `filePath`, no `deckName`, which
+is why moving a card between files or renaming a deck preserves its history.
+But any content change is a new identity: the blob SHA moves, the file is
+reparsed, and the new hash has no `Performance`, so the card re-enters the new
+pool and charges the day's budget. Fixing `teh` → `the` costs a year of
+scheduling.
+
+Cloze is the sharp edge. `cleanText` feeds both the sibling hashes and the
+`familyHash`, so one typo in a five-deletion block resets all five at once. And
+because continuation lines are joined raw while `question` / `answer` are
+trimmed, re-wrapping a paragraph resets a card while trailing whitespace does
+not — arbitrary in a way nobody would predict.
+
+**The orphan is retained, not deleted.** The only `performances.delete` is in
+`revertReview` (undo), and `exportState` ships everything, so the old schedule
+stays in IndexedDB and in the state file forever. That is half of 1.6's growth
+problem — and it is also what makes any migration possible at all, since the
+data to migrate *from* is still there. Worth knowing before pruning orphans:
+the accidental behaviour is load-bearing.
+
+**Whether reset is wrong depends on why you edited**, which is why there is no
+single right default:
+
+- Typo fixed → reset is clearly wrong.
+- Leech rewritten → reset is clearly *right*. The card kept failing because it
+  was badly written; the new one is a different question and should be
+  relearned.
+
+Those collide exactly at 4.3: the payoff of hunting leeches is rewriting them,
+and rewriting is what destroys the failure history that identified them. So the
+feature is not "migrate progress", it is "choose, with a default that depends on
+the entry point".
+
+**The matching problem exists only because the edit happens outside the app.**
+The deep link from 4.2 hands you to GitHub, so the app finds out later by
+diffing two card sets and has to guess. Inline editing — 4.2's larger version —
+means the app knows: you opened card X, changed it, committed. Identity becomes
+a fact rather than an inference. That reframes inline edit as the version where
+this problem does not exist, rather than as a convenience.
+
+**Fix, if it is wanted before then:** no fuzzy similarity — a wrong match
+silently attaches a year of scheduling to the wrong card, which is worse than
+resetting and far harder to notice. Instead an exact partial match: within one
+file, a departed card and an arrived card pair up when *one half is
+byte-identical* (same question, edited answer, or the reverse) and the pairing
+is one-to-one. Deterministic, never guesses, and covers most real edits; both
+halves changed means genuinely new.
+
+Migrate rather than prompt, and report it afterwards. The asymmetry favours it:
+a false positive shows a card at the wrong interval and self-corrects within a
+few reviews, while a false negative loses months permanently.
+
+**The hard part is that two devices must agree.** Scheduling is keyed by hash in
+one shared file, so if a phone migrates and a laptop does not, LWW merges both
+records and the laptop still sees a new card. The honest fix is to make the
+migration a fact that *syncs* — `newHash → oldHash` recorded in the state file —
+rather than a computation each device repeats from possibly different starting
+points.
+
+Follow that through and the destination is a **stable card id with the content
+hash as a lookup key rather than the identity itself**: `cards: {id → schedule}`
+plus `index: {hash → id}`, where editing adds a hash to an existing id. That
+also gives 1.6 somewhere to put repo scoping, and it makes changing the hash
+function survivable — which matters, because today changing it would reset every
+card in the collection. (That much is at least computable: since 2.4 the `decks`
+store keeps parsed cards *with* their old hashes, so a re-key migration has both
+sides available.) Settle first whether the upstream CLI is ever meant to read
+`hashcards-state.json`, because if so the hash is a shared contract rather than
+ours to change.
+
 ---
 
 ## 2. Feel
@@ -483,6 +556,9 @@ just consumed.
 
 ### 4.3 Hunt leeches
 
+**Fixed.** Detection is `src/leeches.ts`, rendered as a section at the top of
+the stats view, covered by `src/leeches.test.ts`. Original report below.
+
 Full review history sits in IndexedDB and is currently surfaced only as
 aggregates in the stats view. The most actionable signal in that data is *which
 specific cards keep failing* — and a card that fails repeatedly is almost always
@@ -492,6 +568,28 @@ answers, cards that test three things at once.
 Surface them: "these 8 cards keep failing — want to rewrite them?", wired
 directly into the edit flow from 4.2. This is the highest-leverage feature in any
 SRS tool and essentially nobody implements it well.
+
+*As shipped:* a lapse is a review graded Forgot, which is exactly what FSRS
+treats as a failure — Hard requeues the card for reinforcement but scores as a
+success, and counting it would flag every card anyone ever found effortful. The
+threshold is 3 rather than Anki's 8, because this list suggests a rewrite rather
+than suspending anything, so being early is cheap.
+
+Ranking is by lapses, then by lapse rate, so three failures in twenty reviews
+does not outrank three in four. A card answered correctly three times running
+since its last lapse has stopped being one whatever the count says: it drops out
+of the list and is reported as a line instead. History belonging to cards that
+are no longer in the collection is ignored — editing a card gives it a new hash
+(1.7) and there is nothing left to rewrite.
+
+Every row links to the lines the card came from, which is the part that makes
+this worth having: a list of failing cards with nothing to do about it is a list
+of things to feel bad about. That link is 4.2's, and this feature was not
+buildable before it.
+
+*Known limit:* only performances cross devices — the review log is local — so
+counts are per-device, which the screen says. Syncing lapse counts would fix it
+and means touching the state file, so it waits on the schema question in 1.7.
 
 ### 4.4 Generate cards from source material
 

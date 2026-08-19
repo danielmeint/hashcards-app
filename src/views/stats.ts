@@ -2,6 +2,16 @@ import { Grade } from "../types";
 import { getAllReviews, getAllPerformances } from "../db";
 import { loadCachedCards } from "../sync";
 import { todayStr, retrievability } from "../fsrs";
+import {
+  LEECH_THRESHOLD,
+  Leech,
+  cardSummary,
+  findLeeches,
+  isRecovering,
+} from "../leeches";
+import { cardSourceUrl, getConfig } from "../github";
+import { formatSyncAge } from "../sync-state";
+import { escapeHtml } from "../escape";
 
 export async function renderStats(
   container: HTMLElement,
@@ -13,6 +23,8 @@ export async function renderStats(
     loadCachedCards(),
   ]);
   const today = todayStr();
+
+  const leeches = findLeeches(cards, reviews);
 
   // --- Aggregate stats ---
   const totalCards = cards.length;
@@ -145,6 +157,11 @@ export async function renderStats(
       </div>
 
       <div class="stats-section">
+        <h2>Leeches</h2>
+        ${renderLeeches(leeches)}
+      </div>
+
+      <div class="stats-section">
         <h2>Estimated Retention</h2>
         <div class="retention-bar-container">
           <div class="retention-bar" style="width: ${(avgRetention * 100).toFixed(0)}%"></div>
@@ -274,4 +291,78 @@ function addDays(dateStr: string, days: number): string {
   const d = new Date(dateStr + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+
+/**
+ * The cards worth rewriting, and a way to rewrite them.
+ *
+ * A list of failing cards with nothing to do about it is a list of things to
+ * feel bad about, so every row is a link to the lines it came from — the deep
+ * link from 4.2 is what makes this feature worth having.
+ */
+function renderLeeches(leeches: Leech[]): string {
+  if (leeches.length === 0) {
+    return `<p class="leech-empty">Nothing has failed ${LEECH_THRESHOLD} or more times. ${caveat()}</p>`;
+  }
+
+  const struggling = leeches.filter((l) => !isRecovering(l));
+  const recovered = leeches.length - struggling.length;
+  // Recovered cards are still leeches by the count, but they are not what you
+  // came here to rewrite. They get a line rather than a row.
+  const shown = struggling.slice(0, MAX_LEECH_ROWS);
+  const config = getConfig();
+
+  const notes = [
+    struggling.length > shown.length
+      ? `${struggling.length - shown.length} more not shown.`
+      : "",
+    recovered > 0
+      ? `${recovered} other${recovered === 1 ? " has" : "s have"} been answered correctly ${RECOVERED_RUN} times running since.`
+      : "",
+    caveat(),
+  ].filter(Boolean);
+
+  return `
+    <p class="leech-intro">${
+      struggling.length === 1
+        ? "One card keeps failing."
+        : `These ${struggling.length} cards keep failing.`
+    } A card that fails repeatedly is usually a badly written card rather than a hard fact — two questions in one, an ambiguous answer, nothing around a cloze to cue it.</p>
+    <div class="leech-list">
+      ${shown.map((leech) => leechRow(leech, config)).join("")}
+    </div>
+    <p class="leech-note">${notes.join(" ")}</p>
+  `;
+}
+
+const MAX_LEECH_ROWS = 10;
+const RECOVERED_RUN = 3;
+
+function caveat(): string {
+  // Only performances cross devices; the review log is local, so lapse counts
+  // are what this device has seen. Saying so beats quietly undercounting.
+  return "Counted from reviews taken on this device.";
+}
+
+function leechRow(leech: Leech, config: ReturnType<typeof getConfig>): string {
+  const rate = Math.round((leech.lapses / leech.reviews) * 100);
+  return `
+    <div class="leech-card">
+      <div class="leech-info">
+        <span class="leech-text">${escapeHtml(cardSummary(leech.card))}</span>
+        <span class="leech-meta">${leech.lapses} of ${leech.reviews} reviews failed (${rate}%) · last ${formatSyncAge(
+          leech.lastLapseAt
+        )}${leech.streak > 0 ? ` · ${leech.streak} right since` : ""}</span>
+      </div>
+      ${
+        config
+          ? `<a class="btn leech-edit" href="${cardSourceUrl(
+              config,
+              leech.card
+            )}" target="_blank" rel="noopener">Edit</a>`
+          : ""
+      }
+    </div>
+  `;
 }

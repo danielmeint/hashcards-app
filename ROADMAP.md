@@ -394,6 +394,12 @@ their session: a refresh GitHub *rejects* signs out, a refresh that could not be
 single-flighted, since GitHub rotates the refresh token on every use and two
 concurrent attempts would spend the same single-use token twice.
 
+Picking a repository pulls from it and does not push: choosing one in a list
+is not consent to commit to it. The first version did push, and a mis-tap in
+the picker wrote a whole review history into the wrong repo — this repo, as it
+happens. A state file is also never written to a repo the app holds no cards
+for, which catches the hand-configured case too.
+
 The token path stays, one disclosure down. Existing installs are on it, a fork
 with no GitHub App of its own has nothing else, and the app is deliberately
 buildable without one — `src/github-app.ts` ships with an empty client ID, which

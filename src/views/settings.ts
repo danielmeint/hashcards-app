@@ -4,7 +4,7 @@ import { signInAvailable } from "../github-app";
 import { getNewCardsPerDay, setNewCardsPerDay, getIntroducedToday, resetIntroduced } from "../new-card-budget";
 import { todayStr } from "../fsrs";
 import { getTheme, setTheme, Theme } from "../theme";
-import { syncAll, getCachedCards } from "../sync";
+import { adoptRepo, syncAll, getCachedCards } from "../sync";
 import { getSyncStatus, onSyncStatus } from "../sync-state";
 import { renderAuthPanel } from "./auth-panel";
 import { escapeHtml } from "../escape";
@@ -96,7 +96,7 @@ export async function renderSettings(
     setTheme((e.target as HTMLSelectElement).value as Theme);
   });
 
-  async function sync(): Promise<void> {
+  async function sync(adopting = false): Promise<void> {
     const cfg = getConfig();
     if (!cfg) {
       statusEl.textContent = "Choose a repository first.";
@@ -116,7 +116,7 @@ export async function renderSettings(
     });
 
     try {
-      const ok = await syncAll(cfg);
+      const ok = await (adopting ? adoptRepo(cfg) : syncAll(cfg));
       if (ok) {
         const count = getCachedCards()?.length ?? 0;
         statusEl.textContent = `Done! ${count} cards synced.`;
@@ -150,8 +150,11 @@ export async function renderSettings(
   // A working credential pointed at a repository is the moment there is
   // something to fetch, so fetch it — on a first run that is the whole
   // remaining step, and the deck list is what should come next.
+  // Fetching is the right thing to do the moment there is a repo to fetch
+  // from — writing to it is not, until the user has actually drilled cards
+  // that came out of it. `adoptRepo` pulls without pushing.
   await renderAuthPanel(container.querySelector("#auth-host") as HTMLElement, () => {
-    if (getConfig()) void sync();
+    if (getConfig()) void sync(true);
   });
 }
 

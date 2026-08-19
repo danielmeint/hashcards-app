@@ -23,6 +23,10 @@ class FakeRepo {
   etag = 'W/"tree-1"';
   fetchedPaths: string[] = [];
   treeRequests: { conditional: boolean }[] = [];
+  /** The repo's `hashcards-state.json`, base64 as the contents API returns it. */
+  state: { content: string; sha: string } | null = null;
+  /** Every state file this repo was asked to commit. */
+  stateWrites: unknown[] = [];
 
   set(path: string, content: string, sha: string): void {
     this.files.set(path, { sha, content });
@@ -31,6 +35,11 @@ class FakeRepo {
   /** Change what the tree returns, as pushing a commit would. */
   retag(etag: string): void {
     this.etag = etag;
+  }
+
+  /** Give the repo an existing state file, as another device would have. */
+  setState(data: unknown): void {
+    this.state = { content: btoa(JSON.stringify(data)), sha: "state-0" };
   }
 
   handler = (url: string, init?: RequestInit): Response => {
@@ -54,7 +63,14 @@ class FakeRepo {
     }
 
     if (url.includes("/contents/hashcards-state.json")) {
-      return new Response(null, { status: 404 });
+      if (init?.method === "PUT") {
+        const body = JSON.parse(String(init.body)) as { content: string };
+        this.stateWrites.push(JSON.parse(atob(body.content)));
+        this.state = { content: body.content, sha: `state-${this.stateWrites.length}` };
+        return new Response(JSON.stringify({}), { status: 200 });
+      }
+      if (!this.state) return new Response(null, { status: 404 });
+      return new Response(JSON.stringify(this.state), { status: 200 });
     }
 
     const contents = url.match(/\/contents\/(.+)\?/);
@@ -230,5 +246,82 @@ describe("card sync", () => {
     expect(
       cards.map((c) => (c.content.type === "basic" ? c.content.question : ""))
     ).toEqual(["fresh"]);
+  });
+});
+
+/**
+ * Choosing a repository in a list is not consent to commit to it. Before this,
+ * picking one in Settings ran a full sync — so a mis-tap in the picker wrote
+ * the entire local review history into whatever repo was under the finger,
+ * which is how this app's own source repo acquired an 87-card state file.
+ */
+describe("state sync", () => {
+  let repo: FakeRepo;
+
+  const performance = (dueDate: string) => ({
+    type: "reviewed" as const,
+    lastReviewedAt: "2026-01-01T00:00:00.000Z",
+    stability: 3,
+    difficulty: 5,
+    intervalRaw: 3,
+    intervalDays: 3,
+    dueDate,
+    reviewCount: 2,
+  });
+
+  beforeEach(() => {
+    localStorage.clear();
+    repo = new FakeRepo();
+    install(repo);
+  });
+
+  it("pushes review state to a repo the cards came from", async () => {
+    repo.set("a.md", card("one"), "sha-a");
+    const { syncAll } = await freshSync();
+    const { importState } = await import("./db");
+    await importState({ "hash-1": performance("2026-02-01") });
+
+    expect(await syncAll(CONFIG)).toBe(true);
+
+    expect(repo.stateWrites).toHaveLength(1);
+    expect(repo.stateWrites[0]).toMatchObject({
+      cards: { "hash-1": { dueDate: "2026-02-01" } },
+    });
+  });
+
+  it("writes no state file into a repo that holds no cards", async () => {
+    // A repository with no card files — the app's own source repo, say.
+    const { syncAll } = await freshSync();
+    const { importState } = await import("./db");
+    await importState({ "hash-1": performance("2026-02-01") });
+
+    expect(await syncAll(CONFIG)).toBe(true);
+
+    // Committing here would say something untrue about that repository, and
+    // it is a commit the user never asked for.
+    expect(repo.stateWrites).toEqual([]);
+  });
+
+  it("adopts a repo by pulling its scheduling, not by committing to it", async () => {
+    repo.set("a.md", card("one"), "sha-a");
+    repo.setState({
+      version: 1,
+      cards: { "from-another-device": performance("2026-03-01") },
+    });
+    const { adoptRepo } = await freshSync();
+    const { importState, getAllPerformances } = await import("./db");
+    await importState({ "hash-local": performance("2026-02-01") });
+
+    expect(await adoptRepo(CONFIG)).toBe(true);
+
+    // Cards arrive and remote scheduling is merged in...
+    expect(repo.fetchedPaths).toEqual(["a.md"]);
+    expect([...(await getAllPerformances()).keys()].sort()).toEqual([
+      "from-another-device",
+      "hash-local",
+    ]);
+    // ...but nothing is written back until the user has drilled cards that
+    // came out of this repo.
+    expect(repo.stateWrites).toEqual([]);
   });
 });

@@ -36,7 +36,7 @@ let inFlight: Promise<boolean> | null = null;
  * report a network error. Concurrent callers share a single run.
  */
 export function syncAll(config: GitHubConfig): Promise<boolean> {
-  return start(config, true);
+  return start(config, { cards: true, push: true });
 }
 
 /**
@@ -46,12 +46,29 @@ export function syncAll(config: GitHubConfig): Promise<boolean> {
  * gets lost.
  */
 export function syncStateOnly(config: GitHubConfig): Promise<boolean> {
-  return start(config, false);
+  return start(config, { cards: false, push: true });
 }
 
-function start(config: GitHubConfig, includeCards: boolean): Promise<boolean> {
+/**
+ * Take up a repository the user has just pointed the app at: fetch its cards
+ * and pull whatever scheduling it already holds, but push nothing back.
+ *
+ * Choosing a repository in a list is not consent to commit to it. Pushing here
+ * meant a mis-tap in the picker wrote the whole local review history into
+ * whatever repo was under the finger — which is how this app's own source repo
+ * acquired an 87-card `hashcards-state.json`. The first push is the one after
+ * a drill, by which point the user has reviewed cards that came *from* this
+ * repo.
+ */
+export function adoptRepo(config: GitHubConfig): Promise<boolean> {
+  return start(config, { cards: true, push: false });
+}
+
+type SyncScope = { cards: boolean; push: boolean };
+
+function start(config: GitHubConfig, scope: SyncScope): Promise<boolean> {
   if (inFlight) return inFlight;
-  inFlight = runSync(config, includeCards).finally(() => {
+  inFlight = runSync(config, scope).finally(() => {
     inFlight = null;
   });
   return inFlight;
@@ -59,7 +76,7 @@ function start(config: GitHubConfig, includeCards: boolean): Promise<boolean> {
 
 async function runSync(
   config: GitHubConfig,
-  includeCards: boolean
+  scope: SyncScope
 ): Promise<boolean> {
   const report = (progress: SyncProgress) =>
     setSyncStatus({
@@ -72,8 +89,8 @@ async function runSync(
 
   setSyncStatus({ phase: "syncing", detail: null });
   try {
-    if (includeCards) await syncCards(config, report);
-    await fullSync(config, report);
+    if (scope.cards) await syncCards(config, report);
+    await fullSync(config, scope.push, report);
     recordSyncSuccess();
     setSyncStatus({ phase: "idle" });
     return true;
@@ -176,6 +193,7 @@ export async function loadCachedCards(): Promise<Card[]> {
 
 export async function fullSync(
   config: GitHubConfig,
+  push: boolean = true,
   onProgress?: (progress: SyncProgress) => void
 ): Promise<void> {
   // 1. Fetch remote state
@@ -229,9 +247,15 @@ export async function fullSync(
     };
   }
 
+  // A repo we hold no cards for is not a repo whose scheduling we own, so
+  // writing a state file into it says something untrue about it. This is the
+  // backstop under `adoptRepo`: it also catches a repo that was configured by
+  // hand, and one whose card files have all been deleted.
+  const canPush = push && (await loadCachedCards()).length > 0;
+
   const remoteJson = remote ? JSON.stringify(remote.data) : null;
   const mergedJson = JSON.stringify(stateFile);
-  if (remoteJson !== mergedJson) {
+  if (canPush && remoteJson !== mergedJson) {
     onProgress?.({ phase: "Saving review state" });
     await writeStateFile(config, stateFile, remote?.sha);
   }

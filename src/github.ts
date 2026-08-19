@@ -251,22 +251,94 @@ export async function listMdFiles(
   return { changed: true, files, etag: res.headers.get("etag") };
 }
 
+/** A path as a URL carries it: spaces encoded, its slashes left as structure. */
+function encodePath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+export type FileRead = {
+  text: string;
+  /** The blob SHA a write against this read has to be based on. */
+  sha: string;
+};
+
+export async function readFile(
+  config: GitHubConfig,
+  path: string
+): Promise<FileRead> {
+  const res = await apiFetch(
+    `/repos/${config.owner}/${config.repo}/contents/${encodePath(path)}?ref=${
+      config.branch
+    }`
+  );
+  if (!res.ok) throw new Error(await apiError(res));
+  const data = await res.json();
+  return { text: decodeBase64(data.content), sha: data.sha };
+}
+
 export async function getFileContent(
   config: GitHubConfig,
   path: string
 ): Promise<string> {
+  return (await readFile(config, path)).text;
+}
+
+/**
+ * Commit one file, returning the SHA of the blob it became — which the deck
+ * store records, so the next sync recognises this file as one it already has
+ * rather than fetching back the bytes it just sent.
+ */
+export async function writeFile(
+  config: GitHubConfig,
+  path: string,
+  text: string,
+  options: { sha?: string; message: string }
+): Promise<string> {
+  const data = await putContents(config, encodePath(path), {
+    message: options.message,
+    content: encodeBase64(text),
+    branch: config.branch,
+    ...(options.sha ? { sha: options.sha } : {}),
+  });
+  return (data as { content?: { sha?: string } }).content?.sha ?? "";
+}
+
+/**
+ * Delete one file, for the last card in it being removed. GitHub has no way to
+ * commit an empty file as "gone", so this is a separate verb.
+ */
+export async function deleteFile(
+  config: GitHubConfig,
+  path: string,
+  sha: string,
+  message: string
+): Promise<void> {
   const res = await apiFetch(
-    `/repos/${config.owner}/${config.repo}/contents/${path}?ref=${config.branch}`
+    `/repos/${config.owner}/${config.repo}/contents/${encodePath(path)}`,
+    {
+      method: "DELETE",
+      body: JSON.stringify({ message, sha, branch: config.branch }),
+    }
   );
-  if (!res.ok) throw new Error(await apiError(res));
-  const data = await res.json();
-  return decodeBase64(data.content);
+  if (!res.ok) throw await writeFailure(res);
 }
 
 function decodeBase64(content: string): string {
   const binary = atob(content.replace(/\n/g, ""));
   const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
   return new TextDecoder().decode(bytes);
+}
+
+/**
+ * `btoa` takes one byte per character, so anything outside Latin-1 throws — and
+ * card text is full of it: em dashes, arrows, accents, the odd formula. Encode
+ * to UTF-8 bytes first, which is what GitHub decodes the blob back from.
+ */
+function encodeBase64(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 export type SyncProgress = {
@@ -339,27 +411,35 @@ export async function writeStateFile(
   state: StateFile,
   sha?: string
 ): Promise<void> {
-  const content = btoa(JSON.stringify(state, null, 2));
-  const body: Record<string, unknown> = {
+  await putContents(config, "hashcards-state.json", {
     message: "Update hashcards state",
-    content,
+    content: encodeBase64(JSON.stringify(state, null, 2)),
     branch: config.branch,
-  };
-  if (sha) body.sha = sha;
+    ...(sha ? { sha } : {}),
+  });
+}
 
+async function putContents(
+  config: GitHubConfig,
+  path: string,
+  body: Record<string, unknown>
+): Promise<unknown> {
   const res = await apiFetch(
-    `/repos/${config.owner}/${config.repo}/contents/hashcards-state.json`,
+    `/repos/${config.owner}/${config.repo}/contents/${path}`,
     { method: "PUT", body: JSON.stringify(body) }
   );
-  if (res.ok) return;
+  if (res.ok) return res.json();
+  throw await writeFailure(res);
+}
 
+async function writeFailure(res: Response): Promise<Error> {
   const message = await apiError(res);
   // Two shapes of the same event. A 409 is the SHA we sent no longer being
-  // current — another device committed after our read. A 422 naming `sha` is
-  // that race won from the other side: we read a 404, so we sent no SHA at
-  // all, and by the time the write landed the file existed.
+  // current — something committed after our read. A 422 naming `sha` is that
+  // race won from the other side: we read a 404, so we sent no SHA at all, and
+  // by the time the write landed the file existed.
   if (res.status === 409 || (res.status === 422 && /\bsha\b/i.test(message))) {
-    throw new ConflictError(message);
+    return new ConflictError(message);
   }
-  throw new Error(message);
+  return new Error(message);
 }

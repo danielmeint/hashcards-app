@@ -275,6 +275,38 @@ export async function revertReview(
   await tx.done;
 }
 
+/**
+ * Carry a card's history onto the hash it has after an edit.
+ *
+ * Identity is a hash of the content, so fixing a typo produces a different card
+ * as far as everything downstream is concerned. Nothing else in the app can put
+ * the two together — but an edit made *here* knows both hashes at once, which
+ * is the whole reason editing in the app beats editing on GitHub.
+ *
+ * Reviews move: each one happened once, and leaving copies behind would
+ * double-count them in the heatmap. The performance is copied rather than
+ * moved, because other devices still hold the old card until they sync, and an
+ * orphaned performance is how this app has always carried a card that is
+ * temporarily absent.
+ */
+export async function migrateCardHistory(
+  from: string,
+  to: string
+): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction(["performances", "reviews"], "readwrite");
+  const perf = await tx.objectStore("performances").get(from);
+  if (perf) tx.objectStore("performances").put({ ...perf, hash: to });
+
+  let cursor = await tx.objectStore("reviews").openCursor();
+  while (cursor) {
+    const review = cursor.value as Review;
+    if (review.cardHash === from) cursor.update({ ...review, cardHash: to });
+    cursor = await cursor.continue();
+  }
+  await tx.done;
+}
+
 export async function exportState(): Promise<
   Record<string, ReviewedPerformance>
 > {

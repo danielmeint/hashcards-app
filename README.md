@@ -12,6 +12,8 @@ A mobile-friendly Progressive Web App for spaced repetition flashcards. Cards li
 - **Card formats** — basic Q/A cards and cloze deletions with multiple blanks
 - **Rich content** — LaTeX math (KaTeX), syntax-highlighted code blocks, images, tables
 - **Cloze sibling burial** — only one deletion per cloze card shown per session
+- **Leech hunting** — the stats view ranks the cards that keep failing, and edits them in place
+- **Edit cards in the app** — rewrite or delete a card and commit it to GitHub, keeping its scheduling
 - **Undo** — revert the last grade during a session
 - **Keyboard shortcuts** — Space to reveal, 1-4 to grade, U to undo
 

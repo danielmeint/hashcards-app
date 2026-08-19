@@ -111,7 +111,7 @@ async function runSync(
 const TREE_ETAG_KEY = "tree_etag";
 
 /** Display name for a file, before any frontmatter `name` overrides it. */
-function deckNameFor(path: string): string {
+export function deckNameFor(path: string): string {
   return path
     .split("/")
     .pop()!
@@ -182,8 +182,11 @@ export async function syncCards(
   return loadCards();
 }
 
-/** Every card currently known, from the deck store. */
-async function loadCards(): Promise<Card[]> {
+/**
+ * Every card currently known, from the deck store. Exported so an edit this app
+ * made itself can refresh the cache without a round trip for bytes it just sent.
+ */
+export async function loadCards(): Promise<Card[]> {
   const files = await getAllDeckFiles();
   files.sort((a, b) => a.path.localeCompare(b.path));
   cachedCards = files.flatMap((f) => f.cards);

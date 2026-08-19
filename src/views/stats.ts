@@ -9,7 +9,8 @@ import {
   findLeeches,
   isRecovering,
 } from "../leeches";
-import { cardSourceUrl, getConfig } from "../github";
+import { getConfig } from "../github";
+import { openCardEditor } from "./card-editor";
 import { formatSyncAge } from "../sync-state";
 import { escapeHtml } from "../escape";
 
@@ -278,6 +279,21 @@ export async function renderStats(
   }
 
   container.querySelector("#back-btn")!.addEventListener("click", onBack);
+
+  // Rewriting the card is the only thing this list is for, so the row opens an
+  // editor rather than handing the reader off to GitHub with the whole file.
+  const config = getConfig();
+  const rows = leeches.filter((l) => !isRecovering(l)).slice(0, MAX_LEECH_ROWS);
+  for (const button of container.querySelectorAll<HTMLButtonElement>(".leech-edit")) {
+    const leech = rows[Number(button.dataset.leech)];
+    if (!config || !leech) continue;
+    button.addEventListener("click", async () => {
+      const result = await openCardEditor(leech.card, config);
+      // Repaint on a committed edit only: the counts, the list, and often
+      // whether this card is on it at all have just changed.
+      if (result) await renderStats(container, onBack);
+    });
+  }
 }
 
 // Local helpers
@@ -306,6 +322,7 @@ function renderLeeches(leeches: Leech[]): string {
     return `<p class="leech-empty">Nothing has failed ${LEECH_THRESHOLD} or more times. ${caveat()}</p>`;
   }
 
+
   const struggling = leeches.filter((l) => !isRecovering(l));
   const recovered = leeches.length - struggling.length;
   // Recovered cards are still leeches by the count, but they are not what you
@@ -330,7 +347,7 @@ function renderLeeches(leeches: Leech[]): string {
         : `These ${struggling.length} cards keep failing.`
     } A card that fails repeatedly is usually a badly written card rather than a hard fact — two questions in one, an ambiguous answer, nothing around a cloze to cue it.</p>
     <div class="leech-list">
-      ${shown.map((leech) => leechRow(leech, config)).join("")}
+      ${shown.map((leech, i) => leechRow(leech, i, config)).join("")}
     </div>
     <p class="leech-note">${notes.join(" ")}</p>
   `;
@@ -345,7 +362,11 @@ function caveat(): string {
   return "Counted from reviews taken on this device.";
 }
 
-function leechRow(leech: Leech, config: ReturnType<typeof getConfig>): string {
+function leechRow(
+  leech: Leech,
+  index: number,
+  config: ReturnType<typeof getConfig>
+): string {
   const rate = Math.round((leech.lapses / leech.reviews) * 100);
   return `
     <div class="leech-card">
@@ -357,10 +378,7 @@ function leechRow(leech: Leech, config: ReturnType<typeof getConfig>): string {
       </div>
       ${
         config
-          ? `<a class="btn leech-edit" href="${cardSourceUrl(
-              config,
-              leech.card
-            )}" target="_blank" rel="noopener">Edit</a>`
+          ? `<button class="btn leech-edit" type="button" data-leech="${index}">Edit</button>`
           : ""
       }
     </div>

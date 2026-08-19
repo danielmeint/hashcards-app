@@ -172,6 +172,14 @@ the same shape 4.6 needs.
 
 ### 1.7 Editing a card discards its scheduling
 
+**Answered for edits made in the app; still open for edits made anywhere else.**
+4.2's editor knows the old hash and the new one at the same moment, so it can
+offer to carry the scheduling across — see `migrateCardHistory` in `src/db.ts`
+and `carryHistory` in `src/card-edit.ts`. That covers the case this was written
+about. It does nothing for a card edited on GitHub, in an editor, or by the CLI,
+where nothing connects the two hashes afterwards; the reasoning below is still
+the design work for that. Original report follows.
+
 **P2, and a design question more than a bug.** Card identity is a SHA-256 of
 content and nothing else (`src/hash.ts`) — no `filePath`, no `deckName`, which
 is why moving a card between files or renaming a deck preserves its history.
@@ -558,21 +566,32 @@ Every deletion in a `C:` block shares the block's range, since editing any of
 them means editing the same lines. The link itself is `cardSourceUrl` in
 `src/github.ts`, rendered in the drill header and repointed on every card.
 
-Still open below: inline edit, and quick capture.
+*Inline edit: done, from the leech list.* `src/card-edit.ts` reads the file,
+splices the edit into the card's own lines, commits it, and reconciles the deck
+store with the blob SHA it gets back — so the next sync recognises the file
+rather than fetching back bytes the app just sent. The sheet is
+`src/views/card-editor.ts`.
 
-The larger versions, in order of ambition:
+Two things it does that the deep link never could. Clearing the box deletes the
+card, and taking the last card out of a file deletes the file. And it offers to
+keep the card's scheduling: an edit is the one moment both the old hash and the
+new one are known, which is the whole of 1.7's problem, solved for the case that
+matters most. Reviews move with the card and the performance is copied, so a
+rewritten leech is still tracked as one rather than quietly leaving the list
+because its hash changed.
 
-- **Inline edit and commit** from within the app.
-- **Quick capture** — an "add card" flow that appends to a deck file. Ideas for
-  cards arrive while reading, not while drilling.
-
-Together these close the loop and make the app the place cards are *made*, not
-just consumed.
+Still open: **inline edit from the drill**, which wants care that the leech list
+does not — the session queue holds hashes, and editing the card in front of you
+changes the hash of the card you are part-way through. And **quick capture**, an
+"add card" flow that appends to a deck file, since ideas for cards arrive while
+reading rather than while drilling.
 
 ### 4.3 Hunt leeches
 
 **Fixed.** Detection is `src/leeches.ts`, rendered as a section at the top of
-the stats view, covered by `src/leeches.test.ts`. Original report below.
+the stats view, covered by `src/leeches.test.ts`. Each row's Edit button opens
+4.2's editor, so the list is a place cards get rewritten rather than a list of
+things to feel bad about. Original report below.
 
 Full review history sits in IndexedDB and is currently surfaced only as
 aggregates in the stats view. The most actionable signal in that data is *which

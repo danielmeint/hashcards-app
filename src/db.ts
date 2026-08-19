@@ -1,4 +1,5 @@
 import { openDB, IDBPDatabase } from "idb";
+import { legacy } from "./settings";
 import {
   Card,
   DrillSession,
@@ -10,7 +11,6 @@ import {
 const DB_NAME = "hashcards";
 const DB_VERSION = 4;
 
-const LEGACY_CARD_CACHE = "cached_cards";
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -43,10 +43,10 @@ function getDb(): Promise<IDBPDatabase> {
       // Only once the cards are provably here, so a failed migration cannot
       // take the last copy with it.
       if (
-        localStorage.getItem(LEGACY_CARD_CACHE) !== null &&
+        legacy.cards.get() !== null &&
         (await db.count("decks")) > 0
       ) {
-        localStorage.removeItem(LEGACY_CARD_CACHE);
+        legacy.cards.remove();
       }
       return db;
     });
@@ -64,11 +64,11 @@ function getDb(): Promise<IDBPDatabase> {
 function migrateCardsFromLocalStorage(store: {
   put: (value: DeckFile) => unknown;
 }): void {
-  const legacy = localStorage.getItem(LEGACY_CARD_CACHE);
-  if (!legacy) return;
+  const stored = legacy.cards.get();
+  if (!stored) return;
   try {
     const byPath = new Map<string, Card[]>();
-    for (const card of JSON.parse(legacy) as Card[]) {
+    for (const card of JSON.parse(stored) as Card[]) {
       const cards = byPath.get(card.filePath) ?? [];
       cards.push(card);
       byPath.set(card.filePath, cards);

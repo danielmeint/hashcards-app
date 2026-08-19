@@ -1,5 +1,6 @@
 import { Card } from "./types";
 import { getAccessToken, loadCredential, recordLogin, refreshCredential } from "./auth";
+import { settings } from "./settings";
 
 /**
  * Which repository to read cards from. Deliberately carries no credential: the
@@ -13,17 +14,16 @@ export type GitHubConfig = {
 };
 
 export function getConfig(): GitHubConfig | null {
-  const owner = localStorage.getItem("github_owner");
-  const repo = localStorage.getItem("github_repo");
-  const branch = localStorage.getItem("github_branch") || "main";
+  const owner = settings.owner.get();
+  const repo = settings.repo.get();
   if (!owner || !repo) return null;
-  return { owner, repo, branch };
+  return { owner, repo, branch: settings.branch.get() };
 }
 
 export function saveConfig(config: GitHubConfig): void {
-  localStorage.setItem("github_owner", config.owner);
-  localStorage.setItem("github_repo", config.repo);
-  localStorage.setItem("github_branch", config.branch);
+  settings.owner.set(config.owner);
+  settings.repo.set(config.repo);
+  settings.branch.set(config.branch);
 }
 
 /**
@@ -44,19 +44,19 @@ export function cardSourceUrl(config: GitHubConfig, card: Card): string {
 }
 
 export function getIntervalFuzz(): boolean {
-  return localStorage.getItem("interval_fuzz") !== "false"; // default on
+  return settings.intervalFuzz.get();
 }
 
 export function setIntervalFuzz(on: boolean): void {
-  localStorage.setItem("interval_fuzz", String(on));
+  settings.intervalFuzz.set(on);
 }
 
 export function getHapticFeedback(): boolean {
-  return localStorage.getItem("haptic_feedback") !== "false"; // default on
+  return settings.hapticFeedback.get();
 }
 
 export function setHapticFeedback(on: boolean): void {
-  localStorage.setItem("haptic_feedback", String(on));
+  settings.hapticFeedback.set(on);
 }
 
 /**

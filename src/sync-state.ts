@@ -5,6 +5,8 @@
  * views subscribe.
  */
 
+import { settings } from "./settings";
+
 export type SyncStatus =
   | { phase: "idle" }
   | { phase: "syncing"; detail: string | null }
@@ -18,8 +20,6 @@ export type SyncStatus =
       needsSignIn: boolean;
     };
 
-const LS_LAST_SYNC = "last_synced_at";
-const LS_LAST_PUSH = "last_pushed_at";
 
 let status: SyncStatus = { phase: "idle" };
 const listeners = new Set<(status: SyncStatus) => void>();
@@ -45,7 +45,7 @@ export function onSyncStatus(listener: (status: SyncStatus) => void): () => void
 }
 
 export function getLastSyncedAt(): string | null {
-  return localStorage.getItem(LS_LAST_SYNC);
+  return settings.lastSyncedAt.get();
 }
 
 /**
@@ -55,7 +55,7 @@ export function getLastSyncedAt(): string | null {
  * deck list there are reviews it should be worried about.
  */
 export function getLastPushedAt(): string | null {
-  return localStorage.getItem(LS_LAST_PUSH);
+  return settings.lastPushedAt.get();
 }
 
 /**
@@ -69,17 +69,17 @@ export function getLastPushedAt(): string | null {
  * on a warning that every review it has ever taken is unsynced.
  */
 export function adoptLegacySyncTimestamp(): void {
-  if (localStorage.getItem(LS_LAST_PUSH) !== null) return;
-  const legacy = localStorage.getItem(LS_LAST_SYNC);
-  if (legacy) localStorage.setItem(LS_LAST_PUSH, legacy);
+  if (settings.lastPushedAt.get() !== null) return;
+  const legacy = settings.lastSyncedAt.get();
+  if (legacy) settings.lastPushedAt.set(legacy);
 }
 
 export function recordSyncSuccess(
   inStepWithRemote: boolean,
   at: string = new Date().toISOString()
 ): void {
-  localStorage.setItem(LS_LAST_SYNC, at);
-  if (inStepWithRemote) localStorage.setItem(LS_LAST_PUSH, at);
+  settings.lastSyncedAt.set(at);
+  if (inStepWithRemote) settings.lastPushedAt.set(at);
 }
 
 /**

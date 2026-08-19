@@ -1,15 +1,13 @@
+import { settings } from "./settings";
+
 export type Theme = "system" | "light" | "dark";
 
-const LS_KEY = "theme";
-
 export function getTheme(): Theme {
-  const stored = localStorage.getItem(LS_KEY);
-  return stored === "light" || stored === "dark" ? stored : "system";
+  return settings.theme.get();
 }
 
 export function setTheme(theme: Theme): void {
-  if (theme === "system") localStorage.removeItem(LS_KEY);
-  else localStorage.setItem(LS_KEY, theme);
+  settings.theme.set(theme);
   applyTheme();
 }
 

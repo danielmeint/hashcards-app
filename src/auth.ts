@@ -1,4 +1,5 @@
 import { AUTH_API, GITHUB_APP, signInAvailable } from "./github-app";
+import { legacy } from "./settings";
 import { readCredential, writeCredential, deleteCredential } from "./db";
 
 /**
@@ -27,7 +28,6 @@ export type Credential =
 export class AuthError extends Error {}
 
 const SIGN_IN_AGAIN = "Your GitHub sign-in has expired. Sign in again in Settings.";
-const LEGACY_PAT_KEY = "github_pat";
 const STATE_KEY = "github_oauth_state";
 
 /** Refresh this far ahead of expiry, so a sync starting now still finishes. */
@@ -50,7 +50,7 @@ export async function saveCredential(credential: Credential): Promise<void> {
 
 export async function signOut(): Promise<void> {
   await deleteCredential();
-  localStorage.removeItem(LEGACY_PAT_KEY);
+  legacy.pat.remove();
   cached = null;
 }
 
@@ -61,11 +61,11 @@ export async function signOut(): Promise<void> {
  * reason: a half-finished migration must not be the thing that loses it.
  */
 async function adoptLegacyPat(): Promise<Credential | null> {
-  const token = localStorage.getItem(LEGACY_PAT_KEY);
+  const token = legacy.pat.get();
   if (!token) return null;
   const credential: Credential = { kind: "pat", token };
   await writeCredential(credential);
-  localStorage.removeItem(LEGACY_PAT_KEY);
+  legacy.pat.remove();
   return credential;
 }
 

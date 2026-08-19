@@ -1,17 +1,31 @@
 import { marked } from "marked";
 import { Card, ClozeCard } from "./types";
+import { getConfig } from "./github";
 
 const CLOZE_TAG = "CLOZE_DELETION_PLACEHOLDER";
 
-function getImageBaseUrl(): string {
-  const owner = localStorage.getItem("github_owner") || "";
-  const repo = localStorage.getItem("github_repo") || "";
-  const branch = localStorage.getItem("github_branch") || "main";
-  return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}`;
+/**
+ * Where a relative image path resolves to, or `null` when there is no repo to
+ * resolve it against.
+ *
+ * This used to read `github_owner`, `github_repo` and `github_branch` out of
+ * `localStorage` itself, with its own defaults — a second reading of the
+ * configuration that disagreed with `getConfig()` about the unconfigured case.
+ * `getConfig()` says "there is no repo"; this said the repo was `""`, and built
+ * `https://raw.githubusercontent.com///main/diagram.png`, which is a 404 with
+ * extra steps. Now there is one reading, and no repo means the `src` is left
+ * exactly as the card wrote it.
+ */
+function imageBaseUrl(): string | null {
+  const config = getConfig();
+  if (!config) return null;
+  return `https://raw.githubusercontent.com/${config.owner}/${config.repo}/${config.branch}`;
 }
 
 function rewriteImageUrls(html: string, filePath: string): string {
-  const baseUrl = getImageBaseUrl();
+  const baseUrl = imageBaseUrl();
+  if (!baseUrl) return html;
+
   const dir = filePath.includes("/")
     ? filePath.substring(0, filePath.lastIndexOf("/"))
     : "";

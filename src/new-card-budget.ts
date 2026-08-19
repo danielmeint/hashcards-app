@@ -1,27 +1,22 @@
 import { Card, ReviewedPerformance } from "./types";
 import { todayStr } from "./fsrs";
-
-const LS_KEY_PER_DAY = "new_cards_per_day";
-const LS_KEY_INTRODUCED = "new_cards_introduced";
-const DEFAULT_PER_DAY = 20;
+import { settings } from "./settings";
 
 // --- Settings ---
 
 export function getNewCardsPerDay(): number {
-  return parseInt(localStorage.getItem(LS_KEY_PER_DAY) || String(DEFAULT_PER_DAY), 10);
+  return settings.newCardsPerDay.get();
 }
 
 export function setNewCardsPerDay(n: number): void {
-  localStorage.setItem(LS_KEY_PER_DAY, String(n));
+  settings.newCardsPerDay.set(n);
 }
 
 // --- Today's budget ---
 
 export function getIntroducedToday(today: string = todayStr()): number {
-  const raw = localStorage.getItem(LS_KEY_INTRODUCED);
-  if (!raw) return 0;
-  const parsed = JSON.parse(raw) as { date: string; count: number };
-  return parsed.date === today ? parsed.count : 0;
+  const introduced = settings.introducedToday.get();
+  return introduced?.date === today ? introduced.count : 0;
 }
 
 export function remainingBudget(today: string = todayStr()): number {
@@ -30,14 +25,11 @@ export function remainingBudget(today: string = todayStr()): number {
 
 export function recordIntroduced(today: string, count: number): void {
   const existing = getIntroducedToday(today);
-  localStorage.setItem(
-    LS_KEY_INTRODUCED,
-    JSON.stringify({ date: today, count: existing + count })
-  );
+  settings.introducedToday.set({ date: today, count: existing + count });
 }
 
 export function resetIntroduced(): void {
-  localStorage.removeItem(LS_KEY_INTRODUCED);
+  settings.introducedToday.remove();
 }
 
 // --- Card classification ---

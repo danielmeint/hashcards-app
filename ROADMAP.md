@@ -769,6 +769,14 @@ is exactly where string templates stop being cheap.
 
 ### 5.2 Settings live in two places, and one module reads around them
 
+**Fixed.** `src/settings.ts` owns every key, its default, its codec and the two
+it is migrating away from; nothing else in the app touches `localStorage`. The
+existing accessors — `getConfig`, `getNewCardsPerDay`, `getTheme`,
+`getLastPushedAt` — stayed where they were and delegate, so no caller changed.
+`render.ts` now asks `getConfig()` like everything else. Covered by
+`src/settings.test.ts` and `src/render.test.ts`, the latter being the first
+tests that module has had. Original report below.
+
 Configuration is nine raw `localStorage` keys (`github_owner`, `github_repo`,
 `github_branch`, `new_cards_per_day`, `interval_fuzz`, `haptic_feedback`,
 `theme`, `last_synced_at`, `last_pushed_at`) with their accessors spread across
@@ -876,7 +884,7 @@ evenings, not estimates.
 
 ---
 
-### Phase 1 — Loose ends · ~2 evenings
+### Phase 1 — Loose ends · ~2 evenings — **done**
 
 **1.8** (a card edit joining sync's single-flight) and **5.2** (one typed home
 for the nine `localStorage` keys, which retires the second reading of the config

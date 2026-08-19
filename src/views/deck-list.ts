@@ -1,4 +1,5 @@
 import { Card, DrillSession } from "../types";
+import { escapeHtml } from "../escape";
 import { loadCachedCards, syncAll } from "../sync";
 import { getConfig } from "../github";
 import { getAllPerformances, loadSession, clearSession } from "../db";
@@ -41,16 +42,6 @@ type DeckGroup = { dir: string; decks: DeckInfo[] };
  * than being threaded through every internal re-render.
  */
 let unsubscribe: (() => void) | null = null;
-
-/** Escapes quotes too, so it is safe for attribute values as well as text. */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 /** What the status line should say, or null when there is nothing to report. */
 function syncLine(status: SyncStatus): { text: string; error: boolean } | null {

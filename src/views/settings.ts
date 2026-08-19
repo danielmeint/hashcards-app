@@ -1,15 +1,26 @@
-import { getConfig, saveConfig, listMdFiles, getIntervalFuzz, setIntervalFuzz, getHapticFeedback, setHapticFeedback, inspectToken, GitHubConfig } from "../github";
+import { getConfig, getIntervalFuzz, setIntervalFuzz, getHapticFeedback, setHapticFeedback } from "../github";
+import { loadCredential } from "../auth";
+import { signInAvailable } from "../github-app";
 import { getNewCardsPerDay, setNewCardsPerDay, getIntroducedToday, resetIntroduced } from "../new-card-budget";
 import { todayStr } from "../fsrs";
 import { getTheme, setTheme, Theme } from "../theme";
 import { syncAll, getCachedCards } from "../sync";
 import { getSyncStatus, onSyncStatus } from "../sync-state";
+import { renderAuthPanel } from "./auth-panel";
+import { escapeHtml } from "../escape";
 
-export function renderSettings(
+/**
+ * Settings, in two halves: how the app connects to GitHub (delegated to
+ * `auth-panel`, which owns the credential and the repo) and the preferences
+ * that are purely local.
+ */
+export async function renderSettings(
   container: HTMLElement,
-  onDone: () => void
-): void {
+  onDone: () => void,
+  notice?: string
+): Promise<void> {
   const config = getConfig();
+  const credential = await loadCredential();
   const newPerDay = getNewCardsPerDay();
   const today = todayStr();
   const introducedToday = getIntroducedToday(today);
@@ -17,41 +28,19 @@ export function renderSettings(
   const hapticOn = getHapticFeedback();
   const theme = getTheme();
 
-  const isFirstRun = !config;
+  const isFirstRun = !credential || !config;
 
   container.innerHTML = `
     <div class="settings-view">
       <h1>Settings</h1>
-      ${isFirstRun ? `
-      <div class="welcome-banner">
-        <p><strong>Hashcards</strong> is a spaced repetition flashcard app. Cards live as <code>.md</code> files in a GitHub repo, and the app syncs them via the GitHub API.</p>
-        <p><strong>Get started in 3 steps:</strong></p>
-        <ol>
-          <li>Create a GitHub repo with <code>.md</code> flashcard files (<a href="https://github.com/eudoxia0/hashcards#format" target="_blank" rel="noopener">card format</a>)</li>
-          <li>Generate a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained PAT</a> — select only your repo, grant <strong>Contents: Read and write</strong></li>
-          <li>Enter your details below and click <strong>Test Connection</strong></li>
-        </ol>
-      </div>
-      ` : ""}
-      <form id="settings-form">
-        <div class="field-group">
-          <label for="pat">GitHub Personal Access Token</label>
-          <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener" class="pat-help-link">Create a fine-grained token</a>
-          <input type="password" id="pat" value="${config?.pat || ""}" placeholder="github_pat_... or ghp_..." />
-          <div id="token-info"></div>
-        </div>
-        <label>
-          Repository Owner
-          <input type="text" id="owner" value="${config?.owner || ""}" placeholder="username" />
-        </label>
-        <label>
-          Repository Name
-          <input type="text" id="repo" value="${config?.repo || ""}" placeholder="my-flashcards" />
-        </label>
-        <label>
-          Branch
-          <input type="text" id="branch" value="${config?.branch || "main"}" placeholder="main" />
-        </label>
+      ${notice ? `<p class="settings-notice">${escapeHtml(notice)}</p>` : ""}
+      ${isFirstRun ? welcome(credential !== null) : ""}
+      <section class="settings-section">
+        <h2>GitHub</h2>
+        <div id="auth-host"></div>
+      </section>
+      <section class="settings-section">
+        <h2>Reviewing</h2>
         <div class="field-group">
           <label for="new-per-day">New cards per day</label>
           <input type="number" id="new-per-day" value="${newPerDay}" min="1" max="999" />
@@ -79,15 +68,14 @@ export function renderSettings(
         </label>
         <label class="toggle-label">
           <input type="checkbox" id="haptic-feedback" ${hapticOn ? "checked" : ""} />
-          Haptic feedback on grade buttons
+          Haptic feedback on grade and swipe
         </label>
-        <div class="settings-buttons">
-          <button type="button" id="test-btn" class="btn">Test Connection</button>
-          <button type="button" id="sync-btn" class="btn">Sync Now</button>
-          ${config ? '<button type="button" id="back-btn" class="btn">Back to Decks</button>' : ""}
-        </div>
-        <div id="settings-status"></div>
-      </form>
+      </section>
+      <div class="settings-buttons">
+        <button type="button" id="sync-btn" class="btn">Sync Now</button>
+        ${config ? '<button type="button" id="back-btn" class="btn">Back to Decks</button>' : ""}
+      </div>
+      <div id="settings-status"></div>
       <div class="settings-footer">
         <div class="settings-version">hashcards ${__COMMIT_HASH__}</div>
         <a href="https://github.com/danielmeint/hashcards-app" target="_blank" rel="noopener">GitHub</a>
@@ -96,15 +84,6 @@ export function renderSettings(
   `;
 
   const statusEl = container.querySelector("#settings-status") as HTMLElement;
-
-  function getFormConfig(): GitHubConfig {
-    return {
-      pat: (container.querySelector("#pat") as HTMLInputElement).value.trim(),
-      owner: (container.querySelector("#owner") as HTMLInputElement).value.trim(),
-      repo: (container.querySelector("#repo") as HTMLInputElement).value.trim(),
-      branch: (container.querySelector("#branch") as HTMLInputElement).value.trim() || "main",
-    };
-  }
 
   function savePrefs(): void {
     const val = parseInt((container.querySelector("#new-per-day") as HTMLInputElement).value, 10);
@@ -117,85 +96,22 @@ export function renderSettings(
     setTheme((e.target as HTMLSelectElement).value as Theme);
   });
 
-  const tokenInfoEl = container.querySelector("#token-info") as HTMLElement;
-
-  function renderTokenInfo(cfg: GitHubConfig): void {
-    const pat = cfg.pat;
-    if (!pat) {
-      tokenInfoEl.innerHTML = "";
-      return;
-    }
-    if (pat.startsWith("ghp_")) {
-      tokenInfoEl.innerHTML = `<span class="token-warning">Classic token — consider using a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a> scoped to just your repo.</span>`;
-    } else if (pat.startsWith("github_pat_")) {
-      tokenInfoEl.innerHTML = `<span class="token-ok">Fine-grained token</span>`;
-    } else {
-      tokenInfoEl.innerHTML = "";
-    }
-  }
-
-  // Show token type on load
-  if (config) renderTokenInfo(config);
-
-  // Update on input change
-  container.querySelector("#pat")!.addEventListener("input", () => {
-    renderTokenInfo(getFormConfig());
-  });
-
-  container.querySelector("#test-btn")!.addEventListener("click", async () => {
-    const cfg = getFormConfig();
-    if (!cfg.pat || !cfg.owner || !cfg.repo) {
-      statusEl.textContent = "Please fill in all fields.";
-      return;
-    }
-    statusEl.textContent = "Testing connection...";
-    try {
-      // Unconditional, so this always comes back with the listing.
-      const [listing, tokenInfo] = await Promise.all([
-        listMdFiles(cfg),
-        inspectToken(cfg),
-      ]);
-      const count = listing.changed ? listing.files.length : 0;
-      saveConfig(cfg);
-      savePrefs();
-
-      let detail = `Connected as ${tokenInfo.username}. Found ${count} .md file${count === 1 ? "" : "s"}.`;
-      if (tokenInfo.tokenType === "classic" && tokenInfo.scopes) {
-        detail += ` Scopes: ${tokenInfo.scopes}.`;
-      }
-      statusEl.textContent = detail;
-
-      // Update token info badge after successful auth
-      if (tokenInfo.tokenType === "fine-grained") {
-        tokenInfoEl.innerHTML = `<span class="token-ok">Fine-grained token — ${tokenInfo.username}</span>`;
-      } else if (tokenInfo.tokenType === "classic") {
-        tokenInfoEl.innerHTML = `<span class="token-warning">Classic token (${tokenInfo.username}) — consider using a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a> scoped to just your repo.</span>`;
-      }
-    } catch (e) {
-      statusEl.textContent = `${(e as Error).message}`;
-    }
-  });
-
-  container.querySelector("#sync-btn")!.addEventListener("click", async () => {
-    const cfg = getFormConfig();
-    if (!cfg.pat || !cfg.owner || !cfg.repo) {
-      statusEl.textContent = "Please fill in all fields.";
+  async function sync(): Promise<void> {
+    const cfg = getConfig();
+    if (!cfg) {
+      statusEl.textContent = "Choose a repository first.";
       return;
     }
     const syncBtn = container.querySelector("#sync-btn") as HTMLButtonElement;
-    const testBtn = container.querySelector("#test-btn") as HTMLButtonElement;
     syncBtn.disabled = true;
-    testBtn.disabled = true;
-
-    saveConfig(cfg);
     savePrefs();
 
-    // Same runner the deck list uses, so this can't race a background sync and
-    // so a successful sync from here also updates the "last synced" line. The
-    // progress it publishes is echoed inline, because here the user is watching.
+    // The same runner the deck list uses, so this cannot race a background sync
+    // and so a success here also updates the "last synced" line. Its progress is
+    // echoed inline, because here the user is watching.
     const unwatch = onSyncStatus((s) => {
       if (s.phase === "syncing") {
-        statusEl.textContent = s.detail ? `${s.detail}...` : "Syncing...";
+        statusEl.textContent = s.detail ? `${s.detail}…` : "Syncing…";
       }
     });
 
@@ -213,21 +129,56 @@ export function renderSettings(
     } finally {
       unwatch();
       syncBtn.disabled = false;
-      testBtn.disabled = false;
     }
-  });
+  }
+
+  container.querySelector("#sync-btn")!.addEventListener("click", () => void sync());
 
   container.querySelector("#reset-new-btn")?.addEventListener("click", () => {
     resetIntroduced();
     const counterEl = container.querySelector("#new-cards-counter") as HTMLElement;
     const newPerDayVal = (container.querySelector("#new-per-day") as HTMLInputElement).value;
     counterEl.textContent = `0/${newPerDayVal} introduced today`;
-    const resetBtn = container.querySelector("#reset-new-btn") as HTMLElement;
-    if (resetBtn) resetBtn.remove();
+    container.querySelector("#reset-new-btn")?.remove();
   });
 
   container.querySelector("#back-btn")?.addEventListener("click", () => {
     savePrefs();
     onDone();
   });
+
+  // A working credential pointed at a repository is the moment there is
+  // something to fetch, so fetch it — on a first run that is the whole
+  // remaining step, and the deck list is what should come next.
+  await renderAuthPanel(container.querySelector("#auth-host") as HTMLElement, () => {
+    if (getConfig()) void sync();
+  });
+}
+
+function welcome(signedIn: boolean): string {
+  const steps = signInAvailable()
+    ? `
+      <ol>
+        <li>Create a GitHub repo with <code>.md</code> flashcard files (<a href="https://github.com/eudoxia0/hashcards#format" target="_blank" rel="noopener">card format</a>)</li>
+        <li>${
+          signedIn
+            ? "Pick that repo below"
+            : "Sign in with GitHub below and pick that repo"
+        }</li>
+      </ol>
+    `
+    : `
+      <ol>
+        <li>Create a GitHub repo with <code>.md</code> flashcard files (<a href="https://github.com/eudoxia0/hashcards#format" target="_blank" rel="noopener">card format</a>)</li>
+        <li>Generate a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained PAT</a> — select only your repo, grant <strong>Contents: Read and write</strong></li>
+        <li>Enter your details below and click <strong>Connect</strong></li>
+      </ol>
+    `;
+  return `
+    <div class="welcome-banner">
+      <p><strong>Hashcards</strong> is a spaced repetition flashcard app. Cards live as <code>.md</code> files in a GitHub repo, and the app syncs them via the GitHub API.</p>
+      <p><strong>Get started:</strong></p>
+      ${steps}
+    </div>
+  `;
 }

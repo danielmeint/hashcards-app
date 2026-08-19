@@ -12,7 +12,6 @@ import { GitHubConfig } from "./github";
  */
 
 const CONFIG: GitHubConfig = {
-  pat: "token",
   owner: "someone",
   repo: "cards",
   branch: "main",
@@ -77,6 +76,10 @@ class FakeRepo {
 async function freshSync() {
   globalThis.indexedDB = new IDBFactory();
   vi.resetModules();
+  // The config carries no credential any more; `apiFetch` reads one from the
+  // credential store, so a sync needs one there before it can send anything.
+  const { saveCredential } = await import("./auth");
+  await saveCredential({ kind: "pat", token: "token" });
   return import("./sync");
 }
 

@@ -7,7 +7,7 @@ A mobile-friendly Progressive Web App for spaced repetition flashcards. Cards li
 ## Features
 
 - **FSRS scheduling** — modern spaced repetition algorithm with per-card stability and difficulty tracking
-- **GitHub sync** — reads `.md` card files from any GitHub repo; syncs review state to a `hashcards-state.json` file
+- **GitHub sync** — sign in with GitHub and pick a repo; reads `.md` card files and syncs review state to a `hashcards-state.json` file
 - **Offline support** — works fully offline via IndexedDB + service worker; syncs when back online
 - **Card formats** — basic Q/A cards and cloze deletions with multiple blanks
 - **Rich content** — LaTeX math (KaTeX), syntax-highlighted code blocks, images, tables
@@ -38,13 +38,19 @@ See the [hashcards format spec](https://github.com/eudoxia0/hashcards#format) fo
 
 Create a GitHub repository with `.md` files containing your flashcards. See [hashcards-demo](https://github.com/danielmeint/hashcards-demo) for an example.
 
-### 2. Generate a GitHub PAT
+### 2. Connect the app
 
-Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) with **Contents: Read and write** permission on your card repo.
+Open the app and click **Sign in with GitHub**. Choose which repositories to grant access to, then pick your card repo from the list. That is the whole setup — the app receives a short-lived token scoped to those repositories, and you can revoke it at any time from your GitHub settings.
 
-### 3. Configure the app
+<details>
+<summary>Using a personal access token instead</summary>
 
-Open the app, enter your PAT, repo owner, repo name, and branch. Click **Test Connection**, then **Sync Now**.
+Sign-in needs a GitHub App, which a self-hosted copy may not have (see [Sign-in setup](#sign-in-setup)). Settings always offers the token path as well:
+
+1. Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) with **Contents: Read and write** permission on your card repo.
+2. In Settings, expand **Use a personal access token instead**, paste the token, enter the repo owner, name and branch, and click **Connect**.
+
+</details>
 
 ## Development
 
@@ -57,7 +63,31 @@ npm run build     # production build
 
 ## Deployment
 
-The production build (`npm run build`) outputs static files to `dist/` — deploy to any static host (Cloudflare Pages, Vercel, Netlify, GitHub Pages, etc.).
+`npm run build` outputs static files to `dist/`, deployed to Cloudflare Pages by `.github/workflows/deploy.yml`. The `functions/` directory at the repo root is picked up by the same `wrangler pages deploy` invocation and served at `/api/auth/*`.
+
+### Sign-in setup
+
+"Sign in with GitHub" needs a GitHub App of your own. Without one the app still works — the sign-in button simply does not appear, and the token path is the only way in.
+
+A browser cannot complete an OAuth exchange by itself: GitHub's token endpoint is not CORS-enabled and requires a client secret. `functions/api/auth/` is the smallest thing that closes that gap. It holds no state, sets no cookies, and never sees your cards.
+
+1. Create a GitHub App at [github.com/settings/apps/new](https://github.com/settings/apps/new):
+   - **Callback URL** `https://your-domain/` (add `http://localhost:8788/` too, for local development)
+   - **Request user authorization (OAuth) during installation** — on
+   - **Expire user authorization tokens** — on, so tokens last 8 hours and renew from a refresh token
+   - **Webhook → Active** — off
+   - **Repository permissions → Contents** — Read and write
+2. Generate a client secret, and note the Client ID and the app slug (the last part of the app's public URL).
+3. Put the **Client ID** and **slug** in `src/github-app.ts`. Both are public and belong in the repo; the secret does not.
+4. In the Cloudflare Pages project, under **Settings → Variables and secrets**, add `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` for Production and Preview.
+5. Install the App on your card repo.
+
+For local development, `vite` does not serve `/api/auth/*`. Put the two variables in a `.dev.vars` file (gitignored) and run the Functions alongside the built site:
+
+```bash
+npm run build
+npx wrangler pages dev dist   # http://localhost:8788
+```
 
 ## Tech Stack
 
@@ -66,6 +96,7 @@ The production build (`npm run build`) outputs static files to `dist/` — deplo
 - marked (Markdown rendering)
 - idb (IndexedDB wrapper)
 - KaTeX + highlight.js via CDN
+- Cloudflare Pages, with a Pages Function for the OAuth token exchange
 - FSRS algorithm (custom port)
 
 ## Roadmap

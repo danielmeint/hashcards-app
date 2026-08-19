@@ -796,22 +796,108 @@ body {
   color: var(--color-link);
 }
 
-#token-info {
-  margin-top: 6px;
+/* --- Connecting to GitHub --- */
+
+.settings-section {
+  margin-bottom: 28px;
+}
+
+.settings-section h2 {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-secondary);
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.settings-notice {
+  background: var(--color-accent-bg);
+  border: 1px solid var(--color-accent-border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  color: var(--color-danger);
+}
+
+/* The primary way in, so it takes the full width rather than sitting in a row
+   of equals. */
+.btn-signin {
+  display: block;
+  width: 100%;
+  padding: 14px 20px;
+  font-size: 16px;
+}
+
+.btn-small {
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+.auth-lead,
+.auth-note {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  margin: 10px 0 16px;
+}
+
+.auth-identity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border-light);
+  border-radius: 8px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+
+.auth-link {
+  display: inline-block;
+  margin-top: 8px;
+  font-family: var(--font-ui);
   font-size: 12px;
-  line-height: 1.4;
-}
-
-.token-ok {
-  color: var(--color-success);
-}
-
-.token-warning {
-  color: var(--color-warning);
-}
-
-.token-warning a {
   color: var(--color-link);
+}
+
+.auth-fallback {
+  margin-top: 8px;
+  border-top: 1px solid var(--color-border-light);
+  padding-top: 12px;
+}
+
+.auth-fallback summary {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+
+.auth-status {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+
+.auth-status:empty {
+  display: none;
+}
+
+.auth-status-error {
+  color: var(--color-danger);
 }
 
 .new-cards-status {

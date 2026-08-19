@@ -1,21 +1,25 @@
+import { getAccessToken, loadCredential, recordLogin, refreshCredential } from "./auth";
+
+/**
+ * Which repository to read cards from. Deliberately carries no credential: the
+ * token is fetched inside `apiFetch` instead, so it never travels through the
+ * views, the sync runner, or an error message on its way to a request.
+ */
 export type GitHubConfig = {
-  pat: string;
   owner: string;
   repo: string;
   branch: string;
 };
 
 export function getConfig(): GitHubConfig | null {
-  const pat = localStorage.getItem("github_pat");
   const owner = localStorage.getItem("github_owner");
   const repo = localStorage.getItem("github_repo");
   const branch = localStorage.getItem("github_branch") || "main";
-  if (!pat || !owner || !repo) return null;
-  return { pat, owner, repo, branch };
+  if (!owner || !repo) return null;
+  return { owner, repo, branch };
 }
 
 export function saveConfig(config: GitHubConfig): void {
-  localStorage.setItem("github_pat", config.pat);
   localStorage.setItem("github_owner", config.owner);
   localStorage.setItem("github_repo", config.repo);
   localStorage.setItem("github_branch", config.branch);
@@ -37,47 +41,78 @@ export function setHapticFeedback(on: boolean): void {
   localStorage.setItem("haptic_feedback", String(on));
 }
 
+/**
+ * Every GitHub call goes through here, so no caller ever handles a token.
+ *
+ * A 401 buys one refresh-and-retry. An App token can expire between the check
+ * in `getAccessToken` and the request landing, and it can be renewed without
+ * involving the user at all — a sync failure for something we can fix ourselves
+ * is not worth showing anyone.
+ */
+async function apiFetch(path: string, options?: RequestInit): Promise<Response> {
+  const send = (token: string) =>
+    fetch(`https://api.github.com${path}`, {
+      ...options,
+      cache: "no-store",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+        ...(options?.headers || {}),
+      },
+    });
 
-async function apiFetch(
-  config: GitHubConfig,
-  path: string,
-  options?: RequestInit
-): Promise<Response> {
-  const url = `https://api.github.com${path}`;
-  return fetch(url, {
-    ...options,
-    cache: "no-store",
-    headers: {
-      Authorization: `Bearer ${config.pat}`,
-      Accept: "application/vnd.github.v3+json",
-      "Content-Type": "application/json",
-      ...(options?.headers || {}),
-    },
-  });
+  const res = await send(await getAccessToken());
+  if (res.status !== 401) return res;
+  const renewed = await refreshCredential();
+  return renewed ? send(renewed) : res;
 }
 
-export type TokenInfo = {
-  tokenType: "fine-grained" | "classic" | "unknown";
+export type Connection = {
+  /** How this install authenticates — and for a PAT, which kind of one. */
+  credential: "app" | "fine-grained" | "classic";
   username: string;
+  /** Classic tokens only; fine-grained and App tokens have no scope list. */
   scopes: string | null;
 };
 
-export async function inspectToken(config: GitHubConfig): Promise<TokenInfo> {
-  const res = await apiFetch(config, "/user");
+/** Who the stored credential belongs to, and what kind of credential it is. */
+export async function inspectConnection(): Promise<Connection> {
+  const res = await apiFetch("/user");
   if (!res.ok) throw new Error(await apiError(res));
   const data = await res.json();
+
+  // Classic tokens carry `x-oauth-scopes` on every response and fine-grained
+  // ones never do. That is a property of the token rather than of its text,
+  // unlike the `ghp_` / `github_pat_` prefix this used to guess from — which
+  // said nothing about a token GitHub had already rejected or reissued.
   const scopes = res.headers.get("x-oauth-scopes");
-  const pat = config.pat;
-  let tokenType: TokenInfo["tokenType"] = "unknown";
-  if (pat.startsWith("github_pat_")) tokenType = "fine-grained";
-  else if (pat.startsWith("ghp_")) tokenType = "classic";
-  return { tokenType, username: data.login, scopes };
+  const credential = await loadCredential();
+
+  if (credential?.kind === "app") await recordLogin(data.login);
+
+  return {
+    credential:
+      credential?.kind === "app"
+        ? "app"
+        : scopes !== null
+        ? "classic"
+        : "fine-grained",
+    username: data.login,
+    scopes,
+  };
 }
 
 async function apiError(res: Response): Promise<string> {
-  if (res.status === 401) return "Authentication failed. Check your PAT.";
-  if (res.status === 403) return "Permission denied. Your PAT may lack the required permissions (Contents: Read and Write).";
-  if (res.status === 404) return "Repository not found. Check owner, repo name, and branch.";
+  if (res.status === 401) {
+    return "GitHub rejected the credential. Reconnect in Settings.";
+  }
+  if (res.status === 403) {
+    return "Permission denied. The credential lacks Contents: Read and write on this repository.";
+  }
+  if (res.status === 404) {
+    return "Repository not found. Check owner, repo name, and branch.";
+  }
   try {
     const data = await res.json();
     return data.message || `GitHub API error: ${res.status}`;
@@ -85,6 +120,76 @@ async function apiError(res: Response): Promise<string> {
     return `GitHub API error: ${res.status}`;
   }
 }
+
+// --- Picking a repository ---
+
+export type RepoRef = {
+  owner: string;
+  repo: string;
+  defaultBranch: string;
+  private: boolean;
+};
+
+type Installation = { id: number };
+
+/**
+ * Every repository reachable through the GitHub App, across every installation
+ * the signed-in user can see. This is the list behind the repo picker, and it
+ * is exactly the set of repos the token can touch — installing the App on more
+ * repositories is how it grows.
+ *
+ * Only meaningful for an App credential. A PAT has no installations, so this
+ * comes back empty and Settings falls back to typing owner and repo.
+ */
+export async function listAccessibleRepos(): Promise<RepoRef[]> {
+  const res = await apiFetch("/user/installations?per_page=100");
+  if (!res.ok) throw new Error(await apiError(res));
+  const { installations } = (await res.json()) as {
+    installations: Installation[];
+  };
+
+  const repos: RepoRef[] = [];
+  for (const installation of installations) {
+    repos.push(...(await listInstallationRepos(installation.id)));
+  }
+  repos.sort((a, b) =>
+    `${a.owner}/${a.repo}`.localeCompare(`${b.owner}/${b.repo}`)
+  );
+  return repos;
+}
+
+/** At 100 per page, five pages is 500 repositories — well past useful in a picker. */
+const MAX_REPO_PAGES = 5;
+
+async function listInstallationRepos(id: number): Promise<RepoRef[]> {
+  const repos: RepoRef[] = [];
+  for (let page = 1; page <= MAX_REPO_PAGES; page++) {
+    const res = await apiFetch(
+      `/user/installations/${id}/repositories?per_page=100&page=${page}`
+    );
+    if (!res.ok) throw new Error(await apiError(res));
+    const data = (await res.json()) as {
+      repositories: {
+        name: string;
+        owner: { login: string };
+        default_branch: string;
+        private: boolean;
+      }[];
+    };
+    for (const repo of data.repositories) {
+      repos.push({
+        owner: repo.owner.login,
+        repo: repo.name,
+        defaultBranch: repo.default_branch,
+        private: repo.private,
+      });
+    }
+    if (data.repositories.length < 100) break;
+  }
+  return repos;
+}
+
+// --- Cards and state ---
 
 export type FileEntry = {
   path: string;
@@ -110,7 +215,6 @@ export async function listMdFiles(
   etag?: string | null
 ): Promise<TreeListing> {
   const res = await apiFetch(
-    config,
     `/repos/${config.owner}/${config.repo}/git/trees/${config.branch}?recursive=1`,
     etag ? { headers: { "If-None-Match": etag } } : undefined
   );
@@ -134,12 +238,15 @@ export async function getFileContent(
   path: string
 ): Promise<string> {
   const res = await apiFetch(
-    config,
     `/repos/${config.owner}/${config.repo}/contents/${path}?ref=${config.branch}`
   );
   if (!res.ok) throw new Error(await apiError(res));
   const data = await res.json();
-  const binary = atob(data.content.replace(/\n/g, ""));
+  return decodeBase64(data.content);
+}
+
+function decodeBase64(content: string): string {
+  const binary = atob(content.replace(/\n/g, ""));
   const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
   return new TextDecoder().decode(bytes);
 }
@@ -194,16 +301,12 @@ export async function readStateFile(
   config: GitHubConfig
 ): Promise<{ data: StateFile; sha: string } | null> {
   const res = await apiFetch(
-    config,
     `/repos/${config.owner}/${config.repo}/contents/hashcards-state.json?ref=${config.branch}`
   );
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(await apiError(res));
   const data = await res.json();
-  const binary = atob(data.content.replace(/\n/g, ""));
-  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-  const content = new TextDecoder().decode(bytes);
-  return { data: JSON.parse(content), sha: data.sha };
+  return { data: JSON.parse(decodeBase64(data.content)), sha: data.sha };
 }
 
 export async function writeStateFile(
@@ -220,7 +323,6 @@ export async function writeStateFile(
   if (sha) body.sha = sha;
 
   const res = await apiFetch(
-    config,
     `/repos/${config.owner}/${config.repo}/contents/hashcards-state.json`,
     { method: "PUT", body: JSON.stringify(body) }
   );

@@ -1,4 +1,5 @@
 import { getConfig } from "./github";
+import { completeSignIn } from "./auth";
 import { syncAll, loadCachedCards } from "./sync";
 import { renderSettings } from "./views/settings";
 import { renderDeckList } from "./views/deck-list";
@@ -20,6 +21,9 @@ type View = "settings" | "decks" | "drill" | "stats";
  */
 let disposeView: (() => void) | null = null;
 
+/** Message for the next Settings render — a failed sign-in, mostly. */
+let settingsNotice: string | undefined;
+
 async function navigate(
   view: View,
   drillCards?: Card[],
@@ -31,7 +35,8 @@ async function navigate(
 
   switch (view) {
     case "settings":
-      renderSettings(app, () => navigate("decks"));
+      await renderSettings(app, () => navigate("decks"), settingsNotice);
+      settingsNotice = undefined;
       break;
 
     case "decks":
@@ -72,6 +77,15 @@ async function init() {
     navigator.storage.persist().catch(() => {});
   }
 
+  // Before anything reads the credential, and before the demo check: this page
+  // load may be the return leg of a sign-in, and the one-time code in the URL
+  // has to be redeemed and cleared exactly once.
+  try {
+    await completeSignIn();
+  } catch (e) {
+    settingsNotice = (e as Error).message;
+  }
+
   // Demo mode: #demo launches a drill with fake cards, no persistence
   if (window.location.hash === "#demo") {
     const demo = await getDemoData();
@@ -83,8 +97,11 @@ async function init() {
   }
 
   const config = getConfig();
-  if (!config) {
-    navigate("settings");
+  // Settings is both the first-run screen and where a sign-in that just landed
+  // without a repository picks one. Everything else opens on the deck list,
+  // including a sign-in that had a repository waiting for it.
+  if (!config || settingsNotice) {
+    await navigate("settings");
     return;
   }
 

@@ -8,7 +8,7 @@ import {
 } from "./types";
 
 const DB_NAME = "hashcards";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 const LEGACY_CARD_CACHE = "cached_cards";
 
@@ -34,6 +34,9 @@ function getDb(): Promise<IDBPDatabase> {
         }
         if (!db.objectStoreNames.contains("meta")) {
           db.createObjectStore("meta");
+        }
+        if (!db.objectStoreNames.contains("credentials")) {
+          db.createObjectStore("credentials");
         }
       },
     }).then(async (db) => {
@@ -176,6 +179,30 @@ export async function getMeta<T>(key: string): Promise<T | undefined> {
 export async function setMeta(key: string, value: unknown): Promise<void> {
   const db = await getDb();
   await db.put("meta", value, key);
+}
+
+const CREDENTIAL_KEY = "github";
+
+/**
+ * The GitHub credential lives in its own store rather than in `meta`.
+ * Everything in `meta` is sync bookkeeping that would be harmless to dump into
+ * a log, a diagnostic export, or the state file; this is the one record in the
+ * database that never may be, and a store named for what it holds is the
+ * cheapest way to keep that obvious.
+ */
+export async function readCredential<T>(): Promise<T | undefined> {
+  const db = await getDb();
+  return db.get("credentials", CREDENTIAL_KEY);
+}
+
+export async function writeCredential(value: unknown): Promise<void> {
+  const db = await getDb();
+  await db.put("credentials", value, CREDENTIAL_KEY);
+}
+
+export async function deleteCredential(): Promise<void> {
+  const db = await getDb();
+  await db.delete("credentials", CREDENTIAL_KEY);
 }
 
 const SESSION_KEY = "current";

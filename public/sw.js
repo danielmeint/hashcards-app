@@ -20,6 +20,12 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
+  // Only GET is cacheable. Sign-in posts to /api/auth/*, which would otherwise
+  // fall through to the cache-first branch at the bottom and reject on
+  // `cache.put` — the response still arrives, but every exchange leaves an
+  // unhandled rejection behind it.
+  if (event.request.method !== "GET") return;
+
   // Network-first for GitHub API
   if (url.hostname === "api.github.com") {
     event.respondWith(

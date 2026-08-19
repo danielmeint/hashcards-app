@@ -861,16 +861,12 @@ Carried forward, still open, none of it urgent.
 - **Audio cards** — the CLI supports `![](audio.mp3)`; detect audio extensions
   and render an `<audio>` element. Shares the private-repo blob-fetching work
   from 1.4.
-- **Bundle size** — `marked` dominates the ~68 KB bundle; lazy-load it via
-  dynamic import, since it is not needed until the first card renders. KaTeX and
-  the syntax highlighter are the same argument and are larger: neither is needed
-  until a card that uses them renders, and most do not.
-- **The cloze placeholder is a magic string** — `render.ts` swaps the deletion
-  for the literal `CLOZE_DELETION_PLACEHOLDER`, renders Markdown, then
-  `String.replace`s the first occurrence back. A card whose own text contains
-  that string renders the wrong blank. Vanishingly unlikely and trivially
-  avoidable: a `marked` extension would do the substitution on the AST instead
-  of on its output.
+- ~~**Bundle size**~~ — done in Phase 3. Initial JS 40.46 → 28.86 kB gzipped,
+  and a collection with no maths and no code now fetches neither KaTeX nor the
+  highlighter at all.
+- ~~**The cloze placeholder is a magic string**~~ — done in Phase 3, and it was
+  hiding a second bug: `String.replace` reads `$&` in the *replacement* as the
+  matched text, so a cloze answer containing one was spliced into itself.
 - ~~**DOM query boilerplate**~~ — done with 5.1, which removed the casting
   rather than making it terser.
 - **Demo mode used to spend the real new-card budget** — fixed when the drill was
@@ -962,7 +958,27 @@ paying twice.
 
 ---
 
-### Phase 3 — The render path · ~3 evenings
+### Phase 3 — The render path · ~3 evenings — **done**
+
+*As shipped.* Three things rather than two. The cloze deletion is a `marked`
+tokenizer, so the answer is parsed in the same pass as the prose around it —
+which also retired the regex that used to unwrap the `<p>` a second parse put
+there. Markdown left the initial bundle: only a drill needs it, `renderDrill`
+was already async, so the await happens once at the door and everything past it
+stays synchronous. And KaTeX and highlight.js are fetched only by a collection
+that has maths or code in it, warmed during idle time so the first card does
+not wait.
+
+The judgement call worth recording is `hasMath`. Matching KaTeX's own rules
+means `$5 to $9` is maths, and auto-render will duly set "5 to " in Computer
+Modern — so being faithful to it costs 300 KB in order to mangle a sentence
+about money. The heuristic is stricter than the library it feeds: a command, a
+superscript, a subscript, braces, or a lone short symbol. The costs are
+asymmetric, and this is the cheap side to be wrong on.
+
+Numbers: initial JS 40.46 → 28.86 kB gzipped, `marked` split into a 12.42 kB
+chunk the drill pulls in, and ~400 KB of CDN script and stylesheet no longer
+fetched at all by a collection that has no use for it.
 
 A `marked` extension that substitutes cloze deletions on the AST instead of
 `String.replace`-ing a magic placeholder out of its output, plus lazy-loading

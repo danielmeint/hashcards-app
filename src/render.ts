@@ -1,8 +1,81 @@
-import { marked } from "marked";
+import type { Marked, Token, TokenizerAndRendererExtension } from "marked";
 import { Card, ClozeCard } from "./types";
 import { getConfig } from "./github";
 
-const CLOZE_TAG = "CLOZE_DELETION_PLACEHOLDER";
+/**
+ * Card text into HTML.
+ *
+ * Markdown is loaded on demand rather than bundled. It is needed only to draw a
+ * card, which means only inside a drill, and `renderDrill` is already async —
+ * so the await happens once, at the door, and everything past it stays
+ * synchronous.
+ */
+
+/** Wraps the deleted span of a cloze card, for the tokenizer below to find. */
+const CLOZE_OPEN = "";
+const CLOZE_CLOSE = "";
+
+let markdown: Marked | null = null;
+let loading: Promise<Marked> | null = null;
+
+export function loadMarkdown(): Promise<Marked> {
+  return (loading ??= import("marked").then(({ Marked }) => {
+    markdown = new Marked({ extensions: [clozeExtension] });
+    return markdown;
+  }));
+}
+
+/**
+ * A cloze deletion is a token, not a string substitution.
+ *
+ * It used to be: splice the literal `CLOZE_DELETION_PLACEHOLDER` into the
+ * source, render, then `String.replace` that word for the slot HTML. Two ways
+ * that goes wrong. `replace` with a string takes the *first* occurrence, so a
+ * card whose own text contained that word lost the wrong one. And the
+ * replacement is a pattern, not a literal — an answer containing `$&` or `$'`
+ * was spliced into itself.
+ *
+ * As a tokenizer the answer's markdown is parsed in the same pass as the prose
+ * around it, which also retires the regex that used to unwrap the `<p>` a
+ * second parse put around it.
+ */
+type ClozeToken = { type: "cloze"; raw: string; tokens: Token[] };
+
+const clozeExtension: TokenizerAndRendererExtension = {
+  name: "cloze",
+  level: "inline",
+  start(src) {
+    const at = src.indexOf(CLOZE_OPEN);
+    return at === -1 ? undefined : at;
+  },
+  tokenizer(src) {
+    if (!src.startsWith(CLOZE_OPEN)) return undefined;
+    const end = src.indexOf(CLOZE_CLOSE);
+    if (end === -1) return undefined;
+    const answer = src.slice(CLOZE_OPEN.length, end);
+    return {
+      type: "cloze",
+      raw: src.slice(0, end + CLOZE_CLOSE.length),
+      tokens: this.lexer.inlineTokens(answer),
+    } satisfies ClozeToken;
+  },
+  renderer(token) {
+    const answer = this.parser.parseInline((token as ClozeToken).tokens);
+    return (
+      `<span class="cloze-slot">` +
+      `<span class="cloze">.............</span>` +
+      `<span class="cloze-reveal">${answer}</span>` +
+      `</span>`
+    );
+  },
+};
+
+function renderMarkdown(text: string): string {
+  if (!markdown) {
+    throw new Error("Markdown is not loaded yet — await loadMarkdown() first.");
+  }
+  return markdown.parse(text, { async: false }) as string;
+}
 
 /**
  * Where a relative image path resolves to, or `null` when there is no repo to
@@ -39,62 +112,28 @@ function rewriteImageUrls(html: string, filePath: string): string {
   );
 }
 
-function renderMarkdown(text: string): string {
-  return marked.parse(text, { async: false }) as string;
-}
-
 function richText(html: string, filePath: string): string {
   return `<div class="rich-text">${rewriteImageUrls(html, filePath)}</div>`;
 }
 
-/** Cloze text with the deletion swapped for a placeholder, spliced by byte. */
-function textWithClozeTag(content: ClozeCard): string {
-  const textBytes = new TextEncoder().encode(content.text);
-  const before = textBytes.slice(0, content.start);
-  const after = textBytes.slice(content.end + 1);
-  const tagBytes = new TextEncoder().encode(CLOZE_TAG);
-  const combined = new Uint8Array(
-    before.length + tagBytes.length + after.length
-  );
-  combined.set(before);
-  combined.set(tagBytes, before.length);
-  combined.set(after, before.length + tagBytes.length);
-  return new TextDecoder().decode(combined);
-}
-
-/** The deleted span, rendered as inline HTML rather than its own paragraph. */
-function clozeAnswerHtml(content: ClozeCard): string {
-  const textBytes = new TextEncoder().encode(content.text);
-  const deleted = new TextDecoder().decode(
-    textBytes.slice(content.start, content.end + 1)
-  );
-  return renderMarkdown(deleted).replace(/^<p>(.*)<\/p>\s*$/, "$1");
-}
-
-/**
- * A cloze card with both faces in one pass: the surrounding prose is identical
- * either way, so it is parsed once and the placeholder becomes a slot holding
- * the blank and the answer together. Which one shows is then a class on an
- * ancestor.
- */
-function renderCloze(card: Card, content: ClozeCard): string {
-  const slot =
-    `<span class="cloze-slot">` +
-    `<span class="cloze">.............</span>` +
-    `<span class="cloze-reveal">${clozeAnswerHtml(content)}</span>` +
-    `</span>`;
-
-  const html = renderMarkdown(textWithClozeTag(content)).replace(
-    CLOZE_TAG,
-    slot
-  );
-  return richText(html, card.filePath);
+/** The card's text with the deleted span wrapped, spliced by byte. */
+function withClozeMarkers(content: ClozeCard): string {
+  const bytes = new TextEncoder().encode(content.text);
+  const decoder = new TextDecoder();
+  const before = decoder.decode(bytes.slice(0, content.start));
+  const deleted = decoder.decode(bytes.slice(content.start, content.end + 1));
+  const after = decoder.decode(bytes.slice(content.end + 1));
+  return `${before}${CLOZE_OPEN}${deleted}${CLOZE_CLOSE}${after}`;
 }
 
 /**
  * A card's whole body, with the answer already in the DOM but hidden. Revealing
  * is then a class toggle rather than a re-render — no second markdown parse and
  * no second KaTeX / highlight.js pass over content that has not changed.
+ *
+ * A cloze card gets both faces from one parse: the surrounding prose is
+ * identical either way, and the deletion becomes a slot holding the blank and
+ * the answer together. Which one shows is a class on an ancestor.
  */
 export function renderCardBody(card: Card): string {
   const content = card.content;
@@ -104,25 +143,8 @@ export function renderCardBody(card: Card): string {
       `<div class="answer">${richText(renderMarkdown(content.answer), card.filePath)}</div>`
     );
   }
-  return `<div class="prompt">${renderCloze(card, content)}</div>`;
-}
-
-export function postRender(container: HTMLElement): void {
-  // KaTeX rendering
-  if (typeof (window as any).renderMathInElement === "function") {
-    (window as any).renderMathInElement(container, {
-      delimiters: [
-        { left: "$$", right: "$$", display: true },
-        { left: "$", right: "$", display: false },
-      ],
-      throwOnError: false,
-    });
-  }
-
-  // highlight.js
-  if (typeof (window as any).hljs !== "undefined") {
-    container.querySelectorAll("pre code").forEach((block) => {
-      (window as any).hljs.highlightElement(block as HTMLElement);
-    });
-  }
+  return `<div class="prompt">${richText(
+    renderMarkdown(withClozeMarkers(content)),
+    card.filePath
+  )}</div>`;
 }

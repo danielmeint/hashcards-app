@@ -2,7 +2,8 @@ import { html, render, TemplateResult } from "lit-html";
 import { unsafeHTML } from "lit-html/directives/unsafe-html.js";
 import { Card, Grade, Review } from "../../types";
 import { cardSourceUrl, getConfig } from "../../github";
-import { renderCardBody, postRender } from "../../render";
+import { renderCardBody } from "../../render";
+import { typeset } from "../../typeset";
 import { attachCardGestures } from "./gestures";
 import { Session } from "./session";
 
@@ -63,7 +64,7 @@ export function createView(
           <div class="card-content">${unsafeHTML(renderCardBody(card))}</div>`,
         node
       );
-      postRender(node.querySelector(".card-content") as HTMLElement);
+      void typeset(node.querySelector(".card-content") as HTMLElement);
       nodeCache.set(card.hash, node);
     }
     return node;

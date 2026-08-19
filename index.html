@@ -10,17 +10,10 @@
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-  <!-- KaTeX -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
-  <!-- highlight.js -->
-  <link id="hljs-light" rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" />
-  <!-- `media="not all"` rather than `disabled`: the sheet is still fetched (so
-       the service worker can cache it for offline use) but never applied until
-       the theme selects it. -->
-  <link id="hljs-dark" rel="stylesheet" media="not all" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css" />
-  <script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+  <!-- KaTeX and highlight.js are fetched by src/typeset.ts, and only by a
+       collection that has maths or code in it. They used to load here on every
+       cold start: ~400 KB of script and stylesheet for cards that mostly
+       contain neither. -->
 </head>
 <body>
   <div id="app"></div>

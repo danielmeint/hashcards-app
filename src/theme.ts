@@ -11,12 +11,26 @@ export function setTheme(theme: Theme): void {
   applyTheme();
 }
 
-const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+/**
+ * Asked for on first use rather than at import. A module that touches a browser
+ * API while it is being loaded can only be imported by something that has one,
+ * which made every test that reached this file transitively need a `matchMedia`
+ * it had no other use for.
+ */
+let darkQuery: MediaQueryList | null = null;
+
+function systemPrefersDark(): MediaQueryList | null {
+  if (darkQuery === null && typeof window.matchMedia === "function") {
+    darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+  }
+  return darkQuery;
+}
 
 /** The theme actually in force, resolving "system" against the OS setting. */
 export function effectiveTheme(): "light" | "dark" {
   const theme = getTheme();
-  return theme === "system" ? (darkQuery.matches ? "dark" : "light") : theme;
+  if (theme !== "system") return theme;
+  return systemPrefersDark()?.matches ? "dark" : "light";
 }
 
 /**
@@ -27,7 +41,9 @@ export function effectiveTheme(): "light" | "dark" {
  *
  * Syntax highlighting comes from two CDN stylesheets rather than our tokens, so
  * the unused one is parked on a non-matching media query — which still lets it
- * download and be cached for offline use. The browser-chrome colour follows too.
+ * download and be cached for offline use. Neither exists until a card with code
+ * in it asks for them (`src/typeset.ts`), which is why their absence is not a
+ * problem here. The browser-chrome colour follows too.
  */
 export function applyTheme(): void {
   const theme = getTheme();
@@ -50,7 +66,7 @@ export function applyTheme(): void {
 
 /** Follow the OS while the theme is "system". */
 export function watchSystemTheme(): void {
-  darkQuery.addEventListener("change", () => {
+  systemPrefersDark()?.addEventListener("change", () => {
     if (getTheme() === "system") applyTheme();
   });
 }

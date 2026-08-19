@@ -8,6 +8,7 @@ import { renderDeckList } from "./views/deck-list";
 import { renderDrill } from "./views/drill";
 import { renderStats } from "./views/stats";
 import { getDemoData } from "./demo";
+import { warmTypesetting } from "./typeset";
 import { applyTheme, watchSystemTheme } from "./theme";
 import { Card, DrillSession } from "./types";
 import "./style.css";
@@ -129,8 +130,13 @@ async function init() {
   // Paint from cache first, then sync behind the UI. A cold open used to wait
   // on a tree call, N content calls and a state read before showing anything;
   // now the deck list is on screen immediately and updates when sync lands.
-  await loadCachedCards();
+  const cards = await loadCachedCards();
   await navigate("decks");
+
+  // Only now, and only if the collection has any: a typesetter fetched during
+  // idle time is one the first card with maths in it does not have to wait for,
+  // and one that is in the cache before the network goes away.
+  warmTypesetting(cards);
 
   // Started after the first render, so the deck list is already subscribed and
   // sees every progress update.

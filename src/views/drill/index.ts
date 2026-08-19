@@ -2,6 +2,8 @@ import { Card } from "../../types";
 import { attachKeyboard } from "./gestures";
 import { createSession, SessionOptions } from "./session";
 import { createView } from "./view";
+import { loadMarkdown } from "../../render";
+import { warmTypesetting } from "../../typeset";
 
 export type { SessionOptions as DrillOptions };
 
@@ -16,7 +18,17 @@ export async function renderDrill(
   onEnd: () => void,
   options: SessionOptions = {}
 ): Promise<void> {
-  const session = await createSession(dueCards, options);
+  // What this session will need, started now rather than when the card that
+  // needs it appears. Startup warms this too, but not on the first run of a
+  // fresh install: there are no cached cards to look at yet.
+  warmTypesetting(dueCards);
+
+  // Markdown is not in the initial bundle; a drill is the only thing that
+  // needs it, and this is the last await before the first card is drawn.
+  const [session] = await Promise.all([
+    createSession(dueCards, options),
+    loadMarkdown(),
+  ]);
   const detachKeyboard = attachKeyboard(session);
 
   let leaving = false;

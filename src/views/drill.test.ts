@@ -36,6 +36,14 @@ function basicCard(n: number): Card {
   };
 }
 
+/** A card whose typesetting is worth counting — see the prerender test. */
+function mathCard(n: number): Card {
+  return {
+    ...basicCard(n),
+    content: { type: "basic", question: `Q${n} $x^${n}$`, answer: `A${n}` },
+  };
+}
+
 function click(container: HTMLElement, selector: string): void {
   const el = container.querySelector(selector) as HTMLButtonElement | null;
   if (!el) throw new Error(`No element matching ${selector}`);
@@ -346,7 +354,9 @@ describe("drill rendering", () => {
 
   it("prepares the next card while the current one is on screen", async () => {
     const { renderDrill } = await freshDrill();
-    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+    // Cards with maths in them: typesetting is only attempted for a card that
+    // needs it now, so a card that needs none is no longer a countable pass.
+    await renderDrill(container, [mathCard(1), mathCard(2)], () => {});
 
     expect(typeset).toHaveBeenCalledTimes(1);
     await waitFor(

@@ -114,6 +114,10 @@ images work offline, which the current approach never can.
 
 ### 1.5 Sync failures are silent
 
+**Fixed.** The notice ladder is `src/sync-notice.ts`, the retry triggers are
+`src/auto-sync.ts`, and both are rendered by the deck list. Covered by
+`src/sync-notice.test.ts` and `src/auto-sync.test.ts`. Original report below.
+
 **P1.** Both post-session sync attempts swallow errors into `console.warn`
 (`src/views/drill.ts:336` and `:427`). An expired or revoked PAT produces an app
 that keeps accepting reviews indefinitely with nothing reaching GitHub and no
@@ -124,6 +128,47 @@ another device and find weeks of work missing.
 successful sync time, and an unmissable banner once a push has failed. Queue the
 failed push and retry on next launch. Failure to persist is the one error in this
 app that must never be quiet.
+
+*As shipped:* what makes this reportable at all is a second timestamp. A sync
+succeeding and review state reaching GitHub are different events — a pull-only
+sync is a sync — so `last_pushed_at` is recorded separately, and only when
+remote is genuinely in step. Reviews recorded after it are exactly the ones
+still owed, which means the count comes from the review log rather than from a
+flag the app has to remember to set and a crash can lose.
+
+The line drawn is that not-yet-synced is not an emergency: grades have been
+durable locally since 1.1, so the notice stays quiet for recent ones, says
+something reassuring when offline, and only escalates to a banner once reviews
+have been owed for a day. Two failures are told apart, because the action
+differs: a refused credential offers Sign in, since Try again on it fails
+identically, and everything else offers Try again.
+
+Retries hang off `online` and `visibilitychange` rather than a timer — a
+backgrounded PWA does not run timers reliably, so a retry loop built on one is
+a retry loop that mostly does not happen. Before this the only triggers were
+launching the app, finishing a drill, and pressing the button; a drill finished
+offline skips its push outright and nothing came back to it.
+
+### 1.6 Review state is global, but state files are per-repo
+
+**P2, and the design work for 4.6.** `exportState` returns every performance in
+IndexedDB, and `fullSync` writes all of them into whichever repo is configured.
+Point the app at a second card repo and both repos' state files end up holding
+every hash from both.
+
+Not data loss — hashes are content-derived, so last-write-wins per card stays
+correct — but each file accumulates scheduling for cards that are not in it, and
+leaks that cards exist elsewhere. It barely mattered while switching repos meant
+retyping owner and name; the picker added in 4.1 makes it two taps.
+
+The guard added alongside that picker (no state file is written to a repo the
+app holds no cards for) covers the worst case, where the target has no cards at
+all. It does not cover two valid card repos.
+
+**Fix:** scope the written state to cards the repo actually holds — carefully,
+because a card temporarily absent from the repo must not lose its scheduling.
+Anki keeps orphaned state for exactly that reason. Whatever shape this takes is
+the same shape 4.6 needs.
 
 ---
 

@@ -2,7 +2,7 @@ import { Card, DrillSession } from "../types";
 import { escapeHtml } from "../escape";
 import { loadCachedCards, syncAll } from "../sync";
 import { getConfig } from "../github";
-import { getAllPerformances, loadSession, clearSession } from "../db";
+import { getAllPerformances, getReviewsSince, loadSession, clearSession } from "../db";
 import { todayStr } from "../fsrs";
 import {
   getNewCardsPerDay,
@@ -13,11 +13,12 @@ import {
 } from "../new-card-budget";
 import {
   SyncStatus,
-  formatSyncAge,
+  getLastPushedAt,
   getLastSyncedAt,
   getSyncStatus,
   onSyncStatus,
 } from "../sync-state";
+import { syncNotice } from "../sync-notice";
 
 type DeckInfo = {
   /**
@@ -43,19 +44,16 @@ type DeckGroup = { dir: string; decks: DeckInfo[] };
  */
 let unsubscribe: (() => void) | null = null;
 
-/** What the status line should say, or null when there is nothing to report. */
-function syncLine(status: SyncStatus): { text: string; error: boolean } | null {
-  if (status.phase === "syncing") {
-    return {
-      text: status.detail ? `Syncing — ${status.detail.toLowerCase()}` : "Syncing…",
-      error: false,
-    };
-  }
-  if (status.phase === "error") {
-    return { text: `Sync failed: ${status.message}`, error: true };
-  }
-  const last = getLastSyncedAt();
-  return last ? { text: `Synced ${formatSyncAge(last)}`, error: false } : null;
+/**
+ * Reviews that have not left the device.
+ *
+ * Taken from the review log rather than from a flag the app has to remember to
+ * set: reviews recorded after the last confirmed push are exactly the ones
+ * still owed, and a crash mid-drill cannot lose track of that the way a flag
+ * can. No push has ever landed means every review is owed.
+ */
+async function unsyncedReviewCount(lastPushedAt: string | null): Promise<number> {
+  return (await getReviewsSince(lastPushedAt ?? "")).length;
 }
 
 /**
@@ -179,7 +177,10 @@ export async function renderDeckList(
         </div>
       </div>
       <div class="new-budget-status">New today: ${introducedToday}/${newPerDay}</div>
-      <div class="sync-status" id="sync-status" hidden></div>
+      <div class="sync-status" id="sync-status" hidden>
+        <span id="sync-status-text"></span>
+        <button id="sync-action" class="btn btn-small" hidden></button>
+      </div>
       ${
         resumable.length > 0
           ? `
@@ -214,13 +215,32 @@ export async function renderDeckList(
   `;
 
   const statusEl = container.querySelector("#sync-status") as HTMLElement;
+  const textEl = container.querySelector("#sync-status-text") as HTMLElement;
+  const actionBtn = container.querySelector("#sync-action") as HTMLButtonElement;
   const syncBtn = container.querySelector("#sync-btn") as HTMLButtonElement;
 
+  // Read once per render. Progress ticks repaint this line several times a
+  // sync, and neither figure can change in between.
+  const lastPushedAt = getLastPushedAt();
+  const unsynced = await unsyncedReviewCount(lastPushedAt);
+
   function applyStatus(status: SyncStatus): void {
-    const line = syncLine(status);
-    statusEl.hidden = line === null;
-    statusEl.textContent = line?.text ?? "";
-    statusEl.classList.toggle("sync-status-error", line?.error === true);
+    const notice = syncNotice({
+      status,
+      lastSyncedAt: getLastSyncedAt(),
+      lastPushedAt,
+      unsyncedReviews: unsynced,
+      online: navigator.onLine,
+    });
+
+    statusEl.hidden = notice === null;
+    textEl.textContent = notice?.text ?? "";
+    statusEl.classList.toggle("sync-status-error", notice?.level === "error");
+    statusEl.classList.toggle("sync-status-warn", notice?.level === "warn");
+
+    actionBtn.hidden = !notice?.action;
+    actionBtn.dataset.action = notice?.action ?? "";
+    actionBtn.textContent = notice?.action === "sign-in" ? "Sign in" : "Try again";
 
     const syncing = status.phase === "syncing";
     syncBtn.disabled = syncing;
@@ -228,6 +248,11 @@ export async function renderDeckList(
   }
 
   applyStatus(getSyncStatus());
+
+  actionBtn.addEventListener("click", () => {
+    if (actionBtn.dataset.action === "sign-in") onSettings();
+    else startSync();
+  });
 
   // Progress ticks patch the status line; anything else changes the counts, so
   // re-render rather than trying to reconcile them by hand.
@@ -290,11 +315,15 @@ function renderEmpty(
       `
       : status.phase === "error"
       ? `
-        <h1>Couldn't load your cards</h1>
+        <h1>${status.needsSignIn ? "Signed out of GitHub" : "Couldn't load your cards"}</h1>
         <p class="sync-status-error">${escapeHtml(status.message)}</p>
         <div class="empty-actions">
-          <button id="retry-btn" class="btn btn-primary">Try again</button>
-          <button id="goto-settings" class="btn">Settings</button>
+          ${
+            status.needsSignIn
+              ? `<button id="goto-settings" class="btn btn-primary">Sign in</button>`
+              : `<button id="retry-btn" class="btn btn-primary">Try again</button>
+                 <button id="goto-settings" class="btn">Settings</button>`
+          }
         </div>
       `
       : `

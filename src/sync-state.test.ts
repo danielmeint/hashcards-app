@@ -1,5 +1,12 @@
+// @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { formatSyncAge } from "./sync-state";
+import {
+  adoptLegacySyncTimestamp,
+  formatSyncAge,
+  getLastPushedAt,
+  getLastSyncedAt,
+  recordSyncSuccess,
+} from "./sync-state";
 
 describe("formatSyncAge", () => {
   const now = Date.parse("2026-08-18T12:00:00Z");
@@ -31,5 +38,34 @@ describe("formatSyncAge", () => {
   // otherwise render "-3 minutes ago".
   it("never reports a sync in the future", () => {
     expect(formatSyncAge(ago(-10 * MINUTE), now)).toBe("just now");
+  });
+});
+
+describe("when state was last known to be on GitHub", () => {
+  it("is not advanced by a sync that pushed nothing", () => {
+    localStorage.clear();
+    recordSyncSuccess(false, "2026-08-19T10:00:00.000Z");
+
+    // The deck list may say "synced just now" — a pull is a sync — but nothing
+    // may claim the reviews on this device are safe, because they are not.
+    expect(getLastSyncedAt()).toBe("2026-08-19T10:00:00.000Z");
+    expect(getLastPushedAt()).toBeNull();
+  });
+
+  it("adopts the old single timestamp, so an upgrade does not open on a warning", () => {
+    localStorage.clear();
+    // An install from before the two were told apart. Its timestamp was only
+    // ever written after a sync that pushed.
+    localStorage.setItem("last_synced_at", "2026-08-18T09:00:00.000Z");
+
+    adoptLegacySyncTimestamp();
+
+    expect(getLastPushedAt()).toBe("2026-08-18T09:00:00.000Z");
+  });
+
+  it("leaves a fresh install with nothing to adopt", () => {
+    localStorage.clear();
+    adoptLegacySyncTimestamp();
+    expect(getLastPushedAt()).toBeNull();
   });
 });

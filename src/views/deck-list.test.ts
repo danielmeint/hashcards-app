@@ -88,7 +88,11 @@ describe("deck list", () => {
     cache([card(1, "Alpha")]);
 
     await renderDeckList(container, () => {}, () => {}, () => {});
-    setSyncStatus({ phase: "error", message: "Repository not found." });
+    setSyncStatus({
+      phase: "error",
+      message: "Repository not found.",
+      needsSignIn: false,
+    });
 
     // The re-render is async; the status listener kicks it off.
     await vi.waitFor(() =>

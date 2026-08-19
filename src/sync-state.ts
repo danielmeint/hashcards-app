@@ -8,9 +8,18 @@
 export type SyncStatus =
   | { phase: "idle" }
   | { phase: "syncing"; detail: string | null }
-  | { phase: "error"; message: string };
+  | {
+      phase: "error";
+      message: string;
+      /**
+       * The credential is gone or refused, so retrying will fail identically.
+       * A view showing this should offer a way back in, not a Try again.
+       */
+      needsSignIn: boolean;
+    };
 
 const LS_LAST_SYNC = "last_synced_at";
+const LS_LAST_PUSH = "last_pushed_at";
 
 let status: SyncStatus = { phase: "idle" };
 const listeners = new Set<(status: SyncStatus) => void>();
@@ -39,8 +48,38 @@ export function getLastSyncedAt(): string | null {
   return localStorage.getItem(LS_LAST_SYNC);
 }
 
-export function recordSyncSuccess(at: string = new Date().toISOString()): void {
+/**
+ * When review state was last known to be on GitHub — which is not the same
+ * question as when a sync last succeeded. A sync that only pulls, or one that
+ * declines to push, leaves this where it was, and that gap is what tells the
+ * deck list there are reviews it should be worried about.
+ */
+export function getLastPushedAt(): string | null {
+  return localStorage.getItem(LS_LAST_PUSH);
+}
+
+/**
+ * Installs from before the two timestamps were told apart recorded only
+ * `last_synced_at`, and it was written after a sync that did push. Adopt it.
+ *
+ * Called once at startup rather than lazily on read, because after the first
+ * sync of a session the two are no longer distinguishable: a pull-only sync
+ * writes `last_synced_at` too, and a lazy fallback would read that as proof of
+ * a push that never happened. Skipping this instead opens an upgraded install
+ * on a warning that every review it has ever taken is unsynced.
+ */
+export function adoptLegacySyncTimestamp(): void {
+  if (localStorage.getItem(LS_LAST_PUSH) !== null) return;
+  const legacy = localStorage.getItem(LS_LAST_SYNC);
+  if (legacy) localStorage.setItem(LS_LAST_PUSH, legacy);
+}
+
+export function recordSyncSuccess(
+  inStepWithRemote: boolean,
+  at: string = new Date().toISOString()
+): void {
   localStorage.setItem(LS_LAST_SYNC, at);
+  if (inStepWithRemote) localStorage.setItem(LS_LAST_PUSH, at);
 }
 
 /**

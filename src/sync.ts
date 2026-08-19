@@ -19,6 +19,7 @@ import {
 } from "./db";
 import { parseFile } from "./parser";
 import { recordSyncSuccess, setSyncStatus } from "./sync-state";
+import { AuthError } from "./auth";
 
 let cachedCards: Card[] | null = null;
 
@@ -90,12 +91,18 @@ async function runSync(
   setSyncStatus({ phase: "syncing", detail: null });
   try {
     if (scope.cards) await syncCards(config, report);
-    await fullSync(config, scope.push, report);
-    recordSyncSuccess();
+    const inStep = await fullSync(config, scope.push, report);
+    recordSyncSuccess(inStep);
     setSyncStatus({ phase: "idle" });
     return true;
   } catch (e) {
-    setSyncStatus({ phase: "error", message: (e as Error).message });
+    // A credential that is gone or refused is not a retryable failure, and a
+    // view that offers "Try again" for it is offering a button that cannot work.
+    setSyncStatus({
+      phase: "error",
+      message: (e as Error).message,
+      needsSignIn: e instanceof AuthError,
+    });
     return false;
   }
 }
@@ -191,11 +198,19 @@ export async function loadCachedCards(): Promise<Card[]> {
   return cachedCards ?? loadCards();
 }
 
+/**
+ * Merge review state with the repo, last-write-wins per card.
+ *
+ * Returns whether remote is now in step with local — false when there was a
+ * difference this call declined to push. The caller records that, so a run of
+ * declined or skipped pushes is visible as reviews that never left the device
+ * rather than as a "Synced just now" that means nothing.
+ */
 export async function fullSync(
   config: GitHubConfig,
   push: boolean = true,
   onProgress?: (progress: SyncProgress) => void
-): Promise<void> {
+): Promise<boolean> {
   // 1. Fetch remote state
   onProgress?.({ phase: "Fetching review state" });
   const remote = await readStateFile(config);
@@ -255,8 +270,10 @@ export async function fullSync(
 
   const remoteJson = remote ? JSON.stringify(remote.data) : null;
   const mergedJson = JSON.stringify(stateFile);
-  if (canPush && remoteJson !== mergedJson) {
-    onProgress?.({ phase: "Saving review state" });
-    await writeStateFile(config, stateFile, remote?.sha);
-  }
+  if (remoteJson === mergedJson) return true;
+  if (!canPush) return false;
+
+  onProgress?.({ phase: "Saving review state" });
+  await writeStateFile(config, stateFile, remote?.sha);
+  return true;
 }

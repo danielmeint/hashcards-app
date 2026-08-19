@@ -302,6 +302,35 @@ describe("state sync", () => {
     expect(repo.stateWrites).toEqual([]);
   });
 
+  it("does not claim state is safe after a sync that pushed nothing", async () => {
+    repo.set("a.md", card("one"), "sha-a");
+    const { adoptRepo } = await freshSync();
+    const { importState } = await import("./db");
+    const { getLastPushedAt, getLastSyncedAt } = await import("./sync-state");
+    await importState({ "hash-1": performance("2026-02-01") });
+
+    expect(await adoptRepo(CONFIG)).toBe(true);
+
+    // A pull is a sync, and the deck list may say so. But those reviews are
+    // still only on this device, and the warning that says so keys off this.
+    expect(getLastSyncedAt()).not.toBeNull();
+    expect(getLastPushedAt()).toBeNull();
+  });
+
+  it("reports a missing credential as needing sign-in, not as a retryable failure", async () => {
+    repo.set("a.md", card("one"), "sha-a");
+    const { syncAll } = await freshSync();
+    const { signOut } = await import("./auth");
+    const { getSyncStatus } = await import("./sync-state");
+    await signOut();
+
+    expect(await syncAll(CONFIG)).toBe(false);
+
+    const status = getSyncStatus();
+    expect(status.phase).toBe("error");
+    expect(status.phase === "error" && status.needsSignIn).toBe(true);
+  });
+
   it("adopts a repo by pulling its scheduling, not by committing to it", async () => {
     repo.set("a.md", card("one"), "sha-a");
     repo.setState({

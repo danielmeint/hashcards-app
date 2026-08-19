@@ -1,6 +1,8 @@
 import { getConfig } from "./github";
 import { completeSignIn } from "./auth";
 import { syncAll, loadCachedCards } from "./sync";
+import { startAutoSync } from "./auto-sync";
+import { adoptLegacySyncTimestamp } from "./sync-state";
 import { renderSettings } from "./views/settings";
 import { renderDeckList } from "./views/deck-list";
 import { renderDrill } from "./views/drill";
@@ -63,6 +65,9 @@ async function navigate(
 }
 
 async function init() {
+  // Before any sync of this session can record a timestamp of its own.
+  adoptLegacySyncTimestamp();
+
   // Before any render, so the first paint is already in the right theme.
   applyTheme();
   watchSystemTheme();
@@ -114,6 +119,10 @@ async function init() {
   // Started after the first render, so the deck list is already subscribed and
   // sees every progress update.
   if (navigator.onLine) syncAll(config);
+
+  // And keeps trying afterwards: reconnecting or returning to the tab retries
+  // a sync that never landed, rather than leaving it until the next cold open.
+  startAutoSync();
 }
 
 init();

@@ -1023,12 +1023,42 @@ body {
   font-family: var(--font-ui);
   text-align: center;
   margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 /* The compound selector beats `.deck-list-empty p`, which is also muted. */
 .sync-status-error,
 .deck-list-empty p.sync-status-error {
   color: var(--color-danger);
+}
+
+/* Reviews owed for more than a day. Loud enough not to be read as a caption,
+   quiet enough not to be read as breakage — nothing is lost, it is late. */
+.sync-status-error,
+.sync-status-warn {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid currentColor;
+  font-weight: 500;
+}
+
+.sync-status-warn {
+  color: var(--color-warning);
+  background: var(--color-surface-alt);
+}
+
+.sync-status-error {
+  background: var(--color-surface-alt);
+}
+
+#sync-action {
+  padding: 4px 12px;
+  font-size: 13px;
+  flex-shrink: 0;
 }
 
 .deck-list-empty {

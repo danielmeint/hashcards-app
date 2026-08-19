@@ -12,8 +12,8 @@
  * See README "Sign-in setup" for how to create the App and fill these in.
  */
 export const GITHUB_APP = {
-  clientId: "",
-  slug: "hashcards",
+  clientId: "Iv23liYjrLVRybHEjObu",
+  slug: "hashcards-app",
 };
 
 export function signInAvailable(): boolean {

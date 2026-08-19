@@ -1,3 +1,4 @@
+import { html, nothing, render, TemplateResult } from "lit-html";
 import { Grade } from "../types";
 import { getAllReviews, getAllPerformances } from "../db";
 import { loadCachedCards } from "../sync";
@@ -12,7 +13,6 @@ import {
 import { getConfig } from "../github";
 import { openCardEditor } from "./card-editor";
 import { formatSyncAge } from "../sync-state";
-import { escapeHtml } from "../escape";
 
 export async function renderStats(
   container: HTMLElement,
@@ -131,169 +131,195 @@ export async function renderStats(
     }
   }
 
-  container.innerHTML = `
-    <div class="stats-view">
-      <div class="stats-header">
-        <button id="back-btn" class="btn stats-back-btn">Back</button>
-        <h1>Statistics</h1>
-      </div>
+  const pct = (part: number, whole: number) =>
+    `${((part / whole) * 100).toFixed(1)}%`;
 
-      <div class="stats-overview">
-        <div class="stat-box">
-          <div class="stat-value">${totalCards}</div>
-          <div class="stat-label">Total cards</div>
+  function paint(): void {
+    render(
+      html`<div class="stats-view">
+        <div class="stats-header">
+          <button id="back-btn" class="btn stats-back-btn" @click=${onBack}>
+            Back
+          </button>
+          <h1>Statistics</h1>
         </div>
-        <div class="stat-box">
-          <div class="stat-value">${learnedCards}</div>
-          <div class="stat-label">Learned</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-value">${dueToday}</div>
-          <div class="stat-label">Due today</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-value">${streak}d</div>
-          <div class="stat-label">Streak</div>
-        </div>
-      </div>
 
-      <div class="stats-section">
-        <h2>Leeches</h2>
-        ${renderLeeches(leeches)}
-      </div>
-
-      <div class="stats-section">
-        <h2>Estimated Retention</h2>
-        <div class="retention-bar-container">
-          <div class="retention-bar" style="width: ${(avgRetention * 100).toFixed(0)}%"></div>
-          <span class="retention-label">${(avgRetention * 100).toFixed(1)}%</span>
+        <div class="stats-overview">
+          ${[
+            [totalCards, "Total cards"],
+            [learnedCards, "Learned"],
+            [dueToday, "Due today"],
+            [`${streak}d`, "Streak"],
+          ].map(
+            ([value, label]) => html`<div class="stat-box">
+              <div class="stat-value">${value}</div>
+              <div class="stat-label">${label}</div>
+            </div>`
+          )}
         </div>
-      </div>
 
-      <div class="stats-section">
-        <h2>Card Maturity</h2>
-        <div class="maturity-bar-container">
-          ${learnedCards > 0 ? `
-          <div class="maturity-bar maturity-new" style="width: ${(newCards / totalCards * 100).toFixed(1)}%"></div>
-          <div class="maturity-bar maturity-young" style="width: ${(young / totalCards * 100).toFixed(1)}%"></div>
-          <div class="maturity-bar maturity-mature" style="width: ${(mature / totalCards * 100).toFixed(1)}%"></div>
-          ` : `<div class="maturity-bar maturity-new" style="width: 100%"></div>`}
+        <div class="stats-section">
+          <h2>Leeches</h2>
+          ${renderLeeches(leeches, onEdit)}
         </div>
-        <div class="maturity-legend">
-          <span class="legend-item"><span class="legend-dot maturity-new-dot"></span> New (${newCards})</span>
-          <span class="legend-item"><span class="legend-dot maturity-young-dot"></span> Young (${young})</span>
-          <span class="legend-item"><span class="legend-dot maturity-mature-dot"></span> Mature (${mature})</span>
-        </div>
-      </div>
 
-      <div class="stats-section">
-        <h2>Review Heatmap</h2>
-        <div class="heatmap-container">
-          <div class="heatmap-grid" id="heatmap"></div>
-          <div class="heatmap-legend">
-            <span>Less</span>
-            <span class="heatmap-cell heat-0"></span>
-            <span class="heatmap-cell heat-1"></span>
-            <span class="heatmap-cell heat-2"></span>
-            <span class="heatmap-cell heat-3"></span>
-            <span class="heatmap-cell heat-4"></span>
-            <span>More</span>
+        <div class="stats-section">
+          <h2>Estimated Retention</h2>
+          <div class="retention-bar-container">
+            <div
+              class="retention-bar"
+              style="width: ${(avgRetention * 100).toFixed(0)}%"
+            ></div>
+            <span class="retention-label"
+              >${`${(avgRetention * 100).toFixed(1)}%`}</span
+            >
           </div>
         </div>
-      </div>
 
-      <div class="stats-section">
-        <h2>Grades (Last 30 Days)</h2>
-        ${gradeCounts.total > 0 ? `
-        <div class="grade-bars">
-          <div class="grade-row">
-            <span class="grade-label">Forgot</span>
-            <div class="grade-bar-track"><div class="grade-bar grade-forgot" style="width: ${(gradeCounts.forgot / gradeCounts.total * 100).toFixed(1)}%"></div></div>
-            <span class="grade-count">${gradeCounts.forgot}</span>
+        <div class="stats-section">
+          <h2>Card Maturity</h2>
+          <div class="maturity-bar-container">
+            ${learnedCards > 0
+              ? html`
+                  <div
+                    class="maturity-bar maturity-new"
+                    style="width: ${pct(newCards, totalCards)}"
+                  ></div>
+                  <div
+                    class="maturity-bar maturity-young"
+                    style="width: ${pct(young, totalCards)}"
+                  ></div>
+                  <div
+                    class="maturity-bar maturity-mature"
+                    style="width: ${pct(mature, totalCards)}"
+                  ></div>
+                `
+              : html`<div
+                  class="maturity-bar maturity-new"
+                  style="width: 100%"
+                ></div>`}
           </div>
-          <div class="grade-row">
-            <span class="grade-label">Hard</span>
-            <div class="grade-bar-track"><div class="grade-bar grade-hard" style="width: ${(gradeCounts.hard / gradeCounts.total * 100).toFixed(1)}%"></div></div>
-            <span class="grade-count">${gradeCounts.hard}</span>
-          </div>
-          <div class="grade-row">
-            <span class="grade-label">Good</span>
-            <div class="grade-bar-track"><div class="grade-bar grade-good" style="width: ${(gradeCounts.good / gradeCounts.total * 100).toFixed(1)}%"></div></div>
-            <span class="grade-count">${gradeCounts.good}</span>
-          </div>
-          <div class="grade-row">
-            <span class="grade-label">Easy</span>
-            <div class="grade-bar-track"><div class="grade-bar grade-easy" style="width: ${(gradeCounts.easy / gradeCounts.total * 100).toFixed(1)}%"></div></div>
-            <span class="grade-count">${gradeCounts.easy}</span>
+          <div class="maturity-legend">
+            ${[
+              ["new", "New", newCards],
+              ["young", "Young", young],
+              ["mature", "Mature", mature],
+            ].map(
+              ([kind, label, count]) => html`<span class="legend-item"
+                ><span class="legend-dot maturity-${kind}-dot"></span>
+                ${`${label} (${count})`}</span
+              >`
+            )}
           </div>
         </div>
-        ` : `<div class="stats-empty">No reviews in the last 30 days.</div>`}
-      </div>
 
-      <div class="stats-section">
-        <h2>Upcoming Reviews</h2>
-        <div class="forecast-chart" id="forecast"></div>
-      </div>
-    </div>
-  `;
+        <div class="stats-section">
+          <h2>Review Heatmap</h2>
+          <div class="heatmap-container">
+            <div class="heatmap-grid" id="heatmap">
+              ${weeks.map(
+                (week) => html`<div class="heatmap-col">
+                  ${week.map((day) => heatmapCell(day))}
+                </div>`
+              )}
+            </div>
+            <div class="heatmap-legend">
+              <span>Less</span>
+              ${[0, 1, 2, 3, 4].map(
+                (level) => html`<span class="heatmap-cell heat-${level}"></span>`
+              )}
+              <span>More</span>
+            </div>
+          </div>
+        </div>
 
-  // Render heatmap with DOM (too many cells for template string)
-  const heatmapEl = container.querySelector("#heatmap")!;
-  for (const week of weeks) {
-    const col = document.createElement("div");
-    col.className = "heatmap-col";
-    for (const day of week) {
-      const cell = document.createElement("div");
-      cell.className = "heatmap-cell";
-      const count = reviewsByDay.get(day) || 0;
-      // Intensity is a class rather than an inline colour so the palette can
-      // follow the theme.
-      if (day < startDate || day > today) {
-        cell.classList.add("heat-empty");
-      } else if (count === 0) {
-        cell.classList.add("heat-0");
-      } else {
-        const intensity = count / maxReviews;
-        const level =
-          intensity < 0.25 ? 1 : intensity < 0.5 ? 2 : intensity < 0.75 ? 3 : 4;
-        cell.classList.add(`heat-${level}`);
-      }
-      cell.title = `${day}: ${count} review${count === 1 ? "" : "s"}`;
-      col.appendChild(cell);
-    }
-    heatmapEl.appendChild(col);
+        <div class="stats-section">
+          <h2>Grades (Last 30 Days)</h2>
+          ${gradeCounts.total > 0
+            ? html`<div class="grade-bars">
+                ${(
+                  [
+                    ["Forgot", "forgot", gradeCounts.forgot],
+                    ["Hard", "hard", gradeCounts.hard],
+                    ["Good", "good", gradeCounts.good],
+                    ["Easy", "easy", gradeCounts.easy],
+                  ] as const
+                ).map(
+                  ([label, kind, count]) => html`<div class="grade-row">
+                    <span class="grade-label">${label}</span>
+                    <div class="grade-bar-track">
+                      <div
+                        class="grade-bar grade-${kind}"
+                        style="width: ${pct(count, gradeCounts.total)}"
+                      ></div>
+                    </div>
+                    <span class="grade-count">${count}</span>
+                  </div>`
+                )}
+              </div>`
+            : html`<div class="stats-empty">
+                No reviews in the last 30 days.
+              </div>`}
+        </div>
+
+        <div class="stats-section">
+          <h2>Upcoming Reviews</h2>
+          <div class="forecast-chart" id="forecast">
+            ${forecast.map(
+              ({ date, count }) => html`<div class="forecast-bar-wrapper">
+                <div class="forecast-bar-value">${count || ""}</div>
+                <div
+                  class="forecast-bar"
+                  style="height: ${(count / maxForecast) * 100}%"
+                ></div>
+                <div class="forecast-bar-label">
+                  ${date === today ? "Today" : date.slice(5)}
+                </div>
+              </div>`
+            )}
+          </div>
+        </div>
+      </div>`,
+      container
+    );
   }
 
-  // Render forecast chart
-  const forecastEl = container.querySelector("#forecast")!;
-  for (const { date, count } of forecast) {
-    const bar = document.createElement("div");
-    bar.className = "forecast-bar-wrapper";
-    const height = maxForecast > 0 ? (count / maxForecast * 100) : 0;
-    bar.innerHTML = `
-      <div class="forecast-bar-value">${count || ""}</div>
-      <div class="forecast-bar" style="height: ${height}%"></div>
-      <div class="forecast-bar-label">${date === today ? "Today" : date.slice(5)}</div>
-    `;
-    forecastEl.appendChild(bar);
+  /**
+   * Intensity is a class rather than an inline colour, so the palette can
+   * follow the theme.
+   */
+  function heatmapCell(day: string): TemplateResult {
+    const count = reviewsByDay.get(day) || 0;
+    const level =
+      day < startDate || day > today
+        ? "empty"
+        : count === 0
+        ? 0
+        : count / maxReviews < 0.25
+        ? 1
+        : count / maxReviews < 0.5
+        ? 2
+        : count / maxReviews < 0.75
+        ? 3
+        : 4;
+    return html`<div
+      class="heatmap-cell heat-${level}"
+      title=${`${day}: ${count} review${count === 1 ? "" : "s"}`}
+    ></div>`;
   }
-
-  container.querySelector("#back-btn")!.addEventListener("click", onBack);
 
   // Rewriting the card is the only thing this list is for, so the row opens an
   // editor rather than handing the reader off to GitHub with the whole file.
-  const config = getConfig();
-  const rows = leeches.filter((l) => !isRecovering(l)).slice(0, MAX_LEECH_ROWS);
-  for (const button of container.querySelectorAll<HTMLButtonElement>(".leech-edit")) {
-    const leech = rows[Number(button.dataset.leech)];
-    if (!config || !leech) continue;
-    button.addEventListener("click", async () => {
-      const result = await openCardEditor(leech.card, config);
-      // Repaint on a committed edit only: the counts, the list, and often
-      // whether this card is on it at all have just changed.
-      if (result) await renderStats(container, onBack);
-    });
+  async function onEdit(leech: Leech): Promise<void> {
+    const config = getConfig();
+    if (!config) return;
+    const result = await openCardEditor(leech.card, config);
+    // Repaint on a committed edit only: the counts, the list, and often whether
+    // this card is on it at all have just changed.
+    if (result) await renderStats(container, onBack);
   }
+
+  paint();
 }
 
 // Local helpers
@@ -314,14 +340,17 @@ function addDays(dateStr: string, days: number): string {
  * The cards worth rewriting, and a way to rewrite them.
  *
  * A list of failing cards with nothing to do about it is a list of things to
- * feel bad about, so every row is a link to the lines it came from — the deep
- * link from 4.2 is what makes this feature worth having.
+ * feel bad about, so every row opens the editor on the lines it came from.
  */
-function renderLeeches(leeches: Leech[]): string {
+function renderLeeches(
+  leeches: Leech[],
+  onEdit: (leech: Leech) => void
+): TemplateResult {
   if (leeches.length === 0) {
-    return `<p class="leech-empty">Nothing has failed ${LEECH_THRESHOLD} or more times. ${caveat()}</p>`;
+    return html`<p class="leech-empty">
+      ${`Nothing has failed ${LEECH_THRESHOLD} or more times. ${caveat()}`}
+    </p>`;
   }
-
 
   const struggling = leeches.filter((l) => !isRecovering(l));
   const recovered = leeches.length - struggling.length;
@@ -335,19 +364,24 @@ function renderLeeches(leeches: Leech[]): string {
       ? `${struggling.length - shown.length} more not shown.`
       : "",
     recovered > 0
-      ? `${recovered} other${recovered === 1 ? " has" : "s have"} been answered correctly ${RECOVERED_RUN} times running since.`
+      ? `${recovered} other${
+          recovered === 1 ? " has" : "s have"
+        } been answered correctly ${RECOVERED_RUN} times running since.`
       : "",
     caveat(),
   ].filter(Boolean);
 
-  return `
-    <p class="leech-intro">${
-      struggling.length === 1
-        ? "One card keeps failing."
-        : `These ${struggling.length} cards keep failing.`
-    } A card that fails repeatedly is usually a badly written card rather than a hard fact — two questions in one, an ambiguous answer, nothing around a cloze to cue it.</p>
+  const lead =
+    struggling.length === 1
+      ? "One card keeps failing."
+      : `These ${struggling.length} cards keep failing.`;
+
+  return html`
+    <p class="leech-intro">
+      ${`${lead} A card that fails repeatedly is usually a badly written card rather than a hard fact — two questions in one, an ambiguous answer, nothing around a cloze to cue it.`}
+    </p>
     <div class="leech-list">
-      ${shown.map((leech, i) => leechRow(leech, i, config)).join("")}
+      ${shown.map((leech) => leechRow(leech, config !== null, onEdit))}
     </div>
     <p class="leech-note">${notes.join(" ")}</p>
   `;
@@ -364,23 +398,27 @@ function caveat(): string {
 
 function leechRow(
   leech: Leech,
-  index: number,
-  config: ReturnType<typeof getConfig>
-): string {
+  editable: boolean,
+  onEdit: (leech: Leech) => void
+): TemplateResult {
   const rate = Math.round((leech.lapses / leech.reviews) * 100);
-  return `
-    <div class="leech-card">
-      <div class="leech-info">
-        <span class="leech-text">${escapeHtml(cardSummary(leech.card))}</span>
-        <span class="leech-meta">${leech.lapses} of ${leech.reviews} reviews failed (${rate}%) · last ${formatSyncAge(
-          leech.lastLapseAt
-        )}${leech.streak > 0 ? ` · ${leech.streak} right since` : ""}</span>
-      </div>
-      ${
-        config
-          ? `<button class="btn leech-edit" type="button" data-leech="${index}">Edit</button>`
-          : ""
-      }
+  const meta =
+    `${leech.lapses} of ${leech.reviews} reviews failed (${rate}%)` +
+    ` · last ${formatSyncAge(leech.lastLapseAt)}` +
+    (leech.streak > 0 ? ` · ${leech.streak} right since` : "");
+  return html`<div class="leech-card">
+    <div class="leech-info">
+      <span class="leech-text">${cardSummary(leech.card)}</span>
+      <span class="leech-meta">${meta}</span>
     </div>
-  `;
+    ${editable
+      ? html`<button
+          class="btn leech-edit"
+          type="button"
+          @click=${() => void onEdit(leech)}
+        >
+          Edit
+        </button>`
+      : nothing}
+  </div>`;
 }

@@ -753,13 +753,26 @@ The two biggest string blobs are the two with no safety net, so they are not the
 place to learn the pattern — they are the place to write a render smoke test
 first, which is worth having regardless and is a down payment on 3.5.
 
-**The discipline that makes it safe:** a migration commit changes how the DOM is
-built and nothing else. Same elements, same classes, same text, same tests
-passing untouched. If a view also wants a fix, that is a separate commit before
-or after — never inside the conversion, where a green suite would stop meaning
-anything. And no `View` interface, lifecycle base class, or component
-abstraction up front: convert two views, see what actually repeats, extract that
-and nothing more.
+**The discipline that makes it safe** — and the discipline that turned out to be
+too tight. The first rule was that a conversion changes how the DOM is built and
+nothing else: same elements, same text, same tests passing untouched. That is
+the right instinct and the wrong rule. Converting `card-editor.ts` produced a
+599-pixel difference in a 4.3-megapixel screenshot, from `${a} review${b}`
+becoming two text nodes where there had been one, and chasing it back to zero
+bought nothing.
+
+What is worth keeping from it: a conversion commit stays *about* the conversion,
+tests either keep passing or are changed deliberately and for a stated reason,
+and a test that is pinning down how a view is built rather than what it does is
+a test to fix — the checkbox one asserted on `.checked` without a `change`
+event, which is a fact about the old implementation and nothing else.
+
+What is not worth keeping: pixel equivalence as a gate. Improve a view while
+converting it, if the improvement is in front of you.
+
+And no `View` interface, lifecycle base class, or component abstraction up
+front: convert two views, see what actually repeats, extract that and nothing
+more.
 
 **The honest cost.** This buys the user nothing on the day it ships. It competes
 for the same evenings as 1.4 and 1.6, which fix things that are actually wrong.

@@ -1,3 +1,4 @@
+import { html, nothing, render } from "lit-html";
 import { Card } from "../types";
 import { ConflictError, GitHubConfig, cardSourceUrl } from "../github";
 import {
@@ -8,7 +9,6 @@ import {
 } from "../card-edit";
 import { getAllPerformances } from "../db";
 import { syncStateOnly } from "../sync";
-import { escapeHtml } from "../escape";
 
 /**
  * Rewrite a card without leaving the app.
@@ -21,102 +21,83 @@ import { escapeHtml } from "../escape";
  *
  * Resolves with what the edit produced, or `null` if nothing was committed.
  */
+
+/**
+ * What the sheet is doing, which is the only thing the template reads.
+ *
+ * Written as a state and a template of it rather than as a built DOM and a set
+ * of functions that reach back into it. The previous version had six of those
+ * — `refreshSave` alone set a label, two classes, a disabled flag and the
+ * visibility of a checkbox — and every one of them had to be remembered at
+ * every transition. Here a transition assigns to `phase` and paints.
+ */
+type Phase =
+  | { kind: "loading" }
+  | { kind: "failed"; message: string }
+  | {
+      kind: "editing";
+      source: CardSource;
+      /** What is in the box, which is not what was fetched once typing starts. */
+      text: string;
+      /** Reviews this card has, or `null` if it has no history to keep. */
+      reviews: number | null;
+      keep: boolean;
+      saving: boolean;
+      error: string | null;
+    };
+
 export function openCardEditor(
   card: Card,
   config: GitHubConfig
 ): Promise<EditResult | null> {
   return new Promise((resolve) => {
-    const backdrop = document.createElement("div");
-    backdrop.className = "editor-backdrop";
-    backdrop.innerHTML = `
-      <div class="editor-sheet" role="dialog" aria-modal="true" aria-label="Edit card">
-        <header class="editor-head">
-          <div class="editor-title">
-            <h3>Edit card</h3>
-            <p class="editor-path">${escapeHtml(card.filePath)} · ${lineLabel(
-              card
-            )}</p>
-          </div>
-          <button class="editor-close" type="button" aria-label="Close">✕</button>
-        </header>
-        <div class="editor-body">
-          <p class="editor-status">Fetching the file…</p>
-        </div>
-        <p class="editor-error" hidden></p>
-        <div class="editor-actions">
-          <button class="btn editor-cancel" type="button">Cancel</button>
-          <button class="btn btn-primary editor-save" type="button" disabled>Save</button>
-        </div>
-      </div>
-    `;
+    const host = document.createElement("div");
+    let phase: Phase = { kind: "loading" };
 
-    const $ = <T extends Element>(sel: string) => backdrop.querySelector(sel) as T;
-    const body = $<HTMLDivElement>(".editor-body");
-    const errorLine = $<HTMLParagraphElement>(".editor-error");
-    const save = $<HTMLButtonElement>(".editor-save");
-    const cancel = $<HTMLButtonElement>(".editor-cancel");
-    const close = $<HTMLButtonElement>(".editor-close");
+    const editing = () => (phase.kind === "editing" ? phase : null);
+    const dirty = () => {
+      const state = editing();
+      return state !== null && state.text !== state.source.text;
+    };
+    const removing = () => editing()?.text.trim() === "";
+    const saving = () => editing()?.saving === true;
 
-    let source: CardSource | null = null;
-    let textarea: HTMLTextAreaElement | null = null;
-    let keep: HTMLInputElement | null = null;
-    let saving = false;
-
-    const dirty = () =>
-      source !== null && textarea !== null && textarea.value !== source.text;
+    function paint(): void {
+      render(view(), host);
+    }
 
     function finish(result: EditResult | null): void {
       document.removeEventListener("keydown", onKey, true);
-      backdrop.remove();
+      host.remove();
       resolve(result);
     }
 
     function onKey(e: KeyboardEvent): void {
-      if (saving) return;
+      if (saving()) return;
       // Escape gives up the sheet, but not typing that is not saved anywhere
       // else — Cancel is one tap away and says what it does.
       if (e.key === "Escape" && !dirty()) {
         e.preventDefault();
         finish(null);
       }
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !save.disabled) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && dirty()) {
         e.preventDefault();
         void commit();
       }
     }
 
-    function showError(message: string): void {
-      errorLine.textContent = message;
-      errorLine.hidden = false;
-    }
-
-    function refreshSave(): void {
-      if (!textarea) return;
-      const removing = textarea.value.trim() === "";
-      save.textContent = removing ? "Delete card" : "Save to GitHub";
-      save.classList.toggle("btn-danger", removing);
-      save.classList.toggle("btn-primary", !removing);
-      save.disabled = !dirty();
-      // An emptied box is a deletion, and there is no card left for the
-      // scheduling to be kept on.
-      const choice = backdrop.querySelector<HTMLElement>(".editor-keep");
-      if (choice) choice.hidden = removing;
-    }
-
     async function commit(): Promise<void> {
-      if (!source || !textarea || saving) return;
-      saving = true;
-      save.disabled = true;
-      cancel.disabled = true;
-      save.textContent = "Saving…";
-      errorLine.hidden = true;
+      const state = editing();
+      if (!state || state.saving) return;
+      phase = { ...state, saving: true, error: null };
+      paint();
       try {
         const result = await commitCardEdit(
           config,
           card,
-          source,
-          textarea.value,
-          { keepScheduling: keep?.checked ?? false }
+          state.source,
+          state.text,
+          { keepScheduling: state.keep }
         );
         // Scheduling that moved to a new hash only exists on this device until
         // it is pushed. Not waited on: the deck list reports sync, and this
@@ -124,64 +105,152 @@ export function openCardEditor(
         void syncStateOnly(config);
         finish(result);
       } catch (e) {
-        saving = false;
-        cancel.disabled = false;
-        showError(
-          e instanceof ConflictError
-            ? "The file changed on GitHub while this was open. Close and reopen the card to edit the current version."
-            : (e as Error).message
-        );
-        refreshSave();
+        phase = {
+          ...state,
+          saving: false,
+          error:
+            e instanceof ConflictError
+              ? "The file changed on GitHub while this was open. Close and reopen the card to edit the current version."
+              : (e as Error).message,
+        };
+        paint();
       }
     }
 
-    cancel.addEventListener("click", () => finish(null));
-    close.addEventListener("click", () => finish(null));
-    backdrop.addEventListener("click", (e) => {
-      if (e.target === backdrop && !dirty() && !saving) finish(null);
-    });
-    save.addEventListener("click", () => void commit());
+    function saveLabel(): string {
+      if (saving()) return "Saving…";
+      if (!editing()) return "Save";
+      return removing() ? "Delete card" : "Save to GitHub";
+    }
+
+    function body() {
+      if (phase.kind === "loading") {
+        return html`<p class="editor-status">Fetching the file…</p>`;
+      }
+      if (phase.kind === "failed") {
+        // prettier-ignore
+        return html`<p class="editor-status">Could not open this card. <a href=${cardSourceUrl(config, card)} target="_blank" rel="noopener">Edit it on GitHub</a> instead.</p>`;
+      }
+      const state = phase;
+      return html`
+        <textarea
+          class="editor-text"
+          spellcheck="false"
+          rows=${rowsFor(state.source.text)}
+          .value=${state.text}
+          @input=${(e: Event) => {
+            phase = { ...state, text: (e.target as HTMLTextAreaElement).value };
+            paint();
+          }}
+        ></textarea>
+        ${state.reviews === null
+          ? nothing
+          : html`<label class="editor-keep" ?hidden=${removing()}>
+              <input
+                type="checkbox"
+                .checked=${state.keep}
+                @change=${(e: Event) => {
+                  phase = {
+                    ...state,
+                    keep: (e.target as HTMLInputElement).checked,
+                  };
+                  paint();
+                }}
+              />
+              <span>${keepLabel(state.reviews)}</span>
+            </label>`}
+      `;
+    }
+
+    function view() {
+      const error =
+        phase.kind === "failed"
+          ? phase.message
+          : phase.kind === "editing"
+          ? phase.error
+          : null;
+      return html`<div
+        class="editor-backdrop"
+        @click=${(e: Event) => {
+          if (e.target === e.currentTarget && !dirty() && !saving()) {
+            finish(null);
+          }
+        }}
+      >
+        <div
+          class="editor-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Edit card"
+        >
+          <header class="editor-head">
+            <div class="editor-title">
+              <h3>Edit card</h3>
+              <p class="editor-path">${card.filePath} · ${lineLabel(card)}</p>
+
+            </div>
+            <button
+              class="editor-close"
+              type="button"
+              aria-label="Close"
+              @click=${() => finish(null)}
+            >✕</button>
+          </header>
+          <div class="editor-body">${body()}</div>
+          <p class="editor-error" ?hidden=${error === null}>${error ?? ""}</p>
+          <div class="editor-actions">
+            <button
+              class="btn editor-cancel"
+              type="button"
+              ?disabled=${saving()}
+              @click=${() => finish(null)}
+            >Cancel</button>
+            <button
+              class="btn ${removing() && !saving()
+                ? "btn-danger"
+                : "btn-primary"} editor-save"
+              type="button"
+              ?disabled=${!dirty() || saving()}
+              @click=${() => void commit()}
+            >${saveLabel()}</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
     document.addEventListener("keydown", onKey, true);
-    document.body.appendChild(backdrop);
+    document.body.appendChild(host);
+    paint();
 
     void (async () => {
       try {
-        const [fetched, performances] = await Promise.all([
+        const [source, performances] = await Promise.all([
           readCardSource(config, card),
           getAllPerformances(),
         ]);
-        source = fetched;
         const perf = performances.get(card.hash);
-        body.innerHTML = `
-          <textarea class="editor-text" spellcheck="false" rows="${rowsFor(
-            fetched.text
-          )}"></textarea>
-          ${
-            perf
-              ? `<label class="editor-keep">
-                   <input type="checkbox" checked>
-                   <span>Keep its scheduling — ${perf.reviewCount} review${
-                  perf.reviewCount === 1 ? "" : "s"
-                } of history, and its place in the queue</span>
-                 </label>`
-              : ""
-          }
-        `;
-        textarea = $<HTMLTextAreaElement>(".editor-text");
-        keep = backdrop.querySelector(".editor-keep input");
-        textarea.value = fetched.text;
-        textarea.addEventListener("input", refreshSave);
-        refreshSave();
-        textarea.focus();
+        phase = {
+          kind: "editing",
+          source,
+          text: source.text,
+          reviews: perf?.reviewCount ?? null,
+          keep: perf !== undefined,
+          saving: false,
+          error: null,
+        };
+        paint();
+        host.querySelector<HTMLTextAreaElement>(".editor-text")?.focus();
       } catch (e) {
-        body.innerHTML = `<p class="editor-status">Could not open this card. <a href="${cardSourceUrl(
-          config,
-          card
-        )}" target="_blank" rel="noopener">Edit it on GitHub</a> instead.</p>`;
-        showError((e as Error).message);
+        phase = { kind: "failed", message: (e as Error).message };
+        paint();
       }
     })();
   });
+}
+
+function keepLabel(reviews: number): string {
+  const plural = reviews === 1 ? "review" : "reviews";
+  return `Keep its scheduling — ${reviews} ${plural} of history, and its place in the queue`;
 }
 
 function lineLabel(card: Card): string {

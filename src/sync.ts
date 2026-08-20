@@ -2,6 +2,7 @@ import { Card, ReviewedPerformance } from "./types";
 import {
   GitHubConfig,
   SyncProgress,
+  repoKey,
   listMdFiles,
   getFilesContent,
   readStateFile,
@@ -13,8 +14,10 @@ import {
   DeckFile,
   exportState,
   getAllDeckFiles,
+  getAllOrigins,
   getMeta,
   importState,
+  recordOrigins,
   setMeta,
   updateDeckFiles,
 } from "./db";
@@ -138,7 +141,13 @@ async function runSync(
   }
 }
 
-const TREE_ETAG_KEY = "tree_etag";
+/**
+ * Keyed by repository, not global. The conditional tree request asks "has this
+ * changed since the version I have", and the answer is only meaningful about
+ * the repo the tag came from — one collection's tag has nothing to say about
+ * another's tree.
+ */
+const treeEtagKey = (config: GitHubConfig) => `tree_etag:${repoKey(config)}`;
 
 /** Display name for a file, before any frontmatter `name` overrides it. */
 export function deckNameFor(path: string): string {
@@ -163,7 +172,7 @@ export async function syncCards(
   onProgress?: (progress: SyncProgress) => void
 ): Promise<Card[]> {
   onProgress?.({ phase: "Checking for changes" });
-  const etag = await getMeta<string>(TREE_ETAG_KEY);
+  const etag = await getMeta<string>(treeEtagKey(config));
   const listing = await listMdFiles(config, etag);
 
   if (!listing.changed) return loadCards();
@@ -207,9 +216,14 @@ export async function syncCards(
   // here, so the tag is never recorded for a state we did not reach. Recording
   // it early would make the next sync report "nothing changed" over files we
   // never actually got.
-  await setMeta(TREE_ETAG_KEY, listing.etag);
+  await setMeta(treeEtagKey(config), listing.etag);
 
-  return loadCards();
+  const cards = await loadCards();
+  await recordOrigins(
+    cards.map((c) => c.hash),
+    repoKey(config)
+  );
+  return cards;
 }
 
 /**
@@ -269,6 +283,38 @@ function mergeState(
   return merged;
 }
 
+/**
+ * The part of the merged scheduling that belongs in this repository's file.
+ *
+ * `exportState` returns every performance the device holds, and writing all of
+ * them into whichever repo happens to be configured is how two collections end
+ * up each carrying the other's cards — not data loss, since hashes are
+ * content-derived and last-write-wins stays correct per card, but each file
+ * accumulates scheduling for cards it does not have and leaks that those cards
+ * exist somewhere else.
+ *
+ * The rule is the cards this repo holds **plus** the orphans last seen in it.
+ * The second half is not optional: a card temporarily out of the repo — a file
+ * being reorganised, a branch mid-rename, a card edited on another device and
+ * not yet pulled here — would otherwise drop out of the file and come back with
+ * its history gone. Anki keeps orphaned state for the same reason.
+ */
+async function scopeToRepo(
+  merged: Record<string, ReviewedPerformance>,
+  key: string
+): Promise<Record<string, ReviewedPerformance>> {
+  const origins = await getAllOrigins();
+  // Held now, which covers a card written on this device a moment ago and not
+  // yet carried into `origins` by a sync.
+  const here = new Set((await loadCachedCards()).map((c) => c.hash));
+
+  const mine: Record<string, ReviewedPerformance> = {};
+  for (const [hash, perf] of Object.entries(merged)) {
+    if (here.has(hash) || origins.get(hash) === key) mine[hash] = perf;
+  }
+  return mine;
+}
+
 /** The merged set as the repo stores it — scheduling only, no local bookkeeping. */
 function toStateFile(merged: Record<string, ReviewedPerformance>): StateFile {
   const stateFile: StateFile = { version: 1, cards: {} };
@@ -315,6 +361,8 @@ export async function fullSync(
   push: boolean = true,
   onProgress?: (progress: SyncProgress) => void
 ): Promise<boolean> {
+  const key = repoKey(config);
+
   for (let attempt = 0; ; attempt++) {
     onProgress?.({
       phase: attempt === 0 ? "Fetching review state" : "Merging a newer change",
@@ -324,10 +372,15 @@ export async function fullSync(
     // Local is re-read on every attempt, not just the first: a merge writes
     // back into IndexedDB, and a retry has to build on that rather than on the
     // state this sync started with.
-    const merged = mergeState(await exportState(), remote?.data?.cards || {});
+    const local = await exportState();
+    const merged = mergeState(local, remote?.data?.cards || {});
     await importState(merged);
 
-    const stateFile = toStateFile(merged);
+    // Everything this file already knew about belongs to this collection,
+    // including cards no device holds any more — that is what the file *is*.
+    await recordOrigins(Object.keys(remote?.data?.cards ?? {}), key);
+
+    const stateFile = toStateFile(await scopeToRepo(merged, key));
 
     // A repo we hold no cards for is not a repo whose scheduling we own, so
     // writing a state file into it says something untrue about it. This is the

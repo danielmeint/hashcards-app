@@ -1,5 +1,5 @@
 import { openDB, IDBPDatabase } from "idb";
-import { legacy } from "./settings";
+import { legacy, settings } from "./settings";
 import {
   Card,
   DrillSession,
@@ -9,7 +9,7 @@ import {
 } from "./types";
 
 const DB_NAME = "hashcards";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
@@ -38,6 +38,9 @@ function getDb(): Promise<IDBPDatabase> {
         if (!db.objectStoreNames.contains("credentials")) {
           db.createObjectStore("credentials");
         }
+        if (!db.objectStoreNames.contains("origins")) {
+          db.createObjectStore("origins");
+        }
       },
     }).then(async (db) => {
       // Only once the cards are provably here, so a failed migration cannot
@@ -48,10 +51,38 @@ function getDb(): Promise<IDBPDatabase> {
       ) {
         legacy.cards.remove();
       }
+      await seedOrigins(db);
       return db;
     });
   }
   return dbPromise;
+}
+
+/**
+ * Which collection each card was last seen in, so a repository's state file can
+ * hold its own cards and nobody else's.
+ *
+ * Existing scheduling predates the question, so there is no honest answer for
+ * it in the data — but there is one outside it: everything already here was
+ * synced from the repository currently configured, because until now the app
+ * could only hold one at a time. Seeding from that keeps orphans attached to
+ * the repo they came from. Without it, the first sync after this upgrade would
+ * write a state file with every temporarily-absent card missing from it, and
+ * every one of them would come back new.
+ */
+async function seedOrigins(db: IDBPDatabase): Promise<void> {
+  const owner = settings.owner.get();
+  const repo = settings.repo.get();
+  if (!owner || !repo) return;
+  // Only for a database that predates the question. Once anything is in here,
+  // the answers are real ones and must not be overwritten with a guess.
+  if ((await db.count("origins")) > 0) return;
+
+  const hashes = await db.getAllKeys("performances");
+  if (hashes.length === 0) return;
+  const tx = db.transaction("origins", "readwrite");
+  for (const hash of hashes) tx.store.put(`${owner}/${repo}`, String(hash));
+  await tx.done;
 }
 
 /**
@@ -304,6 +335,39 @@ export async function migrateCardHistory(
     if (review.cardHash === from) cursor.update({ ...review, cardHash: to });
     cursor = await cursor.continue();
   }
+  await tx.done;
+}
+
+/** Every card the app has an origin for, as hash → `owner/repo`. */
+export async function getAllOrigins(): Promise<Map<string, string>> {
+  const db = await getDb();
+  const tx = db.transaction("origins");
+  const [keys, values] = await Promise.all([
+    tx.store.getAllKeys(),
+    tx.store.getAll(),
+  ]);
+  const origins = new Map<string, string>();
+  keys.forEach((key, i) => origins.set(String(key), values[i] as string));
+  return origins;
+}
+
+/**
+ * Note that these cards were seen in this collection.
+ *
+ * Last-seen rather than first-seen: a card that moves from one repository to
+ * another belongs to the one holding it now, and its scheduling should follow
+ * it rather than stay behind in a file that no longer has the card.
+ */
+export async function recordOrigins(
+  hashes: Iterable<string>,
+  repoKey: string
+): Promise<void> {
+  const existing = await getAllOrigins();
+  const moved = [...hashes].filter((hash) => existing.get(hash) !== repoKey);
+  if (moved.length === 0) return;
+  const db = await getDb();
+  const tx = db.transaction("origins", "readwrite");
+  for (const hash of moved) tx.store.put(repoKey, hash);
   await tx.done;
 }
 

@@ -127,6 +127,17 @@ async function freshSync() {
   return import("./sync");
 }
 
+/** Two collections behind one `fetch`, routed by the owner/repo in the URL. */
+function installMany(repos: Record<string, FakeRepo>): void {
+  globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const named = url.match(/\/repos\/([^/]+\/[^/]+)\//);
+    const repo = named && repos[named[1]];
+    if (!repo) throw new Error(`No fake repo for ${url}`);
+    return repo.handler(url, init);
+  }) as unknown as typeof fetch;
+}
+
 function install(repo: FakeRepo): void {
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
     repo.handler(String(input), init)
@@ -134,6 +145,18 @@ function install(repo: FakeRepo): void {
 }
 
 const card = (q: string) => `Q: ${q}\nA: because\n`;
+
+/**
+ * The hash the parser will give a card, so a test can seed scheduling for a
+ * card the repo genuinely holds. A made-up hash is no longer interchangeable:
+ * a repo's state file carries its own cards, and an invented one belongs to
+ * nothing.
+ */
+async function hashOf(text: string): Promise<string> {
+  const { parseFile } = await import("./parser");
+  const [parsed] = await parseFile(text, "a.md", "a");
+  return parsed.hash;
+}
 
 describe("card sync", () => {
   let repo: FakeRepo;
@@ -307,13 +330,14 @@ describe("state sync", () => {
     repo.set("a.md", card("one"), "sha-a");
     const { syncAll } = await freshSync();
     const { importState } = await import("./db");
-    await importState({ "hash-1": performance("2026-02-01") });
+    const mine = await hashOf(card("one"));
+    await importState({ [mine]: performance("2026-02-01") });
 
     expect(await syncAll(CONFIG)).toBe(true);
 
     expect(repo.stateWrites).toHaveLength(1);
     expect(repo.stateWrites[0]).toMatchObject({
-      cards: { "hash-1": { dueDate: "2026-02-01" } },
+      cards: { [mine]: { dueDate: "2026-02-01" } },
     });
   });
 
@@ -364,7 +388,8 @@ describe("state sync", () => {
     repo.setState({ version: 1, cards: { shared: performance("2026-02-01") } });
     const { syncAll } = await freshSync();
     const { importState, getAllPerformances } = await import("./db");
-    await importState({ "on-this-device": performance("2026-02-01") });
+    const mine = await hashOf(card("one"));
+    await importState({ [mine]: performance("2026-02-01") });
 
     // The phone commits in the window between our read and our write, which is
     // exactly what the SHA we are about to send is there to catch.
@@ -391,7 +416,7 @@ describe("state sync", () => {
     expect(repo.stateWrites).toHaveLength(1);
     expect(
       Object.keys((repo.stateWrites[0] as { cards: object }).cards).sort()
-    ).toEqual(["on-the-phone", "on-this-device", "shared"]);
+    ).toEqual([mine, "on-the-phone", "shared"].sort());
     // And the phone's card is scheduled here too, not merely preserved there.
     expect([...(await getAllPerformances()).keys()]).toContain("on-the-phone");
   });
@@ -403,7 +428,8 @@ describe("state sync", () => {
     repo.set("a.md", card("one"), "sha-a");
     const { syncAll } = await freshSync();
     const { importState } = await import("./db");
-    await importState({ "on-this-device": performance("2026-02-01") });
+    const mine = await hashOf(card("one"));
+    await importState({ [mine]: performance("2026-02-01") });
 
     repo.onStateRead = () => {
       repo.onStateRead = null;
@@ -423,7 +449,7 @@ describe("state sync", () => {
     expect(repo.stateWrites).toHaveLength(1);
     expect(
       Object.keys((repo.stateWrites[0] as { cards: object }).cards).sort()
-    ).toEqual(["on-the-phone", "on-this-device"]);
+    ).toEqual([mine, "on-the-phone"].sort());
   });
 
   it("does not retry a 422 that has nothing to do with a lost race", async () => {
@@ -461,7 +487,7 @@ describe("state sync", () => {
     const { syncAll } = await freshSync();
     const { importState } = await import("./db");
     const { getSyncStatus } = await import("./sync-state");
-    await importState({ "hash-1": performance("2026-02-01") });
+    await importState({ [await hashOf(card("one"))]: performance("2026-02-01") });
 
     // Something is moving the file every single time. Retrying is no longer
     // racing one other device, and it will still be true on the next attempt.
@@ -501,5 +527,258 @@ describe("state sync", () => {
     // ...but nothing is written back until the user has drilled cards that
     // came out of this repo.
     expect(repo.stateWrites).toEqual([]);
+  });
+});
+
+/**
+ * `exportState` returns every performance on the device, and `fullSync` used to
+ * write all of them into whichever repo was configured. Point the app at a
+ * second collection and both files end up holding every hash from both — not
+ * data loss, since hashes are content-derived and last-write-wins stays correct
+ * per card, but each file accumulates scheduling for cards it does not have and
+ * leaks that those cards exist somewhere else.
+ */
+describe("two collections", () => {
+  const performance = (dueDate: string) => ({
+    type: "reviewed" as const,
+    lastReviewedAt: "2026-01-01T00:00:00.000Z",
+    stability: 3,
+    difficulty: 5,
+    intervalRaw: 3,
+    intervalDays: 3,
+    dueDate,
+    reviewCount: 2,
+  });
+
+  const OTHER: GitHubConfig = { owner: "someone", repo: "other", branch: "main" };
+
+  let mine: FakeRepo;
+  let theirs: FakeRepo;
+
+  beforeEach(() => {
+    localStorage.clear();
+    mine = new FakeRepo();
+    theirs = new FakeRepo();
+    mine.set("a.md", card("one"), "sha-a");
+    theirs.set("b.md", card("two"), "sha-b");
+    installMany({ "someone/cards": mine, "someone/other": theirs });
+  });
+
+  const cardsIn = (writes: unknown[]) =>
+    Object.keys((writes[writes.length - 1] as { cards: object }).cards).sort();
+
+  it("keeps each repo's state file to its own cards", async () => {
+    const { syncAll } = await freshSync();
+    const { importState } = await import("./db");
+    const { parseFile } = await import("./parser");
+    const [one] = await parseFile(card("one"), "a.md", "a");
+    const [two] = await parseFile(card("two"), "b.md", "b");
+
+    await importState({ [one.hash]: performance("2026-02-01") });
+    await syncAll(CONFIG);
+
+    // Point the app at a second collection and review something in it.
+    await importState({ [two.hash]: performance("2026-03-01") });
+    await syncAll(OTHER);
+
+    expect(cardsIn(mine.stateWrites)).toEqual([one.hash]);
+    expect(cardsIn(theirs.stateWrites)).toEqual([two.hash]);
+  });
+
+  it("does not write the first repo's file again just because the second synced", async () => {
+    const { syncAll } = await freshSync();
+    const { importState } = await import("./db");
+    const { parseFile } = await import("./parser");
+    const [one] = await parseFile(card("one"), "a.md", "a");
+
+    await importState({ [one.hash]: performance("2026-02-01") });
+    await syncAll(CONFIG);
+    const before = mine.stateWrites.length;
+
+    await syncAll(OTHER);
+
+    expect(mine.stateWrites).toHaveLength(before);
+  });
+
+  /**
+   * The half that is not optional. A card temporarily out of the repo — a file
+   * being reorganised, a rename half-done, an edit made on another device and
+   * not yet pulled — must stay in the file. Drop it and its history is gone,
+   * and it comes back as a card nobody has ever seen.
+   */
+  it("keeps scheduling for a card that has left the repo for now", async () => {
+    const { syncAll } = await freshSync();
+    const { importState } = await import("./db");
+    const { parseFile } = await import("./parser");
+    const [one] = await parseFile(card("one"), "a.md", "a");
+
+    await importState({ [one.hash]: performance("2026-02-01") });
+    await syncAll(CONFIG);
+    expect(cardsIn(mine.stateWrites)).toEqual([one.hash]);
+
+    // The file goes away, and another takes its place — reviewed, so the next
+    // sync genuinely has something new to write and the assertion is about
+    // what it wrote rather than about it declining to write at all.
+    mine.files.delete("a.md");
+    mine.set("c.md", card("three"), "sha-c");
+    mine.retag('W/"tree-2"');
+    const [three] = await parseFile(card("three"), "c.md", "c");
+    await importState({ [three.hash]: performance("2026-04-01") });
+    await syncAll(CONFIG);
+
+    expect(mine.stateWrites).toHaveLength(2);
+    expect(cardsIn(mine.stateWrites)).toEqual([one.hash, three.hash].sort());
+  });
+
+  /**
+   * A card written here rather than fetched. Quick capture puts it straight in
+   * the deck store, and the push that follows a drill is `syncStateOnly` —
+   * which never lists the tree, so nothing has recorded where the card came
+   * from. Scoping on the recorded origin alone would drop its scheduling out of
+   * the file until some later full sync happened to run.
+   */
+  it("pushes scheduling for a card this device wrote, before any card sync", async () => {
+    const { syncAll, syncStateOnly } = await freshSync();
+    const { importState, updateDeckFiles } = await import("./db");
+    const { parseFile } = await import("./parser");
+    const [one] = await parseFile(card("one"), "a.md", "a");
+
+    await importState({ [one.hash]: performance("2026-02-01") });
+    await syncAll(CONFIG);
+
+    // Written locally and committed, exactly as `createCard` leaves things.
+    const [written] = await parseFile(card("written here"), "z.md", "z");
+    mine.set("z.md", card("written here"), "sha-z");
+    await updateDeckFiles([{ path: "z.md", sha: "sha-z", cards: [written] }], []);
+    const { loadCards } = await import("./sync");
+    await loadCards();
+    await importState({ [written.hash]: performance("2026-05-01") });
+
+    await syncStateOnly(CONFIG);
+
+    expect(cardsIn(mine.stateWrites)).toEqual([one.hash, written.hash].sort());
+  });
+
+  it("does not carry an orphan into a collection it was never in", async () => {
+    const { syncAll } = await freshSync();
+    const { importState } = await import("./db");
+    const { parseFile } = await import("./parser");
+    const [one] = await parseFile(card("one"), "a.md", "a");
+    const [two] = await parseFile(card("two"), "b.md", "b");
+
+    await importState({ [one.hash]: performance("2026-02-01") });
+    await syncAll(CONFIG);
+
+    mine.files.delete("a.md");
+    mine.retag('W/"tree-2"');
+    await importState({ [two.hash]: performance("2026-03-01") });
+    await syncAll(OTHER);
+
+    expect(cardsIn(theirs.stateWrites)).toEqual([two.hash]);
+  });
+});
+
+/**
+ * Everything already on a device predates the question "which collection is
+ * this card in", so there is no answer for it in the data — but there is one
+ * outside it: until now the app could hold only one repository at a time, so
+ * whatever is configured is where it all came from. Without this seeding, the
+ * first sync after the upgrade writes a state file with every temporarily
+ * absent card missing, and each of them comes back as a card nobody has seen.
+ */
+describe("scheduling that predates the origins store", () => {
+  let repo: FakeRepo;
+
+  const performance = (dueDate: string) => ({
+    type: "reviewed" as const,
+    lastReviewedAt: "2026-01-01T00:00:00.000Z",
+    stability: 3,
+    difficulty: 5,
+    intervalRaw: 3,
+    intervalDays: 3,
+    dueDate,
+    reviewCount: 2,
+  });
+
+  /**
+   * A database as the previous version left it: the old stores, real
+   * scheduling in them, and no `origins`. Opening it through `db.ts` is what
+   * runs the upgrade, so this has to be closed before the app touches it.
+   */
+  async function databaseFromBefore(hashes: string[]): Promise<void> {
+    globalThis.indexedDB = new IDBFactory();
+    vi.resetModules();
+    const { openDB } = await import("idb");
+    const old = await openDB("hashcards", 4, {
+      upgrade(db) {
+        db.createObjectStore("performances", { keyPath: "hash" });
+        db.createObjectStore("reviews", { autoIncrement: true });
+        db.createObjectStore("session");
+        db.createObjectStore("decks", { keyPath: "path" });
+        db.createObjectStore("meta");
+        db.createObjectStore("credentials");
+      },
+    });
+    const tx = old.transaction("performances", "readwrite");
+    for (const hash of hashes) {
+      tx.store.put({ hash, ...performance("2026-02-01") });
+    }
+    await tx.done;
+    old.close();
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    repo = new FakeRepo();
+    repo.set("a.md", card("one"), "sha-a");
+    install(repo);
+  });
+
+  it("claims an orphan for the repo that was configured when it arrived", async () => {
+    // The upgrade reads the configured repo out of localStorage, so it has to
+    // be there before the database is opened.
+    localStorage.setItem("github_owner", "someone");
+    localStorage.setItem("github_repo", "cards");
+    await databaseFromBefore(["from-before"]);
+
+    const { saveCredential } = await import("./auth");
+    await saveCredential({ kind: "pat", token: "token" });
+    const { syncAll } = await import("./sync");
+    await syncAll(CONFIG);
+
+    const written = repo.stateWrites[0] as { cards: Record<string, unknown> };
+    expect(Object.keys(written.cards)).toContain("from-before");
+  });
+
+  it("guesses nothing when there is no repo configured to guess from", async () => {
+    await databaseFromBefore(["from-before"]);
+
+    const { getAllOrigins } = await import("./db");
+
+    expect([...(await getAllOrigins()).keys()]).toEqual([]);
+  });
+
+  /**
+   * The seeding runs on every open, not only on the upgrade — there is no
+   * "did I already do this" flag other than the store itself. So the guard is
+   * what stops the second launch, with a different repo configured, from
+   * re-claiming every card in the database for whatever is selected now.
+   */
+  it("leaves real answers alone on the launches after the first", async () => {
+    localStorage.setItem("github_owner", "someone");
+    localStorage.setItem("github_repo", "cards");
+    await databaseFromBefore(["from-before"]);
+
+    const first = await import("./db");
+    await first.recordOrigins(["from-before"], "someone/elsewhere");
+
+    // A second launch: same database, fresh modules, a different repo picked.
+    vi.resetModules();
+    localStorage.setItem("github_repo", "cards-two");
+    const second = await import("./db");
+
+    expect((await second.getAllOrigins()).get("from-before")).toBe(
+      "someone/elsewhere"
+    );
   });
 });

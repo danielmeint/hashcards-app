@@ -20,6 +20,19 @@ export function getConfig(): GitHubConfig | null {
   return { owner, repo, branch: settings.branch.get() };
 }
 
+/**
+ * Which collection a card belongs to, for the purpose of deciding whose state
+ * file its scheduling goes in.
+ *
+ * The branch is deliberately not part of it. Two branches of one repository are
+ * two views of the same collection — a card moved between them is the same
+ * card, and it would be a surprise for scheduling to stay behind on `main`.
+ * The state file is per-branch because it is a file, but ownership is not.
+ */
+export function repoKey(config: GitHubConfig): string {
+  return `${config.owner}/${config.repo}`;
+}
+
 export function saveConfig(config: GitHubConfig): void {
   settings.owner.set(config.owner);
   settings.repo.set(config.repo);

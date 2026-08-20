@@ -160,6 +160,31 @@ offline skips its push outright and nothing came back to it.
 
 ### 1.6 Review state is global, but state files are per-repo
 
+**Fixed.** The association is the `origins` store in `src/db.ts` (hash →
+`owner/repo`), written after each card sync and from whatever a repo's own
+state file already knew about; `scopeToRepo` in `src/sync.ts` applies the rule.
+Covered by the "two collections" and "scheduling that predates the origins
+store" tests. Two things worth knowing:
+
+The branch is deliberately not part of a repo's identity. Two branches are two
+views of one collection, and it would be a surprise for scheduling to stay
+behind on `main` when a card moves. The state file is per-branch because it is
+a file; ownership is not.
+
+Both halves of "cards it holds **plus** orphans last seen in it" are load
+bearing, and not for the reasons the report gives. The orphan half is what the
+report describes. The *holds* half covers a card this device wrote itself:
+quick capture puts it straight into the deck store, and the push after a drill
+is `syncStateOnly`, which never lists the tree — so nothing has recorded an
+origin for it, and scoping on origin alone would drop its scheduling until some
+later full sync happened to run.
+
+Found on the way in: the tree ETag was a single global key, so it was only by
+luck that switching repos refetched — GitHub's tag for one repo's tree simply
+never matches another's. It is keyed by repository now, which 4.6 needs anyway.
+
+Original report below.
+
 **P2, and the design work for 4.6.** `exportState` returns every performance in
 IndexedDB, and `fullSync` writes all of them into whichever repo is configured.
 Point the app at a second card repo and both repos' state files end up holding

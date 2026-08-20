@@ -2,9 +2,6 @@
 import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { GitHubConfig } from "../github";
-
-const CONFIG: GitHubConfig = { owner: "someone", repo: "cards", branch: "main" };
 
 const FILE = `Q: What does S3 stand for?
 A: Simple Storage Service
@@ -20,6 +17,11 @@ async function openSheet(
   options: { failWrite?: number; reviewed?: boolean } = {}
 ) {
   globalThis.indexedDB = new IDBFactory();
+  localStorage.setItem(
+    "repos",
+    JSON.stringify([{ owner: "someone", repo: "cards", branch: "main" }])
+  );
+
   vi.resetModules();
   files = new Map([["a.md", { text: FILE, sha: "sha-1" }]]);
   writes = [];
@@ -51,8 +53,14 @@ async function openSheet(
 
   const { parseFile } = await import("../parser");
   const { updateDeckFiles } = await import("../db");
-  const cards = await parseFile(FILE, "a.md", "deck");
-  await updateDeckFiles([{ path: "a.md", sha: "sha-1", cards }], []);
+  const cards = (await parseFile(FILE, "a.md", "deck")).map((c) => ({
+    ...c,
+    repo: "someone/cards",
+  }));
+  await updateDeckFiles(
+    [{ repo: "someone/cards", path: "a.md", sha: "sha-1", cards }],
+    []
+  );
   const { loadCards } = await import("../sync");
   await loadCards();
 
@@ -73,7 +81,7 @@ async function openSheet(
   }
 
   const { openCardEditor } = await import("./card-editor");
-  const done = openCardEditor(cards[1], CONFIG);
+  const done = openCardEditor(cards[1]);
   await until(() => document.querySelector(".editor-text") !== null);
   return { done, card: cards[1], db: await import("../db") };
 }

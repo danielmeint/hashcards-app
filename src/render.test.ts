@@ -6,6 +6,7 @@ import { parseFile } from "./parser";
 
 const card = (question: string, filePath = "aws.md"): Card => ({
   deckName: "deck",
+  repo: "someone/cards",
   filePath,
   range: [1, 2],
   content: { type: "basic", question, answer: "A" },
@@ -71,7 +72,7 @@ describe("cloze rendering", () => {
 
   const clozeCard = async (text: string): Promise<Card> => {
     const [card] = await parseFile(`C: ${text}\n`, "aws.md", "aws");
-    return card;
+    return { ...card, repo: "someone/cards" };
   };
 
   it("shows the blank and the answer together, from one parse", async () => {

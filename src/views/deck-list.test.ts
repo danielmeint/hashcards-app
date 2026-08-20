@@ -28,6 +28,7 @@ function card(
 ): Card {
   return {
     deckName,
+    repo: "someone/cards",
     filePath,
     range: [n, n + 1],
     content: { type: "basic", question: `Q${n}`, answer: `A${n}` },
@@ -36,8 +37,31 @@ function card(
   };
 }
 
-function cache(cards: Card[]): void {
-  localStorage.setItem("cached_cards", JSON.stringify(cards));
+/**
+ * Put cards where the app actually reads them. This used to write the retired
+ * `cached_cards` blob and lean on the database upgrade to carry it across,
+ * which stopped describing anything real once deck files were keyed by
+ * collection.
+ */
+async function cache(cards: Card[]): Promise<void> {
+  const { updateDeckFiles } = await import("../db");
+  const byFile = new Map<string, Card[]>();
+  for (const card of cards) {
+    const list = byFile.get(card.filePath) ?? [];
+    list.push(card);
+    byFile.set(card.filePath, list);
+  }
+  await updateDeckFiles(
+    [...byFile].map(([path, cards]) => ({
+      repo: cards[0].repo,
+      path,
+      sha: `sha-${path}`,
+      cards,
+    })),
+    []
+  );
+  const { loadCards } = await import("../sync");
+  await loadCards();
 }
 
 function deckNames(container: HTMLElement): string[] {
@@ -62,7 +86,7 @@ describe("deck list", () => {
 
   it("renders cached decks without touching the network", async () => {
     const { renderDeckList } = await freshDeckList();
-    cache([card(1, "Alpha"), card(2, "Alpha"), card(3, "Beta")]);
+    await cache([card(1, "Alpha"), card(2, "Alpha"), card(3, "Beta")]);
 
     await renderDeckList(container, () => {}, () => {}, () => {});
 
@@ -85,7 +109,7 @@ describe("deck list", () => {
 
   it("surfaces a sync failure rather than swallowing it", async () => {
     const { renderDeckList, setSyncStatus } = await freshDeckList();
-    cache([card(1, "Alpha")]);
+    await cache([card(1, "Alpha")]);
 
     await renderDeckList(container, () => {}, () => {}, () => {});
     setSyncStatus({
@@ -104,7 +128,7 @@ describe("deck list", () => {
 
   it("patches counts in when a background sync lands", async () => {
     const { renderDeckList, setSyncStatus } = await freshDeckList();
-    cache([card(1, "Alpha")]);
+    await cache([card(1, "Alpha")]);
 
     await renderDeckList(container, () => {}, () => {}, () => {});
     const counts = () => container.querySelector(".deck-counts")!.textContent!;
@@ -135,7 +159,7 @@ describe("deck list", () => {
 
   it("stops listening once torn down, so a late sync can't repaint a view the user left", async () => {
     const { renderDeckList, setSyncStatus } = await freshDeckList();
-    cache([card(1, "Alpha")]);
+    await cache([card(1, "Alpha")]);
 
     const dispose = await renderDeckList(container, () => {}, () => {}, () => {});
     dispose();
@@ -172,7 +196,7 @@ describe("deck identity", () => {
 
   it("keeps same-named files in different directories apart", async () => {
     const { renderDeckList } = await freshDeckList();
-    cache([
+    await cache([
       card(1, "Networking", "aws/Networking.md"),
       card(2, "Networking", "aws/Networking.md"),
       card(3, "Networking", "misc/Networking.md"),
@@ -188,7 +212,7 @@ describe("deck identity", () => {
 
   it("groups decks under their directory, repo root first", async () => {
     const { renderDeckList } = await freshDeckList();
-    cache([
+    await cache([
       card(1, "DDIA", "DDIA.md"),
       card(2, "S3", "aws/S3.md"),
       card(3, "Networking", "misc/Networking.md"),
@@ -207,7 +231,7 @@ describe("deck identity", () => {
 
   it("drills only the file that was asked for", async () => {
     const { renderDeckList } = await freshDeckList();
-    cache([
+    await cache([
       card(1, "Networking", "aws/Networking.md"),
       card(2, "Networking", "misc/Networking.md"),
     ]);
@@ -225,7 +249,7 @@ describe("deck identity", () => {
   it("shows each deck's real supply but promises only what the budget allows", async () => {
     const { renderDeckList } = await freshDeckList();
     localStorage.setItem("new_cards_per_day", "2");
-    cache([
+    await cache([
       card(1, "A", "a.md"),
       card(2, "A", "a.md"),
       card(3, "A", "a.md"),
@@ -249,7 +273,7 @@ describe("deck identity", () => {
   it("hands the drill only as many new cards as the budget allows", async () => {
     const { renderDeckList } = await freshDeckList();
     localStorage.setItem("new_cards_per_day", "2");
-    cache([
+    await cache([
       card(1, "A", "a.md"),
       card(2, "A", "a.md"),
       card(3, "B", "b.md"),
@@ -286,7 +310,7 @@ describe("deck identity", () => {
       const { renderDeckList } = await freshDeckList();
       localStorage.setItem("github_owner", "someone");
       localStorage.setItem("github_repo", "cards");
-      cache([card(1, "Alpha", "Alpha.md"), card(2, "Beta", "sub/Beta.md")]);
+      await cache([card(1, "Alpha", "Alpha.md"), card(2, "Beta", "sub/Beta.md")]);
 
       await renderDeckList(container, () => {}, () => {}, () => {});
       (container.querySelector("#new-card-btn") as HTMLButtonElement).click();
@@ -299,7 +323,7 @@ describe("deck identity", () => {
 
     it("sends an unconfigured app to Settings instead", async () => {
       const { renderDeckList } = await freshDeckList();
-      cache([card(1, "Alpha", "Alpha.md")]);
+      await cache([card(1, "Alpha", "Alpha.md")]);
       let settingsOpened = false;
 
       await renderDeckList(
@@ -325,7 +349,7 @@ describe("deck identity", () => {
       const { renderDeckList } = await freshDeckList();
       localStorage.setItem("github_owner", "someone");
       localStorage.setItem("github_repo", "cards");
-      cache([]);
+      await cache([]);
 
       await renderDeckList(container, () => {}, () => {}, () => {});
 
@@ -334,7 +358,7 @@ describe("deck identity", () => {
 
     it("does not, when there is no repo to write to", async () => {
       const { renderDeckList } = await freshDeckList();
-      cache([]);
+      await cache([]);
 
       await renderDeckList(container, () => {}, () => {}, () => {});
 

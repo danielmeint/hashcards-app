@@ -80,6 +80,11 @@ let repo: FakeRepo;
 /** A fresh module graph, a fresh database, and the repo's cards already loaded. */
 async function freshEdit(path: string, text: string) {
   globalThis.indexedDB = new IDBFactory();
+  localStorage.setItem(
+    "repos",
+    JSON.stringify([{ owner: "someone", repo: "cards", branch: "main" }])
+  );
+
   vi.resetModules();
   repo = new FakeRepo();
   repo.set(path, text);
@@ -92,8 +97,12 @@ async function freshEdit(path: string, text: string) {
 
   const { parseFile } = await import("./parser");
   const { updateDeckFiles } = await import("./db");
-  const cards = await parseFile(text, path, "deck");
-  await updateDeckFiles([{ path, sha: repo.files.get(path)!.sha, cards }], []);
+  const parsed = await parseFile(text, path, "deck");
+  const cards = parsed.map((c) => ({ ...c, repo: "someone/cards" }));
+  await updateDeckFiles(
+    [{ repo: "someone/cards", path, sha: repo.files.get(path)!.sha, cards }],
+    []
+  );
 
   const sync = await import("./sync");
   await sync.loadCards();
@@ -154,13 +163,13 @@ describe("committing a card edit", () => {
   it("rewrites only the card's own lines", async () => {
     const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
 
     expect(source.text).toBe(
       "Q: What is the default S3 durability?\nA: Eleven nines"
     );
 
-    await commitCardEdit(CONFIG, card, source, "Q: How durable is S3?\nA: 99.999999999%", {
+    await commitCardEdit(card, source, "Q: How durable is S3?\nA: 99.999999999%", {
       keepScheduling: true,
     });
 
@@ -202,10 +211,9 @@ C: The capital of [France] is [Paris]
         startedAt: "2026-01-01T00:00:00.000Z",
       }
     );
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
 
     const result = await commitCardEdit(
-      CONFIG,
       card,
       source,
       "Q: How durable is S3?\nA: 99.999999999%",
@@ -227,10 +235,9 @@ C: The capital of [France] is [Paris]
     const { readCardSource, commitCardEdit, db, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
     await db.importState({ [card.hash]: performance });
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
 
     const result = await commitCardEdit(
-      CONFIG,
       card,
       source,
       "Q: How durable is S3?\nA: 99.999999999%",
@@ -245,13 +252,12 @@ C: The capital of [France] is [Paris]
     const { readCardSource, commitCardEdit, db, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
     await db.importState({ [card.hash]: performance });
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
 
     // "A card that fails repeatedly is usually two questions in one" — so the
     // replacement is routinely longer than what it replaced, and the cards
     // after it move down the file.
     const result = await commitCardEdit(
-      CONFIG,
       card,
       source,
       "Q: How many nines of durability does S3 offer?\nA: Eleven\n\nQ: How many nines of availability?\nA: Four",
@@ -273,9 +279,9 @@ C: The capital of [France] is [Paris]
   it("deletes a card when the box is cleared", async () => {
     const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
 
-    const result = await commitCardEdit(CONFIG, card, source, "", {
+    const result = await commitCardEdit(card, source, "", {
       keepScheduling: true,
     });
 
@@ -290,9 +296,9 @@ C: The capital of [France] is [Paris]
     const only = "Q: Only card\nA: Yes\n";
     const { readCardSource, commitCardEdit, sync } = await freshEdit("solo.md", only);
     const card = (await sync.loadCachedCards())[0];
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
 
-    const result = await commitCardEdit(CONFIG, card, source, "", {
+    const result = await commitCardEdit(card, source, "", {
       keepScheduling: true,
     });
 
@@ -305,11 +311,11 @@ C: The capital of [France] is [Paris]
   it("survives the text cards are actually written in", async () => {
     const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
 
     // `btoa` takes one byte per character and throws on everything here.
     const text = "Q: What is 2 × 2 — really?\nA: Ça fait quatre 🇫🇷";
-    const result = await commitCardEdit(CONFIG, card, source, text, {
+    const result = await commitCardEdit(card, source, text, {
       keepScheduling: true,
     });
 
@@ -323,9 +329,9 @@ C: The capital of [France] is [Paris]
     const { readCardSource, commitCardEdit, db } = await freshEdit("a.md", FILE);
     const { loadCachedCards } = await import("./sync");
     const card = (await loadCachedCards())[1];
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
 
-    await commitCardEdit(CONFIG, card, source, "Q: Durable?\nA: Very", {
+    await commitCardEdit(card, source, "Q: Durable?\nA: Very", {
       keepScheduling: true,
     });
 
@@ -339,7 +345,7 @@ C: The capital of [France] is [Paris]
   it("does not commit into the window a sync is holding open", async () => {
     const { readCardSource, commitCardEdit, db, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
 
     // A sync is pulling a change another device made to this same file, and its
     // content fetch is slow. Everything it is about to write into the deck
@@ -355,7 +361,6 @@ C: The capital of [France] is [Paris]
     await new Promise((r) => setTimeout(r, 0));
 
     const editing = commitCardEdit(
-      CONFIG,
       card,
       source,
       "Q: How durable is S3?\nA: 99.999999999%",
@@ -381,15 +386,15 @@ C: The capital of [France] is [Paris]
   it("serialises two edits rather than letting the second read stale cards", async () => {
     const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
     const cards = await sync.loadCachedCards();
-    const source = await readCardSource(CONFIG, cards[1]);
+    const source = await readCardSource(cards[1]);
 
     // Both were opened against the same read of the file, so the second commit
     // has to be built on what the first one left behind — which is only true if
     // it waits for it.
-    const first = commitCardEdit(CONFIG, cards[1], source, "Q: One?\nA: Yes", {
+    const first = commitCardEdit(cards[1], source, "Q: One?\nA: Yes", {
       keepScheduling: true,
     });
-    const second = commitCardEdit(CONFIG, cards[1], source, "Q: Two?\nA: Also", {
+    const second = commitCardEdit(cards[1], source, "Q: Two?\nA: Also", {
       keepScheduling: true,
     });
 
@@ -405,11 +410,11 @@ C: The capital of [France] is [Paris]
   it("keeps the queue moving after a commit fails", async () => {
     const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
     repo.set("a.md", FILE); // moves the SHA out from under the edit
 
     await expect(
-      commitCardEdit(CONFIG, card, source, "Q: Durable?\nA: Very", {
+      commitCardEdit(card, source, "Q: Durable?\nA: Very", {
         keepScheduling: true,
       })
     ).rejects.toThrow();
@@ -429,7 +434,7 @@ C: The capital of [France] is [Paris]
     const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
     const { ConflictError } = await import("./github");
     const card = (await sync.loadCachedCards())[1];
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
 
     // Someone edits the file on GitHub while the sheet is open. Splicing by
     // line number into bytes we have not seen is how an edit eats someone
@@ -437,7 +442,7 @@ C: The capital of [France] is [Paris]
     repo.set("a.md", "Q: Something else entirely\nA: Indeed\n");
 
     await expect(
-      commitCardEdit(CONFIG, card, source, "Q: Durable?\nA: Very", {
+      commitCardEdit(card, source, "Q: Durable?\nA: Very", {
         keepScheduling: true,
       })
     ).rejects.toBeInstanceOf(ConflictError);
@@ -453,10 +458,10 @@ C: The capital of [France] is [Paris]
     const { readCardSource, commitCardEdit, CardSyntaxError, sync } =
       await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
 
     await expect(
-      commitCardEdit(CONFIG, card, source, "Q: A question with no answer", {
+      commitCardEdit(card, source, "Q: A question with no answer", {
         keepScheduling: true,
       })
     ).rejects.toBeInstanceOf(CardSyntaxError);
@@ -468,16 +473,16 @@ C: The capital of [France] is [Paris]
   it("leaves the sheet able to try again after a refusal", async () => {
     const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
 
     await expect(
-      commitCardEdit(CONFIG, card, source, "A: An answer with no question", {
+      commitCardEdit(card, source, "A: An answer with no question", {
         keepScheduling: true,
       })
     ).rejects.toBeTruthy();
 
     // The same source, the same SHA — nothing moved, so the fix goes through.
-    await commitCardEdit(CONFIG, card, source, "Q: Durable?\nA: Very", {
+    await commitCardEdit(card, source, "Q: Durable?\nA: Very", {
       keepScheduling: true,
     });
 
@@ -487,10 +492,9 @@ C: The capital of [France] is [Paris]
   it("names the card that replaced the one being edited", async () => {
     const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
 
     const result = await commitCardEdit(
-      CONFIG,
       card,
       source,
       "Q: How durable is S3?\nA: 99.999999999%",
@@ -510,10 +514,9 @@ C: The capital of [France] is [Paris]
       (c) => c.content.type === "cloze"
     );
     const second = cards[1];
-    const source = await readCardSource(CONFIG, second);
+    const source = await readCardSource(second);
 
     const result = await commitCardEdit(
-      CONFIG,
       second,
       source,
       "C: The capital of [France] is [Paris], obviously",
@@ -527,9 +530,9 @@ C: The capital of [France] is [Paris]
   it("has no replacement to name when the edit deleted the card", async () => {
     const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    const source = await readCardSource(CONFIG, card);
+    const source = await readCardSource(card);
 
-    const result = await commitCardEdit(CONFIG, card, source, "", {
+    const result = await commitCardEdit(card, source, "", {
       keepScheduling: true,
     });
 

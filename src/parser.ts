@@ -1,4 +1,4 @@
-import { Card } from "./types";
+import { ParsedCard } from "./types";
 import { hashBasicCard, hashClozeCard, hashClozeFamily } from "./hash";
 
 type DeckMetadata = {
@@ -94,7 +94,7 @@ export async function parseFile(
   text: string,
   filePath: string,
   defaultDeckName: string
-): Promise<Card[]> {
+): Promise<ParsedCard[]> {
   const { metadata, content, lineOffset } = extractFrontmatter(text);
   const deckName = metadata.name ?? defaultDeckName;
 
@@ -122,7 +122,7 @@ export async function parseFile(
     return [lineOffset + raw.startLine + 1, lineOffset + end + 1];
   }
 
-  const cards: Card[] = [];
+  const cards: ParsedCard[] = [];
   const seenHashes = new Set<string>();
 
   for (const raw of rawCards) {
@@ -368,7 +368,7 @@ async function parseClozeCards(
   deckName: string,
   filePath: string,
   range: [number, number]
-): Promise<Card[]> {
+): Promise<ParsedCard[]> {
   const text = rawText.trim();
   const textBytes = new TextEncoder().encode(text);
 
@@ -380,7 +380,7 @@ async function parseClozeCards(
   const cleanText = new TextDecoder().decode(new Uint8Array(cleanBytes));
 
   // Find cloze deletions
-  const cards: Card[] = [];
+  const cards: ParsedCard[] = [];
   let start: number | null = null;
 
   scanClozeBytes(textBytes, (e) => {

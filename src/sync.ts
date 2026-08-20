@@ -1,7 +1,9 @@
 import { Card, ReviewedPerformance } from "./types";
 import {
   GitHubConfig,
+  RepoConfig,
   SyncProgress,
+  getRepos,
   repoKey,
   listMdFiles,
   getFilesContent,
@@ -16,6 +18,7 @@ import {
   getAllDeckFiles,
   getAllOrigins,
   getMeta,
+  inRepo,
   importState,
   recordOrigins,
   setMeta,
@@ -40,8 +43,21 @@ let inFlight: Promise<boolean> | null = null;
  * every caller is fire-and-forget, and an unhandled rejection is not a way to
  * report a network error. Concurrent callers share a single run.
  */
-export function syncAll(config: GitHubConfig): Promise<boolean> {
+export function syncAll(config: RepoConfig): Promise<boolean> {
   return start(config, { cards: true, push: true });
+}
+
+/**
+ * Every configured collection, in order, then the review state.
+ *
+ * Cards are fetched from all of them; state is pushed only to the ones the app
+ * may write to. A subscription is someone else's repository — your scheduling
+ * for its cards is yours, and it stays here.
+ */
+export function syncEverything(): Promise<boolean> {
+  const repos = getRepos();
+  if (repos.length === 0) return Promise.resolve(false);
+  return start(repos[0], { cards: true, push: true, all: repos });
 }
 
 /**
@@ -50,7 +66,7 @@ export function syncAll(config: GitHubConfig): Promise<boolean> {
  * than racing it: two writers interleaving on the state file is how a merge
  * gets lost.
  */
-export function syncStateOnly(config: GitHubConfig): Promise<boolean> {
+export function syncStateOnly(config: RepoConfig): Promise<boolean> {
   return start(config, { cards: false, push: true });
 }
 
@@ -65,13 +81,18 @@ export function syncStateOnly(config: GitHubConfig): Promise<boolean> {
  * a drill, by which point the user has reviewed cards that came *from* this
  * repo.
  */
-export function adoptRepo(config: GitHubConfig): Promise<boolean> {
+export function adoptRepo(config: RepoConfig): Promise<boolean> {
   return start(config, { cards: true, push: false });
 }
 
-type SyncScope = { cards: boolean; push: boolean };
+type SyncScope = {
+  cards: boolean;
+  push: boolean;
+  /** Every collection to visit; just `config` when absent. */
+  all?: RepoConfig[];
+};
 
-function start(config: GitHubConfig, scope: SyncScope): Promise<boolean> {
+function start(config: RepoConfig, scope: SyncScope): Promise<boolean> {
   if (inFlight) return inFlight;
   inFlight = exclusive(() => runSync(config, scope)).finally(() => {
     inFlight = null;
@@ -110,7 +131,7 @@ export function exclusive<T>(work: () => Promise<T>): Promise<T> {
 }
 
 async function runSync(
-  config: GitHubConfig,
+  config: RepoConfig,
   scope: SyncScope
 ): Promise<boolean> {
   const report = (progress: SyncProgress) =>
@@ -124,8 +145,18 @@ async function runSync(
 
   setSyncStatus({ phase: "syncing", detail: null });
   try {
-    if (scope.cards) await syncCards(config, report);
-    const inStep = await fullSync(config, scope.push, report);
+    const repos = scope.all ?? [config];
+    if (scope.cards) {
+      for (const repo of repos) await syncCards(repo, report);
+    }
+    // Every writable collection gets its own state file. `inStep` is the
+    // conjunction: one repo declining to push is still review state that has
+    // not left the device, and the deck list has to say so.
+    let inStep = true;
+    for (const repo of repos) {
+      const pushed = await fullSync(repo, scope.push && !repo.readOnly, report);
+      inStep = inStep && pushed;
+    }
     recordSyncSuccess(inStep);
     setSyncStatus({ phase: "idle" });
     return true;
@@ -177,14 +208,22 @@ export async function syncCards(
 
   if (!listing.changed) return loadCards();
 
+  const key = repoKey(config);
+  // Only this collection's files: another one's `Algebra.md` is a different
+  // file that happens to share a name, and comparing SHAs across the two would
+  // have each repeatedly declare the other stale.
   const stored = new Map(
-    (await getAllDeckFiles()).map((file) => [file.path, file])
+    (await getAllDeckFiles())
+      .filter((file) => file.repo === key)
+      .map((file) => [file.path, file])
   );
   const wanted = new Set(listing.files.map((f) => f.path));
   const stale = listing.files.filter(
     (f) => stored.get(f.path)?.sha !== f.sha
   );
-  const removed = [...stored.keys()].filter((path) => !wanted.has(path));
+  const removed = [...stored.keys()]
+    .filter((path) => !wanted.has(path))
+    .map((path) => ({ repo: key, path }));
 
   const updated: DeckFile[] = [];
   if (stale.length > 0) {
@@ -200,14 +239,17 @@ export async function syncCards(
       if (content === undefined) continue;
       let cards: Card[] = [];
       try {
-        cards = await parseFile(content, file.path, deckNameFor(file.path));
+        cards = inRepo(
+          await parseFile(content, file.path, deckNameFor(file.path)),
+          key
+        );
       } catch (e) {
         // Recorded anyway, with the SHA and no cards: re-fetching the same
         // bytes cannot parse differently, and editing the file to fix it will
         // move the SHA and bring it back.
         console.warn(`Failed to parse ${file.path}:`, e);
       }
-      updated.push({ path: file.path, sha: file.sha, cards });
+      updated.push({ repo: key, path: file.path, sha: file.sha, cards });
     }
   }
 
@@ -220,8 +262,8 @@ export async function syncCards(
 
   const cards = await loadCards();
   await recordOrigins(
-    cards.map((c) => c.hash),
-    repoKey(config)
+    cards.filter((c) => c.repo === key).map((c) => c.hash),
+    key
   );
   return cards;
 }
@@ -232,8 +274,15 @@ export async function syncCards(
  */
 export async function loadCards(): Promise<Card[]> {
   const files = await getAllDeckFiles();
-  files.sort((a, b) => a.path.localeCompare(b.path));
-  cachedCards = files.flatMap((f) => f.cards);
+  files.sort(
+    (a, b) => a.repo.localeCompare(b.repo) || a.path.localeCompare(b.path)
+  );
+  // Attributed from the file rather than trusted from the card. The file is
+  // what the deck store is keyed by, so it cannot be wrong about which
+  // collection it came from; a card carrying its own stale answer can be, and
+  // was — the first migration into the keyed store stamped the file and left
+  // every card inside it saying nothing.
+  cachedCards = files.flatMap((f) => inRepo(f.cards, f.repo));
   return cachedCards;
 }
 
@@ -304,9 +353,13 @@ async function scopeToRepo(
   key: string
 ): Promise<Record<string, ReviewedPerformance>> {
   const origins = await getAllOrigins();
-  // Held now, which covers a card written on this device a moment ago and not
-  // yet carried into `origins` by a sync.
-  const here = new Set((await loadCachedCards()).map((c) => c.hash));
+  // Held now *by this collection*, which covers a card written on this device a
+  // moment ago and not yet carried into `origins` by a sync. Filtering by repo
+  // is what keeps it from meaning "held by any collection" — the deck store
+  // holds every one of them at once now.
+  const here = new Set(
+    (await loadCachedCards()).filter((c) => c.repo === key).map((c) => c.hash)
+  );
 
   const mine: Record<string, ReviewedPerformance> = {};
   for (const [hash, perf] of Object.entries(merged)) {

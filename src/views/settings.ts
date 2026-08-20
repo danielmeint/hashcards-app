@@ -19,6 +19,7 @@ import { getTheme, setTheme, Theme } from "../theme";
 import { adoptRepo, syncAll, getCachedCards } from "../sync";
 import { getSyncStatus, onSyncStatus } from "../sync-state";
 import { renderAuthPanel } from "./auth-panel";
+import { renderCollections } from "./collections";
 
 /**
  * Settings, in two halves: how the app connects to GitHub (delegated to
@@ -103,6 +104,10 @@ export async function renderSettings(
       <section class="settings-section">
         <h2>GitHub</h2>
         <div id="auth-host"></div>
+      </section>
+      <section class="settings-section">
+        <h2>Collections</h2>
+        <div id="collections-host"></div>
       </section>
       <section class="settings-section">
         <h2>Reviewing</h2>
@@ -214,8 +219,17 @@ export async function renderSettings(
     container.querySelector("#auth-host") as HTMLElement,
     () => {
       if (getConfig()) void sync(true);
+      collections();
     }
   );
+
+  // Re-rendered whenever the connection panel changes the list underneath it —
+  // signing in and picking a repository adds the first entry.
+  function collections(): void {
+    const host = container.querySelector("#collections-host");
+    if (host) renderCollections(host as HTMLElement, paint);
+  }
+  collections();
 }
 
 const THEMES: [Theme, string][] = [

@@ -1,7 +1,7 @@
 import { html, nothing, render, TemplateResult } from "lit-html";
 import { Card, DrillSession, ReviewedPerformance } from "../types";
-import { loadCachedCards, syncAll } from "../sync";
-import { getConfig } from "../github";
+import { loadCachedCards, syncEverything } from "../sync";
+import { getConfig, getRepos, repoKey } from "../github";
 import {
   getAllPerformances,
   getReviewsSince,
@@ -25,6 +25,8 @@ import {
 import { syncNotice } from "../sync-notice";
 
 type DeckInfo = {
+  /** `owner/repo` — which collection this deck belongs to. */
+  repo: string;
   /**
    * Identity is the repo path, not the display name. `aws/Networking.md` and
    * `misc/Networking.md` are two decks that happen to be called the same thing,
@@ -40,7 +42,12 @@ type DeckInfo = {
   newCount: number;
 };
 
-type DeckGroup = { dir: string; decks: DeckInfo[] };
+/**
+ * One heading's worth of decks. A collection and a directory within it, since
+ * `Algebra.md` in your repo and `Algebra.md` in a deck you subscribe to are two
+ * different decks that would otherwise sit under the same nameless heading.
+ */
+type DeckGroup = { repo: string; dir: string; decks: DeckInfo[] };
 
 /** Everything on screen that comes from storage rather than from sync status. */
 type Model = {
@@ -50,6 +57,8 @@ type Model = {
   session: DrillSession | null;
   resumable: string[];
   groups: DeckGroup[];
+  /** Collection key → whether it is a subscription, for the headings. */
+  repoNames: Map<string, boolean>;
   newPerDay: number;
   introducedToday: number;
   totalReviews: number;
@@ -97,17 +106,21 @@ export async function renderDeckList(
    */
   async function capture(): Promise<void> {
     const config = getConfig();
-    if (!config) {
+    if (!config || config.readOnly) {
       onSettings();
       return;
     }
-    const decks = model.groups.flatMap((group) =>
-      group.decks.map((deck) => ({
-        path: deck.path,
-        // Two decks can share a name, so the one in a folder says which.
-        name: deck.dir ? `${deck.dir}/${deck.name}` : deck.name,
-      }))
-    );
+    // Only decks in the collection the card will be written to. Offering a
+    // subscription's deck would be offering to commit to someone else's repo.
+    const decks = model.groups
+      .filter((group) => group.repo === repoKey(config))
+      .flatMap((group) =>
+        group.decks.map((deck) => ({
+          path: deck.path,
+          // Two decks can share a name, so the one in a folder says which.
+          name: deck.dir ? `${deck.dir}/${deck.name}` : deck.name,
+        }))
+      );
     // Loaded on the click rather than at startup: a sheet nobody has opened
     // yet has no business in the bundle the deck list is waiting on.
     const { openCapture } = await import("./capture");
@@ -115,13 +128,12 @@ export async function renderDeckList(
   }
 
   const startSync = () => {
-    const config = getConfig();
-    if (!config) {
+    if (getRepos().length === 0) {
       onSettings();
       return;
     }
     // Fire and forget: progress and failure both arrive through the status.
-    syncAll(config);
+    syncEverything();
   };
 
   function notice() {
@@ -275,14 +287,27 @@ export async function renderDeckList(
           >${drillAllLabel()}</button>`
         : html`<div class="all-caught-up">All caught up!</div>`}
       <div class="deck-cards">
-        ${model.groups.map(
-          (group) => html`
+        ${model.groups.map((group, i) => {
+          // The collection's name only when it changes, and only when there is
+          // more than one — a single-repo app should not grow a heading.
+          const newRepo =
+            model.repoNames.size > 1 &&
+            (i === 0 || model.groups[i - 1].repo !== group.repo);
+          return html`
+            ${newRepo
+              ? html`<div class="deck-repo-name">
+                  ${group.repo}
+                  ${model.repoNames.get(group.repo)
+                    ? html`<span class="deck-repo-tag">subscribed</span>`
+                    : nothing}
+                </div>`
+              : nothing}
             ${group.dir
               ? html`<div class="deck-group-name">${group.dir}</div>`
               : nothing}
             ${group.decks.map(deckRow)}
-          `
-        )}
+          `;
+        })}
       </div>
     </div>`;
   }
@@ -395,6 +420,7 @@ async function load(): Promise<Model> {
       session: null,
       resumable: [],
       groups: [],
+      repoNames: new Map(),
       newPerDay: getNewCardsPerDay(),
       introducedToday: 0,
       totalReviews: 0,
@@ -416,18 +442,22 @@ async function load(): Promise<Model> {
   // A session whose cards have all left the repo can never be resumed.
   if (session && resumable.length === 0) await clearSession();
 
-  // One deck per source file, keyed by path.
+  // One deck per source file, keyed by collection and path — two collections
+  // can each hold an `Algebra.md`, and they are not the same deck.
   const byFile = new Map<string, Card[]>();
   for (const card of cards) {
-    const deckCards = byFile.get(card.filePath);
+    const key = `${card.repo}\u0000${card.filePath}`;
+    const deckCards = byFile.get(key);
     if (deckCards) deckCards.push(card);
-    else byFile.set(card.filePath, [card]);
+    else byFile.set(key, [card]);
   }
 
   const decks: DeckInfo[] = [];
-  for (const [path, deckCards] of byFile) {
+  for (const [key, deckCards] of byFile) {
     const counts = countDue(deckCards, performances, today);
+    const [repo, path] = key.split("\u0000");
     decks.push({
+      repo,
       path,
       // Every card in a file shares its deck name, frontmatter override included.
       name: deckCards[0].deckName,
@@ -441,16 +471,23 @@ async function load(): Promise<Model> {
     (a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path)
   );
 
-  // Grouped by directory, root first, so the list reads the way the repo looks
-  // — and so two decks with the same name are told apart by where they live.
+  // Grouped by collection and then by directory, root first, so the list reads
+  // the way the repository looks — and so two decks with the same name are told
+  // apart by where they live.
   const groups: DeckGroup[] = [];
   for (const deck of decks) {
-    const group = groups.find((g) => g.dir === deck.dir);
+    const group = groups.find(
+      (g) => g.repo === deck.repo && g.dir === deck.dir
+    );
     if (group) group.decks.push(deck);
-    else groups.push({ dir: deck.dir, decks: [deck] });
+    else groups.push({ repo: deck.repo, dir: deck.dir, decks: [deck] });
   }
-  groups.sort((a, b) =>
-    a.dir === "" ? -1 : b.dir === "" ? 1 : a.dir.localeCompare(b.dir)
+  // Collections in configured order — yours first, then what you subscribe to.
+  const order = getRepos().map(repoKey);
+  groups.sort(
+    (a, b) =>
+      order.indexOf(a.repo) - order.indexOf(b.repo) ||
+      (a.dir === "" ? -1 : b.dir === "" ? 1 : a.dir.localeCompare(b.dir))
   );
 
   return {
@@ -460,6 +497,7 @@ async function load(): Promise<Model> {
     session,
     resumable,
     groups,
+    repoNames: new Map(getRepos().map((r) => [repoKey(r), r.readOnly === true])),
     newPerDay: getNewCardsPerDay(),
     introducedToday: getIntroducedToday(today),
     totalReviews: decks.reduce((s, d) => s + d.reviewDue, 0),

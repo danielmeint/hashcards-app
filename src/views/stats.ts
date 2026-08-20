@@ -313,7 +313,7 @@ export async function renderStats(
     const config = getConfig();
     if (!config) return;
     const { openCardEditor } = await import("./card-editor");
-    const result = await openCardEditor(leech.card, config);
+    const result = await openCardEditor(leech.card);
     // Repaint on a committed edit only: the counts, the list, and often whether
     // this card is on it at all have just changed.
     if (result) await renderStats(container, onBack);

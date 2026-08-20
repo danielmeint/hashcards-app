@@ -25,6 +25,9 @@ export type ViewOptions = {
   /** Opens the editor on the card in front of you. Absent in demo mode, which
    *  has no repo behind it and so nothing to edit. */
   onEdit?: () => void;
+  /** Whether the card on screen right now can be edited — a drill can span
+   *  collections, and a subscription is read here and never written to. */
+  canEdit?: () => boolean;
 };
 
 export function createView(
@@ -34,6 +37,7 @@ export function createView(
   options: ViewOptions = {}
 ): DrillView {
   const onEdit = options.onEdit;
+  const canEdit = options.canEdit ?? (() => true);
   let summaryShown = false;
   let buildingSummary = false;
   /** The card node last put on screen, so a returning one can be un-swiped. */
@@ -145,7 +149,7 @@ export function createView(
             class="edit-link"
             id="edit-link"
             type="button"
-            ?hidden=${onEdit === undefined}
+            ?hidden=${onEdit === undefined || !canEdit()}
             @click=${() => onEdit?.()}
           >
             Edit

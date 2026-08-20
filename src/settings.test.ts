@@ -6,7 +6,7 @@ describe("settings", () => {
   beforeEach(() => localStorage.clear());
 
   it("answers with the default when nothing is stored", () => {
-    expect(settings.branch.get()).toBe("main");
+    expect(settings.repos.get()).toEqual([]);
     expect(settings.newCardsPerDay.get()).toBe(20);
     expect(settings.intervalFuzz.get()).toBe(true);
     expect(settings.hapticFeedback.get()).toBe(true);
@@ -17,7 +17,7 @@ describe("settings", () => {
 
   it("keeps the keys the app already has in the field", () => {
     // Renaming any of these silently resets that setting for every install.
-    settings.owner.set("daniel");
+    legacy.owner.set("daniel");
     settings.newCardsPerDay.set(30);
     settings.intervalFuzz.set(false);
     expect(localStorage.getItem("github_owner")).toBe("daniel");

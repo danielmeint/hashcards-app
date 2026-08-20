@@ -22,6 +22,7 @@ async function freshStats() {
 
 const card = (n: number, question = `Q${n}`): Card => ({
   deckName: "aws",
+  repo: "someone/cards",
   filePath: "aws.md",
   range: [n, n + 1],
   content: { type: "basic", question, answer: `A${n}` },
@@ -67,12 +68,22 @@ describe("the stats view", () => {
     document.body.appendChild(container);
   });
 
+  /** Cards where the app reads them: the deck store, keyed by collection. */
+  async function seedCards(
+    db: { updateDeckFiles: typeof import("../db").updateDeckFiles },
+    cards: Card[]
+  ): Promise<void> {
+    await db.updateDeckFiles(
+      [{ repo: cards[0].repo, path: cards[0].filePath, sha: "sha-1", cards }],
+      []
+    );
+    const { loadCards } = await import("../sync");
+    await loadCards();
+  }
+
   async function seed() {
     const stats = await freshStats();
-    localStorage.setItem(
-      "cached_cards",
-      JSON.stringify([card(1), card(2), card(3), card(4)])
-    );
+    await seedCards(stats, [card(1), card(2), card(3), card(4)]);
     const today = new Date().toISOString().slice(0, 10);
     await stats.importState({
       "hash-1": performance(today),
@@ -156,7 +167,7 @@ describe("the stats view", () => {
 
   it("says so rather than drawing an empty chart when nothing has been reviewed", async () => {
     const { renderStats } = await freshStats();
-    localStorage.setItem("cached_cards", JSON.stringify([card(1)]));
+    await seedCards(await import("../db"), [card(1)]);
 
     await renderStats(container, () => {});
 

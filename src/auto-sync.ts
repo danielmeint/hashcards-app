@@ -1,5 +1,5 @@
-import { getConfig } from "./github";
-import { syncAll } from "./sync";
+import { getRepos } from "./github";
+import { syncEverything } from "./sync";
 import { getLastSyncedAt, getSyncStatus } from "./sync-state";
 
 /**
@@ -40,12 +40,11 @@ export function startAutoSync(): () => void {
 }
 
 function attempt(force: boolean): void {
-  const config = getConfig();
-  if (!config || !navigator.onLine) return;
+  if (getRepos().length === 0 || !navigator.onLine) return;
   if (!force && !outstanding()) return;
   // Fire and forget: sync single-flights, reports through `sync-state`, and
   // resolves false rather than rejecting.
-  void syncAll(config);
+  void syncEverything();
 }
 
 function outstanding(): boolean {

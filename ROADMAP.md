@@ -716,6 +716,28 @@ and it is the thing that actually converts the app into a habit.
 
 ### 4.6 Multiple repos
 
+**Done.** Config is a list (`settings.repos`), deck files are keyed by
+`[repo, path]`, every `Card` carries the collection it came from, and a sync
+visits all of them. A subscription is `readOnly: true`: its cards are fetched
+and drilled, and nothing is ever committed to it — no state file, no card edit,
+no capture. `src/views/collections.ts` is the list in Settings.
+
+Three things worth knowing. The deck store needed a new key, and a keyPath
+cannot be changed in place, so `decks` is copied into `deckFiles` once and
+emptied — the emptying *is* the record that it happened, which means there is
+one mechanism rather than a flag that could disagree with it. An edit is routed
+by the card's own repo rather than by whatever `getConfig()` returns, since with
+more than one configured those are different answers. And `loadCards` attributes
+each card from the file it came out of rather than trusting what the card
+itself says, which is what caught the migration stamping files and leaving the
+cards inside them blank.
+
+The scheduling for a subscribed card stays on the device: it belongs to a
+collection with nowhere to put it. Two of your own devices will each build it up
+separately, which is the honest cost of not owning the repository.
+
+Original report below.
+
 Config is four flat localStorage keys (`src/github.ts:8-15`). Making it a list
 unlocks shared decks: subscribe to someone else's card repo read-only while
 keeping your own review state locally. That is the version of this app with a
@@ -945,7 +967,8 @@ evenings, not estimates.
 **1.2**/**1.3** the deck-list counts and names, **1.5** visible sync failures,
 **3.1** the conflict retry, **3.4** token detection, **4.1** sign-in with GitHub,
 the whole of **4.2** — deep link, in-app editor, drill-time editing and quick
-capture — and **4.3** the leech list.
+capture — **4.3** the leech list, and **1.6**/**4.6** for more than one
+collection.
 
 ---
 
@@ -1073,7 +1096,24 @@ GitHub.
 
 ---
 
-### Phase 5 — More than one repo · ~8 evenings
+### Phase 5 — More than one repo · ~8 evenings — **done**
+
+*As shipped.* Both halves, and the data half turned out to be the one with the
+subtleties in it — see 1.6 for the tree ETag that was only global by luck, and
+for why "the cards it holds **plus** the orphans last seen in it" needs both
+halves rather than just the one the report describes.
+
+The visible half is smaller than expected because the data half did the work:
+once every card knows its collection and the deck store is keyed by one, the UI
+is a list in Settings and a heading in the deck list. What it is *not* is a
+second sync path — a subscription goes through exactly the same runner, with
+`push` false.
+
+Found in the browser and not by the suite: the deck-store migration stamped
+each file with its collection and left every card inside it unattributed, so
+migrated cards were invisible to the state-file scoping and could not be edited.
+`loadCards` now attributes from the file rather than trusting the card, and the
+migration is covered.
 
 **1.6** then **4.6**. 1.6 is the data half: a hash → repo association, and an
 export scoped to the cards a repo holds plus the orphans last seen in it. 4.6 is

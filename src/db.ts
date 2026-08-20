@@ -1,15 +1,16 @@
 import { openDB, IDBPDatabase } from "idb";
-import { legacy, settings } from "./settings";
+import { legacy } from "./settings";
 import {
   Card,
   DrillSession,
+  ParsedCard,
   Performance,
   ReviewedPerformance,
   Review,
 } from "./types";
 
 const DB_NAME = "hashcards";
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
@@ -41,6 +42,14 @@ function getDb(): Promise<IDBPDatabase> {
         if (!db.objectStoreNames.contains("origins")) {
           db.createObjectStore("origins");
         }
+        // Keyed by repository *and* path: two collections can each hold an
+        // `Algebra.md`, and with `path` alone the second silently replaced the
+        // first. A new store rather than a re-keyed one because a keyPath
+        // cannot be changed in place — the old one is emptied once its
+        // contents have been carried across.
+        if (!db.objectStoreNames.contains("deckFiles")) {
+          db.createObjectStore("deckFiles", { keyPath: ["repo", "path"] });
+        }
       },
     }).then(async (db) => {
       // Only once the cards are provably here, so a failed migration cannot
@@ -52,10 +61,46 @@ function getDb(): Promise<IDBPDatabase> {
         legacy.cards.remove();
       }
       await seedOrigins(db);
+      await migrateDeckFiles(db);
       return db;
     });
   }
   return dbPromise;
+}
+
+/**
+ * Carry the old deck store into the one keyed by collection.
+ *
+ * The `decks` store was keyed by path alone, which could only ever describe one
+ * repository — so everything in it belongs to the one that was configured. Done
+ * after opening rather than in the upgrade, because a keyPath cannot be changed
+ * in place and copying between two stores is ordinary work.
+ */
+async function migrateDeckFiles(db: IDBPDatabase): Promise<void> {
+  if (!db.objectStoreNames.contains("decks")) return;
+
+  // Emptying it is what records that this is done — there is no other writer,
+  // so an empty old store means it has already been carried across, and
+  // re-running would resurrect files the user has since removed.
+  const old = await db.getAll("decks");
+  if (old.length === 0) return;
+
+  // Without a configured repository there is nothing to attribute these to.
+  // Left where they are rather than dropped, so a launch that has one can
+  // still carry them: this is the last copy of those cards until a sync.
+  const owner = legacy.owner.get();
+  const repo = legacy.repo.get();
+  if (!owner || !repo) return;
+
+  const key = `${owner}/${repo}`;
+  const tx = db.transaction("deckFiles", "readwrite");
+  for (const file of old as Omit<DeckFile, "repo">[]) {
+    // The cards inside too, not only the file around them — they predate
+    // knowing which collection they came from just as much as it does.
+    tx.store.put({ ...file, repo: key, cards: inRepo(file.cards, key) });
+  }
+  await tx.done;
+  await db.clear("decks");
 }
 
 /**
@@ -71,8 +116,10 @@ function getDb(): Promise<IDBPDatabase> {
  * every one of them would come back new.
  */
 async function seedOrigins(db: IDBPDatabase): Promise<void> {
-  const owner = settings.owner.get();
-  const repo = settings.repo.get();
+  // The legacy keys on purpose: a database that predates the origins store also
+  // predates the repository list, so what it synced from is what was in these.
+  const owner = legacy.owner.get();
+  const repo = legacy.repo.get();
   if (!owner || !repo) return;
   // Only for a database that predates the question. Once anything is in here,
   // the answers are real ones and must not be overwritten with a guess.
@@ -96,7 +143,12 @@ function migrateCardsFromLocalStorage(store: {
   put: (value: DeckFile) => unknown;
 }): void {
   const stored = legacy.cards.get();
-  if (!stored) return;
+  const owner = legacy.owner.get();
+  const repo = legacy.repo.get();
+  // Cards with no collection to belong to cannot be stored any more; anything
+  // old enough to be in this blob was synced from the single configured repo,
+  // and without one there is nothing to attribute them to.
+  if (!stored || !owner || !repo) return;
   try {
     const byPath = new Map<string, Card[]>();
     for (const card of JSON.parse(stored) as Card[]) {
@@ -104,7 +156,9 @@ function migrateCardsFromLocalStorage(store: {
       cards.push(card);
       byPath.set(card.filePath, cards);
     }
-    for (const [path, cards] of byPath) store.put({ path, sha: "", cards });
+    for (const [path, cards] of byPath) {
+      store.put({ repo: `${owner}/${repo}`, path, sha: "", cards });
+    }
   } catch (e) {
     console.warn("Could not migrate cached cards:", e);
   }
@@ -179,26 +233,49 @@ export async function getReviewsSince(iso: string): Promise<Review[]> {
  * unchanged files are never re-parsed either.
  */
 export type DeckFile = {
+  /** `owner/repo` — the collection this file came out of. */
+  repo: string;
   path: string;
   sha: string;
   cards: Card[];
 };
 
-export async function getAllDeckFiles(): Promise<DeckFile[]> {
-  const db = await getDb();
-  return db.getAll("decks");
+/**
+ * Attribute freshly parsed cards to the collection their file came from. The
+ * one place a `ParsedCard` becomes a `Card`, so there is a single answer to
+ * "who decides which repo a card belongs to".
+ */
+export function inRepo(cards: ParsedCard[], repo: string): Card[] {
+  return cards.map((card) => ({ ...card, repo }));
 }
 
-/** Apply a sync's changes to the deck store in one transaction. */
+export async function getAllDeckFiles(): Promise<DeckFile[]> {
+  const db = await getDb();
+  return db.getAll("deckFiles");
+}
+
+/** Apply a sync's changes to one collection's files, in one transaction. */
 export async function updateDeckFiles(
   updated: DeckFile[],
-  removedPaths: string[] = []
+  removed: { repo: string; path: string }[] = []
 ): Promise<void> {
-  if (updated.length === 0 && removedPaths.length === 0) return;
+  if (updated.length === 0 && removed.length === 0) return;
   const db = await getDb();
-  const tx = db.transaction("decks", "readwrite");
+  const tx = db.transaction("deckFiles", "readwrite");
   for (const file of updated) tx.store.put(file);
-  for (const path of removedPaths) tx.store.delete(path);
+  for (const { repo, path } of removed) tx.store.delete([repo, path]);
+  await tx.done;
+}
+
+/** Forget a whole collection, for a repository the user has removed. */
+export async function forgetRepo(repo: string): Promise<void> {
+  const db = await getDb();
+  const tx = db.transaction("deckFiles", "readwrite");
+  for (const file of await tx.store.getAll()) {
+    if ((file as DeckFile).repo === repo) {
+      tx.store.delete([repo, (file as DeckFile).path]);
+    }
+  }
   await tx.done;
 }
 

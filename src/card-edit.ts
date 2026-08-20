@@ -3,11 +3,19 @@ import {
   GitHubConfig,
   deleteFile,
   readFile,
+  RepoConfig,
   readFileIfPresent,
+  repoFor,
+  repoKey,
   writeFile,
 } from "./github";
 import { parseFile } from "./parser";
-import { getAllPerformances, migrateCardHistory, updateDeckFiles } from "./db";
+import {
+  getAllPerformances,
+  inRepo,
+  migrateCardHistory,
+  updateDeckFiles,
+} from "./db";
 import { deckNameFor, exclusive, loadCachedCards, loadCards } from "./sync";
 
 /**
@@ -33,11 +41,16 @@ export type CardSource = {
   sha: string;
 };
 
-export async function readCardSource(
-  config: GitHubConfig,
-  card: Card
-): Promise<CardSource> {
-  const { text, sha } = await readFile(config, card.filePath);
+/**
+ * The card's own lines, and the file around them, from the collection the card
+ * came out of — not from whichever repo happens to be the writable one. With
+ * more than one configured those are different answers, and using the wrong one
+ * reads a file that has nothing to do with the card on screen.
+ */
+export async function readCardSource(card: Card): Promise<CardSource> {
+  const repo = repoFor(card.repo);
+  if (!repo) throw new Error(`${card.repo} is no longer one of your collections.`);
+  const { text, sha } = await readFile(repo, card.filePath);
   return { file: text, sha, text: sliceLines(text, card.range) };
 }
 
@@ -89,6 +102,28 @@ export type EditResult = {
 export class CardSyntaxError extends Error {}
 
 /**
+ * The collection this card lives in is one the app only reads.
+ *
+ * A subscription is someone else's repository. The app has no business
+ * committing to it, and the credential very likely cannot anyway — so this is
+ * refused here, where the answer is certain, rather than as a 403 from GitHub
+ * after the user has typed out a card.
+ */
+export class ReadOnlyRepoError extends Error {
+  constructor(repo: string) {
+    super(`${repo} is a subscription — it is read here, never written to.`);
+  }
+}
+
+/** The collection to commit to, or a refusal naming why there is none. */
+function writableRepo(key: string): RepoConfig {
+  const repo = repoFor(key);
+  if (!repo) throw new Error(`${key} is no longer one of your collections.`);
+  if (repo.readOnly) throw new ReadOnlyRepoError(key);
+  return repo;
+}
+
+/**
  * Commit an edit and reconcile everything local with it.
  *
  * `source` is the read the user's text was typed against, not a fresh one: its
@@ -96,19 +131,21 @@ export class CardSyntaxError extends Error {}
  * quietly overwrite whatever moved it.
  */
 export function commitCardEdit(
-  config: GitHubConfig,
   card: Card,
   source: CardSource,
   replacement: string,
   options: { keepScheduling: boolean }
 ): Promise<EditResult> {
+  // Refused before the queue rather than inside it: there is nothing to
+  // serialize about an edit that is not going to happen.
+  const config = writableRepo(card.repo);
   // Queued behind any sync in progress, and any sync queued behind it. Both
   // write the deck store, and this one also writes the repo.
   return exclusive(() => runEdit(config, card, source, replacement, options));
 }
 
 async function runEdit(
-  config: GitHubConfig,
+  config: RepoConfig,
   card: Card,
   source: CardSource,
   replacement: string,
@@ -128,7 +165,7 @@ async function runEdit(
       source.sha,
       `Remove ${card.filePath}, its last card deleted`
     );
-    await updateDeckFiles([], [card.filePath]);
+    await updateDeckFiles([], [{ repo: card.repo, path: card.filePath }]);
     await loadCards();
     return {
       cards: [],
@@ -145,7 +182,7 @@ async function runEdit(
   // cannot read, and a throw on this side of the write used to leave the repo
   // holding a file the app then refused to load — with the SHA the edit was
   // based on now stale, so trying again conflicted rather than recovering.
-  const parsed = await validate(updated, card.filePath, deck);
+  const parsed = await validate(updated, card.repo, card.filePath, deck);
 
   const sha = await writeFile(config, card.filePath, updated, {
     sha: source.sha,
@@ -154,7 +191,10 @@ async function runEdit(
       : `Rewrite a card in ${card.filePath}`,
   });
 
-  await updateDeckFiles([{ path: card.filePath, sha, cards: parsed }], []);
+  await updateDeckFiles(
+    [{ repo: card.repo, path: card.filePath, sha, cards: parsed }],
+    []
+  );
   await loadCards();
 
   // Where the replacement now sits: the same first line, however many lines it
@@ -190,11 +230,12 @@ async function runEdit(
  */
 async function validate(
   text: string,
+  repo: string,
   path: string,
   deck: string
 ): Promise<Card[]> {
   try {
-    return await parseFile(text, path, deck);
+    return inRepo(await parseFile(text, path, deck), repo);
   } catch (e) {
     throw new CardSyntaxError(`That isn't a card yet — ${(e as Error).message}`);
   }
@@ -261,7 +302,7 @@ export function createCard(
   path: string,
   text: string
 ): Promise<CaptureResult> {
-  return exclusive(() => runCapture(config, path, text));
+  return exclusive(() => runCapture(writableRepo(repoKey(config)), path, text));
 }
 
 async function runCapture(
@@ -281,13 +322,16 @@ async function runCapture(
   const head = before.replace(/\s+$/, "");
   const updated = head === "" ? `${body}\n` : `${head}\n\n${body}\n`;
 
-  const parsed = await validate(updated, path, deck);
+  const parsed = await validate(updated, repoKey(config), path, deck);
 
   const sha = await writeFile(config, path, updated, {
     ...(existing ? { sha: existing.sha } : {}),
     message: existing ? `Add a card to ${path}` : `Add ${path}`,
   });
-  await updateDeckFiles([{ path, sha, cards: parsed }], []);
+  await updateDeckFiles(
+    [{ repo: repoKey(config), path, sha, cards: parsed }],
+    []
+  );
   await loadCards();
 
   // The lines the new text occupies: everything after what was already there.

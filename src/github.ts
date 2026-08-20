@@ -1,6 +1,6 @@
 import { Card } from "./types";
 import { getAccessToken, loadCredential, recordLogin, refreshCredential } from "./auth";
-import { settings } from "./settings";
+import { legacy, settings } from "./settings";
 
 /**
  * Which repository to read cards from. Deliberately carries no credential: the
@@ -13,11 +13,62 @@ export type GitHubConfig = {
   branch: string;
 };
 
-export function getConfig(): GitHubConfig | null {
-  const owner = settings.owner.get();
-  const repo = settings.repo.get();
-  if (!owner || !repo) return null;
-  return { owner, repo, branch: settings.branch.get() };
+/**
+ * A collection, and whether the app may write to it.
+ *
+ * `readOnly` is what makes a subscription a subscription: someone else's deck
+ * repository, read for its cards, never committed to. Your review state for
+ * those cards stays here — it is yours, and it has nowhere to go in a repo you
+ * do not own.
+ */
+export type RepoConfig = GitHubConfig & { readOnly?: boolean };
+
+/**
+ * Every configured collection, in the order the user put them in.
+ *
+ * Adopts the single repository the app used to keep in three flat keys, on
+ * first read rather than through a startup migration — an existing install
+ * whose list is empty is not an unconfigured one, and being dropped onto the
+ * first-run screen with the collection apparently gone is not a good way to
+ * find that out. Written back so there is one source of truth afterwards.
+ */
+export function getRepos(): RepoConfig[] {
+  const repos = settings.repos.get();
+  if (repos.length > 0) return repos;
+
+  const owner = legacy.owner.get();
+  const repo = legacy.repo.get();
+  if (!owner || !repo) return [];
+  const adopted: RepoConfig[] = [
+    { owner, repo, branch: legacy.branch.get() },
+  ];
+  settings.repos.set(adopted);
+  return adopted;
+}
+
+export function saveRepos(repos: RepoConfig[]): void {
+  settings.repos.set(repos);
+}
+
+/** The collections a card, an edit, or a state file may be written to. */
+export function writableRepos(): RepoConfig[] {
+  return getRepos().filter((r) => !r.readOnly);
+}
+
+/**
+ * The collection the app treats as yours: the first one you can write to.
+ *
+ * Kept as a single answer because most of the app still has one — a new card
+ * has to go somewhere, and "somewhere" is not a question a subscription can
+ * answer. Reads and edits of an *existing* card use that card's own repo.
+ */
+export function getConfig(): RepoConfig | null {
+  return writableRepos()[0] ?? getRepos()[0] ?? null;
+}
+
+/** The configured collection matching a key, or null if it has been removed. */
+export function repoFor(key: string): RepoConfig | null {
+  return getRepos().find((r) => repoKey(r) === key) ?? null;
 }
 
 /**
@@ -33,10 +84,17 @@ export function repoKey(config: GitHubConfig): string {
   return `${config.owner}/${config.repo}`;
 }
 
+/**
+ * Set the collection the app writes to, keeping any subscriptions alongside it.
+ * Replaces the first writable entry rather than appending, so the sign-in and
+ * manual-entry paths keep meaning "this is my repo" rather than "one more".
+ */
 export function saveConfig(config: GitHubConfig): void {
-  settings.owner.set(config.owner);
-  settings.repo.set(config.repo);
-  settings.branch.set(config.branch);
+  const repos = getRepos();
+  const at = repos.findIndex((r) => !r.readOnly);
+  const entry: RepoConfig = { ...config };
+  if (at === -1) saveRepos([entry, ...repos]);
+  else saveRepos(repos.map((r, i) => (i === at ? entry : r)));
 }
 
 /**

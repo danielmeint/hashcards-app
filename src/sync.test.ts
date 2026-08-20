@@ -249,7 +249,11 @@ describe("card sync", () => {
   });
 
   it("carries a localStorage card cache over to the deck store", async () => {
-    // What an install from before this change looks like on first open.
+    // What an install from before this change looks like on first open. The
+    // configured repo has to be there too: deck files are keyed by collection
+    // now, and cards from that era came from the one repo there could be.
+    localStorage.setItem("github_owner", "someone");
+    localStorage.setItem("github_repo", "cards");
     localStorage.setItem(
       "cached_cards",
       JSON.stringify([
@@ -649,7 +653,17 @@ describe("two collections", () => {
     // Written locally and committed, exactly as `createCard` leaves things.
     const [written] = await parseFile(card("written here"), "z.md", "z");
     mine.set("z.md", card("written here"), "sha-z");
-    await updateDeckFiles([{ path: "z.md", sha: "sha-z", cards: [written] }], []);
+    await updateDeckFiles(
+      [
+        {
+          repo: "someone/cards",
+          path: "z.md",
+          sha: "sha-z",
+          cards: [{ ...written, repo: "someone/cards" }],
+        },
+      ],
+      []
+    );
     const { loadCards } = await import("./sync");
     await loadCards();
     await importState({ [written.hash]: performance("2026-05-01") });
@@ -780,5 +794,175 @@ describe("scheduling that predates the origins store", () => {
     expect((await second.getAllOrigins()).get("from-before")).toBe(
       "someone/elsewhere"
     );
+  });
+});
+
+/**
+ * A subscription is someone else's repository. Its cards are read and drilled
+ * here; nothing is ever committed back to it, and the scheduling for its cards
+ * lives in your own collection's state file — which is the only place it can.
+ */
+describe("a collection the app only reads", () => {
+  const performance = (dueDate: string) => ({
+    type: "reviewed" as const,
+    lastReviewedAt: "2026-01-01T00:00:00.000Z",
+    stability: 3,
+    difficulty: 5,
+    intervalRaw: 3,
+    intervalDays: 3,
+    dueDate,
+    reviewCount: 2,
+  });
+
+  let mine: FakeRepo;
+  let theirs: FakeRepo;
+
+  beforeEach(() => {
+    localStorage.clear();
+    mine = new FakeRepo();
+    theirs = new FakeRepo();
+    mine.set("a.md", card("one"), "sha-a");
+    theirs.set("b.md", card("two"), "sha-b");
+    installMany({ "me/cards": mine, "someone/shared": theirs });
+    localStorage.setItem(
+      "repos",
+      JSON.stringify([
+        { owner: "me", repo: "cards", branch: "main" },
+        { owner: "someone", repo: "shared", branch: "main", readOnly: true },
+      ])
+    );
+  });
+
+  it("fetches its cards", async () => {
+    const { syncEverything, loadCachedCards } = await freshSync();
+
+    await syncEverything();
+
+    const repos = (await loadCachedCards()).map((c) => c.repo).sort();
+    expect(repos).toEqual(["me/cards", "someone/shared"]);
+  });
+
+  it("never commits to it, however much scheduling its cards have", async () => {
+    const { syncEverything } = await freshSync();
+    const { importState } = await import("./db");
+    const { parseFile } = await import("./parser");
+    const [one] = await parseFile(card("one"), "a.md", "a");
+    const [two] = await parseFile(card("two"), "b.md", "b");
+
+    await importState({
+      [one.hash]: performance("2026-02-01"),
+      [two.hash]: performance("2026-03-01"),
+    });
+    await syncEverything();
+
+    expect(theirs.writeAttempts).toEqual([]);
+    expect(mine.stateWrites).toHaveLength(1);
+  });
+
+  /**
+   * And the scheduling for a subscribed card does not silently fall into your
+   * own file either — it belongs to their collection, which has nowhere to put
+   * it, so it stays on this device. Two devices of yours will each build it up
+   * separately; that is the honest cost of not owning the repo.
+   */
+  it("keeps a subscribed card's scheduling out of your own state file", async () => {
+    const { syncEverything } = await freshSync();
+    const { importState } = await import("./db");
+    const { parseFile } = await import("./parser");
+    const [one] = await parseFile(card("one"), "a.md", "a");
+    const [two] = await parseFile(card("two"), "b.md", "b");
+
+    await importState({
+      [one.hash]: performance("2026-02-01"),
+      [two.hash]: performance("2026-03-01"),
+    });
+    await syncEverything();
+
+    const written = mine.stateWrites[0] as { cards: Record<string, unknown> };
+    expect(Object.keys(written.cards)).toEqual([one.hash]);
+  });
+});
+
+/**
+ * The deck store used to be keyed by path alone, which could only ever describe
+ * one repository. Carrying it into the keyed store is a one-shot migration: it
+ * runs once, marks itself done, and empties what it read — so getting it wrong
+ * is not something a later sync quietly repairs.
+ */
+describe("a deck store from before collections", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem("github_owner", "someone");
+    localStorage.setItem("github_repo", "cards");
+  });
+
+  /** A database at the previous version, with the old single-repo deck store. */
+  async function deckStoreFromBefore(): Promise<void> {
+    globalThis.indexedDB = new IDBFactory();
+    vi.resetModules();
+    const { openDB } = await import("idb");
+    const old = await openDB("hashcards", 5, {
+      upgrade(db) {
+        db.createObjectStore("performances", { keyPath: "hash" });
+        db.createObjectStore("reviews", { autoIncrement: true });
+        db.createObjectStore("session");
+        db.createObjectStore("decks", { keyPath: "path" });
+        db.createObjectStore("meta");
+        db.createObjectStore("credentials");
+        db.createObjectStore("origins");
+      },
+    });
+    await old.put("decks", {
+      path: "a.md",
+      sha: "sha-a",
+      // As they were stored then: no card knew which collection it came from.
+      cards: [
+        {
+          deckName: "a",
+          filePath: "a.md",
+          range: [1, 2],
+          content: { type: "basic", question: "one", answer: "because" },
+          hash: "hash-old",
+          familyHash: null,
+        },
+      ],
+    });
+    old.close();
+  }
+
+  it("attributes the files it carries across to the repo that was configured", async () => {
+    await deckStoreFromBefore();
+    const { getAllDeckFiles } = await import("./db");
+
+    const [file] = await getAllDeckFiles();
+    expect(file.repo).toBe("someone/cards");
+    expect(file.path).toBe("a.md");
+  });
+
+  /**
+   * And the cards inside, not just the file around them. Missing this left every
+   * migrated card with no collection at all — invisible to the state-file
+   * scoping, and uneditable, since an edit needs to know which repo to commit to.
+   */
+  it("attributes the cards inside those files too", async () => {
+    await deckStoreFromBefore();
+    const { loadCards } = await import("./sync");
+
+    const cards = await loadCards();
+    expect(cards).toHaveLength(1);
+    expect(cards[0].repo).toBe("someone/cards");
+  });
+
+  it("does not run a second time and resurrect a collection since removed", async () => {
+    await deckStoreFromBefore();
+    const db = await import("./db");
+    await db.forgetRepo("someone/cards");
+    expect(await db.getAllDeckFiles()).toEqual([]);
+
+    // A later launch: same database, fresh modules.
+    vi.resetModules();
+    const again = await import("./db");
+
+    expect(await again.getAllDeckFiles()).toEqual([]);
   });
 });

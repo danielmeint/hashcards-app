@@ -22,6 +22,13 @@ export type CardContent = BasicCard | ClozeCard;
 
 export type Card = {
   deckName: string;
+  /**
+   * `owner/repo` — which collection this card came out of. Stamped when cards
+   * are read out of the deck store rather than stored on each one, so it cannot
+   * drift from the file it actually belongs to; an edit needs it to know which
+   * repository to commit to, and there may be more than one.
+   */
+  repo: string;
   filePath: string;
   /**
    * The lines of `filePath` this card was parsed from: absolute, 1-based and
@@ -33,6 +40,13 @@ export type Card = {
   hash: string;
   familyHash: string | null;
 };
+
+/**
+ * A card as the parser produces it: everything a file can say about a card, and
+ * nothing about where the file came from. The parser reads a file; which
+ * collection that file belongs to is not a question it can answer.
+ */
+export type ParsedCard = Omit<Card, "repo">;
 
 export type NewPerformance = {
   type: "new";

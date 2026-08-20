@@ -4,7 +4,7 @@ import { createSession, SessionOptions } from "./session";
 import { createView } from "./view";
 import { loadMarkdown } from "../../render";
 import { warmTypesetting } from "../../typeset";
-import { getConfig } from "../../github";
+import { repoFor } from "../../github";
 
 export type { SessionOptions as DrillOptions };
 
@@ -31,17 +31,27 @@ export async function renderDrill(
     loadMarkdown(),
   ]);
 
-  // Demo cards are in no repo at all, and a drill without a configured one has
-  // nowhere to send an edit — in both cases the button would be a promise the
-  // app cannot keep, so it is not offered, by button or by key.
-  const repo = options.dryRun ? null : getConfig();
+  /**
+   * Whether the card in front of you can be edited at all. Demo cards are in no
+   * repository, a collection can be removed while a drill is running, and a
+   * subscription is someone else's repo — in each case the button would be a
+   * promise the app cannot keep, so it is not offered, by button or by key.
+   *
+   * Asked per card rather than once, because a drill spans collections: the
+   * answer changes as the queue moves.
+   */
+  function editableCard(card: Card | null): card is Card {
+    if (!card || options.dryRun) return false;
+    const repo = repoFor(card.repo);
+    return repo !== null && !repo.readOnly;
+  }
 
   let leaving = false;
   let editing = false;
 
   async function edit(): Promise<void> {
     const card = session.current;
-    if (editing || leaving || !card || !repo) return;
+    if (editing || leaving || !editableCard(card)) return;
     editing = true;
     // The sheet ignores keys typed into its own textarea, but a stray Space
     // with focus anywhere else would reveal — or grade — the card sitting
@@ -49,7 +59,7 @@ export async function renderDrill(
     detachKeyboard();
     try {
       const { openCardEditor } = await import("../card-editor");
-      const result = await openCardEditor(card, repo);
+      const result = await openCardEditor(card);
       if (result) {
         session.replaceCard(card.hash, result.card, result.keptScheduling);
       }
@@ -59,7 +69,7 @@ export async function renderDrill(
     }
   }
 
-  const keyActions = { onEdit: repo ? () => void edit() : undefined };
+  const keyActions = { onEdit: options.dryRun ? undefined : () => void edit() };
   let detachKeyboard = attachKeyboard(session, keyActions);
 
   async function finish(): Promise<void> {
@@ -72,6 +82,7 @@ export async function renderDrill(
 
   const view = createView(container, session, () => void finish(), {
     onEdit: keyActions.onEdit,
+    canEdit: () => editableCard(session.current),
   });
   session.onChange(() => view.paint());
   view.paint();

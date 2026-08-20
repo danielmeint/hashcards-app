@@ -11,6 +11,7 @@ import { cardSummary, findLeeches, isRecovering } from "./leeches";
 function basic(hash: string, question = `Q ${hash}`): Card {
   return {
     deckName: "Test",
+  repo: "someone/cards",
     filePath: "test.md",
     range: [1, 2],
     content: { type: "basic", question, answer: "A" },

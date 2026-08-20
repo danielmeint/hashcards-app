@@ -1,6 +1,6 @@
-import { getConfig } from "./github";
+import { getRepos } from "./github";
 import { completeSignIn } from "./auth";
-import { syncAll, loadCachedCards } from "./sync";
+import { syncEverything, loadCachedCards } from "./sync";
 import { startAutoSync } from "./auto-sync";
 import { adoptLegacySyncTimestamp } from "./sync-state";
 import { renderSettings } from "./views/settings";
@@ -118,11 +118,10 @@ async function init() {
     return;
   }
 
-  const config = getConfig();
   // Settings is both the first-run screen and where a sign-in that just landed
   // without a repository picks one. Everything else opens on the deck list,
   // including a sign-in that had a repository waiting for it.
-  if (!config || settingsNotice) {
+  if (getRepos().length === 0 || settingsNotice) {
     await navigate("settings");
     return;
   }
@@ -140,7 +139,7 @@ async function init() {
 
   // Started after the first render, so the deck list is already subscribed and
   // sees every progress update.
-  if (navigator.onLine) syncAll(config);
+  if (navigator.onLine) syncEverything();
 
   // And keeps trying afterwards: reconnecting or returning to the tab retries
   // a sync that never landed, rather than leaving it until the next cold open.

@@ -1,6 +1,6 @@
 import { html, nothing, render } from "lit-html";
 import { Card } from "../types";
-import { ConflictError, GitHubConfig, cardSourceUrl } from "../github";
+import { ConflictError, cardSourceUrl, repoFor } from "../github";
 import {
   CardSource,
   EditResult,
@@ -46,10 +46,7 @@ type Phase =
       error: string | null;
     };
 
-export function openCardEditor(
-  card: Card,
-  config: GitHubConfig
-): Promise<EditResult | null> {
+export function openCardEditor(card: Card): Promise<EditResult | null> {
   return new Promise((resolve) => {
     const host = document.createElement("div");
     let phase: Phase = { kind: "loading" };
@@ -92,17 +89,14 @@ export function openCardEditor(
       phase = { ...state, saving: true, error: null };
       paint();
       try {
-        const result = await commitCardEdit(
-          config,
-          card,
-          state.source,
-          state.text,
-          { keepScheduling: state.keep }
-        );
+        const result = await commitCardEdit(card, state.source, state.text, {
+          keepScheduling: state.keep,
+        });
         // Scheduling that moved to a new hash only exists on this device until
         // it is pushed. Not waited on: the deck list reports sync, and this
         // sheet is finished either way.
-        void syncStateOnly(config);
+        const repo = repoFor(card.repo);
+        if (repo) void syncStateOnly(repo);
         finish(result);
       } catch (e) {
         phase = {
@@ -128,8 +122,12 @@ export function openCardEditor(
         return html`<p class="editor-status">Fetching the file…</p>`;
       }
       if (phase.kind === "failed") {
+        // A collection that has since been removed has no link to offer, so
+        // the failure has to speak for itself.
+        const repo = repoFor(card.repo);
+        if (!repo) return html`<p class="editor-status">${phase.message}</p>`;
         // prettier-ignore
-        return html`<p class="editor-status">Could not open this card. <a href=${cardSourceUrl(config, card)} target="_blank" rel="noopener">Edit it on GitHub</a> instead.</p>`;
+        return html`<p class="editor-status">Could not open this card. <a href=${cardSourceUrl(repo, card)} target="_blank" rel="noopener">Edit it on GitHub</a> instead.</p>`;
       }
       const state = phase;
       return html`
@@ -225,7 +223,7 @@ export function openCardEditor(
     void (async () => {
       try {
         const [source, performances] = await Promise.all([
-          readCardSource(config, card),
+          readCardSource(card),
           getAllPerformances(),
         ]);
         const perf = performances.get(card.hash);

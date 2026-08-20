@@ -24,6 +24,7 @@ async function fresh() {
 function card(n: number, familyHash: string | null = null): Card {
   return {
     deckName: "Test",
+    repo: "someone/cards",
     filePath: "test.md",
     range: [n, n + 1],
     content: { type: "basic", question: `Q${n}`, answer: `A${n}` },

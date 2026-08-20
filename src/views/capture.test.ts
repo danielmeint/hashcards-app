@@ -26,6 +26,11 @@ let writes: { path: string; text: string }[];
 
 async function openSheet(decks = DECKS) {
   globalThis.indexedDB = new IDBFactory();
+  localStorage.setItem(
+    "repos",
+    JSON.stringify([{ owner: "someone", repo: "cards", branch: "main" }])
+  );
+
   vi.resetModules();
   files = new Map([["a.md", { text: FILE, sha: "sha-1" }]]);
   writes = [];
@@ -56,7 +61,17 @@ async function openSheet(decks = DECKS) {
   const { parseFile } = await import("../parser");
   const { updateDeckFiles } = await import("../db");
   await updateDeckFiles(
-    [{ path: "a.md", sha: "sha-1", cards: await parseFile(FILE, "a.md", "AWS") }],
+    [
+      {
+        repo: "someone/cards",
+        path: "a.md",
+        sha: "sha-1",
+        cards: (await parseFile(FILE, "a.md", "AWS")).map((c) => ({
+          ...c,
+          repo: "someone/cards",
+        })),
+      },
+    ],
     []
   );
   const { loadCards } = await import("../sync");

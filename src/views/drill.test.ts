@@ -28,6 +28,7 @@ async function freshDrill() {
 function basicCard(n: number): Card {
   return {
     deckName: "Test",
+    repo: "someone/cards",
     filePath: "test.md",
     range: [n, n + 1],
     content: { type: "basic", question: `Q${n}`, answer: `A${n}` },
@@ -83,6 +84,7 @@ function clozeCard(n: number): Card {
   // Byte offsets, end inclusive: "Paris" in "The capital is Paris".
   return {
     deckName: "Test",
+    repo: "someone/cards",
     filePath: "test.md",
     range: [n, n + 1],
     content: { type: "cloze", text: "The capital is Paris", start: 15, end: 19 },
@@ -734,9 +736,10 @@ A: Simple Storage Service
     document.body.innerHTML = "";
     container = document.createElement("div");
     document.body.appendChild(container);
-    localStorage.setItem("github_owner", "someone");
-    localStorage.setItem("github_repo", "cards");
-    localStorage.setItem("github_branch", "trunk");
+    localStorage.setItem(
+      "repos",
+      JSON.stringify([{ owner: "someone", repo: "cards", branch: "trunk" }])
+    );
   });
 
   const editButton = () =>
@@ -776,8 +779,14 @@ A: Simple Storage Service
 
     const { parseFile } = await import("../parser");
     const { updateDeckFiles } = await import("../db");
-    const cards = await parseFile(FILE, "a.md", "deck");
-    await updateDeckFiles([{ path: "a.md", sha: "sha-1", cards }], []);
+    const cards = (await parseFile(FILE, "a.md", "deck")).map((c) => ({
+      ...c,
+      repo: "someone/cards",
+    }));
+    await updateDeckFiles(
+      [{ repo: "someone/cards", path: "a.md", sha: "sha-1", cards }],
+      []
+    );
     const { loadCards } = await import("../sync");
     await loadCards();
 

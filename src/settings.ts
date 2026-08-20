@@ -1,4 +1,5 @@
 import type { Theme } from "./theme";
+import type { RepoConfig } from "./github";
 
 /**
  * Everything this app keeps in `localStorage`, in one place.
@@ -92,9 +93,12 @@ const theme: Codec<Theme> = {
 export type IntroducedToday = { date: string; count: number };
 
 export const settings = {
-  owner: setting("github_owner", text("")),
-  repo: setting("github_repo", text("")),
-  branch: setting("github_branch", text("main")),
+  /**
+   * Every collection the app reads, in the order they are shown. A list rather
+   * than three flat keys because a card repository is not a singleton any more:
+   * one of these is yours, and the rest may be decks other people maintain.
+   */
+  repos: setting("repos", json<RepoConfig[]>([])),
   newCardsPerDay: setting("new_cards_per_day", count(20)),
   introducedToday: setting(
     "new_cards_introduced",
@@ -119,4 +123,8 @@ export const legacy = {
   pat: setting("github_pat", optionalText),
   /** The 5 MB card blob, before the deck store replaced it (2.4). */
   cards: setting("cached_cards", optionalText),
+  /** The single configured repository, before there could be more than one. */
+  owner: setting("github_owner", text("")),
+  repo: setting("github_repo", text("")),
+  branch: setting("github_branch", text("main")),
 };

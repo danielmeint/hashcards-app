@@ -1,5 +1,6 @@
 import { Card, Performance, ReviewedPerformance } from "./types";
 import { parseFile } from "./parser";
+import { inRepo } from "./db";
 import { todayStr } from "./fsrs";
 
 function addDays(dateStr: string, days: number): string {
@@ -135,7 +136,8 @@ export async function getDemoData(): Promise<{
   cards: Card[];
   cache: Map<string, Performance>;
 }> {
-  const cards = await parseFile(DEMO_DECK, "demo.md", "Demo Deck");
+  // Demo cards are in no repository at all; the empty key is what says so.
+  const cards = inRepo(await parseFile(DEMO_DECK, "demo.md", "Demo Deck"), "");
   const today = todayStr();
   const cache = new Map<string, Performance>();
 

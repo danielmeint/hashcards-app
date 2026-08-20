@@ -262,4 +262,83 @@ describe("deck identity", () => {
 
     expect(drilled[0]).toHaveLength(2);
   });
+
+  /**
+   * Quick capture lives here because this is the screen you are on when you are
+   * not drilling, and it is the one that already knows every deck by name.
+   */
+  describe("writing a new card", () => {
+    const sheet = () => document.querySelector(".capture-text");
+    const decks = () =>
+      [...document.querySelectorAll(".capture-deck option")].map((o) =>
+        (o.textContent ?? "").trim()
+      );
+
+    async function until(done: () => boolean, label: string): Promise<void> {
+      for (let i = 0; i < 200; i++) {
+        if (done()) return;
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      throw new Error(`Timed out waiting for ${label}`);
+    }
+
+    it("opens a sheet listing every deck, plus somewhere new", async () => {
+      const { renderDeckList } = await freshDeckList();
+      localStorage.setItem("github_owner", "someone");
+      localStorage.setItem("github_repo", "cards");
+      cache([card(1, "Alpha", "Alpha.md"), card(2, "Beta", "sub/Beta.md")]);
+
+      await renderDeckList(container, () => {}, () => {}, () => {});
+      (container.querySelector("#new-card-btn") as HTMLButtonElement).click();
+      await until(() => sheet() !== null, "the capture sheet");
+
+      // The folder is part of the name here: two decks can be called the same
+      // thing, and the picker is where that has to be told apart.
+      expect(decks()).toEqual(["Alpha", "sub/Beta", "New deck…"]);
+    });
+
+    it("sends an unconfigured app to Settings instead", async () => {
+      const { renderDeckList } = await freshDeckList();
+      cache([card(1, "Alpha", "Alpha.md")]);
+      let settingsOpened = false;
+
+      await renderDeckList(
+        container,
+        () => {},
+        () => {
+          settingsOpened = true;
+        },
+        () => {}
+      );
+      (container.querySelector("#new-card-btn") as HTMLButtonElement).click();
+      await until(() => settingsOpened, "settings to be opened");
+
+      expect(sheet()).toBeNull();
+    });
+
+    /**
+     * A repository that syncs cleanly and holds no decks is the one case where
+     * there is no header to hang the button on — and the one that most needs
+     * somewhere to write a first card.
+     */
+    it("offers itself on the empty screen too, once a repo is configured", async () => {
+      const { renderDeckList } = await freshDeckList();
+      localStorage.setItem("github_owner", "someone");
+      localStorage.setItem("github_repo", "cards");
+      cache([]);
+
+      await renderDeckList(container, () => {}, () => {}, () => {});
+
+      expect(container.querySelector("#new-card-btn")).not.toBeNull();
+    });
+
+    it("does not, when there is no repo to write to", async () => {
+      const { renderDeckList } = await freshDeckList();
+      cache([]);
+
+      await renderDeckList(container, () => {}, () => {}, () => {});
+
+      expect(container.querySelector("#new-card-btn")).toBeNull();
+    });
+  });
 });

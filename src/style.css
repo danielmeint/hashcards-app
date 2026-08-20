@@ -356,6 +356,8 @@ body {
 
 /* Quiet by design: it sits above the card for the moment you notice a bad one,
    and must never compete with the grade buttons for attention. */
+/* A button since it opens the editor in place; it still reads as the quiet
+   link it replaced rather than as another control competing with the grades. */
 .root .header .edit-link {
   font-family: var(--font-ui);
   font-size: 13px;
@@ -364,6 +366,9 @@ body {
   flex-shrink: 0;
   padding: 4px 8px;
   border-radius: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
 }
 
 .root .header .edit-link:hover {
@@ -1805,4 +1810,43 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* Quick capture shares the editor's sheet; what it adds is somewhere to say
+   which deck the card is going into. */
+.capture-target {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.capture-deck,
+.capture-path {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 8px 10px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--color-text);
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border-light);
+  border-radius: 6px;
+}
+
+.capture-path {
+  font-family: var(--font-mono);
+}
+
+.capture-deck:focus,
+.capture-path:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+
+/* The format, shown rather than explained — it disappears as soon as there is
+   anything to write over it. */
+.capture-text::placeholder {
+  color: var(--color-text-muted);
+  opacity: 0.65;
 }

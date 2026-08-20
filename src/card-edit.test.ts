@@ -442,4 +442,170 @@ C: The capital of [France] is [Paris]
       })
     ).rejects.toBeInstanceOf(ConflictError);
   });
+
+  /**
+   * The parse used to happen after the write. A file the parser refuses is a
+   * file the app cannot load on any device, and committing it first meant the
+   * repo held it, the local store did not, and the SHA the sheet was holding
+   * was stale — so trying again conflicted rather than recovering.
+   */
+  it("refuses text the parser cannot read, without committing it", async () => {
+    const { readCardSource, commitCardEdit, CardSyntaxError, sync } =
+      await freshEdit("a.md", FILE);
+    const card = (await sync.loadCachedCards())[1];
+    const source = await readCardSource(CONFIG, card);
+
+    await expect(
+      commitCardEdit(CONFIG, card, source, "Q: A question with no answer", {
+        keepScheduling: true,
+      })
+    ).rejects.toBeInstanceOf(CardSyntaxError);
+
+    expect(repo.commits).toHaveLength(0);
+    expect(repo.files.get("a.md")!.text).toBe(FILE);
+  });
+
+  it("leaves the sheet able to try again after a refusal", async () => {
+    const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
+    const card = (await sync.loadCachedCards())[1];
+    const source = await readCardSource(CONFIG, card);
+
+    await expect(
+      commitCardEdit(CONFIG, card, source, "A: An answer with no question", {
+        keepScheduling: true,
+      })
+    ).rejects.toBeTruthy();
+
+    // The same source, the same SHA — nothing moved, so the fix goes through.
+    await commitCardEdit(CONFIG, card, source, "Q: Durable?\nA: Very", {
+      keepScheduling: true,
+    });
+
+    expect(repo.files.get("a.md")!.text).toContain("Q: Durable?");
+  });
+
+  it("names the card that replaced the one being edited", async () => {
+    const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
+    const card = (await sync.loadCachedCards())[1];
+    const source = await readCardSource(CONFIG, card);
+
+    const result = await commitCardEdit(
+      CONFIG,
+      card,
+      source,
+      "Q: How durable is S3?\nA: 99.999999999%",
+      { keepScheduling: true }
+    );
+
+    expect(result.card).not.toBeNull();
+    expect(result.card!.hash).not.toBe(card.hash);
+    expect(result.card!.content).toMatchObject({ question: "How durable is S3?" });
+    expect(result.keptScheduling).toBe(true);
+  });
+
+  it("names the right sibling when a cloze block is rewritten", async () => {
+    const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
+    // The block yields two cards; the second is the one being edited.
+    const cards = (await sync.loadCachedCards()).filter(
+      (c) => c.content.type === "cloze"
+    );
+    const second = cards[1];
+    const source = await readCardSource(CONFIG, second);
+
+    const result = await commitCardEdit(
+      CONFIG,
+      second,
+      source,
+      "C: The capital of [France] is [Paris], obviously",
+      { keepScheduling: true }
+    );
+
+    expect(result.cards).toHaveLength(2);
+    expect(result.card).toBe(result.cards[1]);
+  });
+
+  it("has no replacement to name when the edit deleted the card", async () => {
+    const { readCardSource, commitCardEdit, sync } = await freshEdit("a.md", FILE);
+    const card = (await sync.loadCachedCards())[1];
+    const source = await readCardSource(CONFIG, card);
+
+    const result = await commitCardEdit(CONFIG, card, source, "", {
+      keepScheduling: true,
+    });
+
+    expect(result.card).toBeNull();
+  });
+});
+
+/**
+ * Quick capture: a card written rather than fixed. No range to splice into and
+ * no history to carry, but the same refusal to commit a file the parser cannot
+ * read — a half-typed card pushed to the repo breaks every device that syncs.
+ */
+describe("writing a new card", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("appends to the end of the deck, leaving what is there alone", async () => {
+    const { createCard } = await freshEdit("a.md", FILE);
+
+    const result = await createCard(CONFIG, "a.md", "Q: What is S3 Glacier?\nA: Cold storage");
+
+    expect(repo.files.get("a.md")!.text).toBe(
+      FILE + "\nQ: What is S3 Glacier?\nA: Cold storage\n"
+    );
+    expect(result.created).toBe(false);
+  });
+
+  it("returns just the card it wrote, not the whole file", async () => {
+    const { createCard } = await freshEdit("a.md", FILE);
+
+    const result = await createCard(CONFIG, "a.md", "Q: What is S3 Glacier?\nA: Cold storage");
+
+    expect(result.cards).toHaveLength(1);
+    expect(result.cards[0].content).toMatchObject({ question: "What is S3 Glacier?" });
+  });
+
+  it("writes a deck that does not exist yet, with no SHA to base it on", async () => {
+    const { createCard } = await freshEdit("a.md", FILE);
+
+    const result = await createCard(CONFIG, "new/Deck.md", "C: A [monoid] has an identity");
+
+    expect(result.created).toBe(true);
+    expect(repo.files.get("new/Deck.md")!.text).toBe(
+      "C: A [monoid] has an identity\n"
+    );
+    expect(result.cards[0].deckName).toBe("Deck");
+  });
+
+  it("refuses a card the parser cannot read, without committing it", async () => {
+    const { createCard, CardSyntaxError } = await freshEdit("a.md", FILE);
+
+    await expect(
+      createCard(CONFIG, "a.md", "C: A cloze with no deletion in it")
+    ).rejects.toBeInstanceOf(CardSyntaxError);
+
+    expect(repo.commits).toHaveLength(0);
+  });
+
+  it("refuses an empty box rather than committing a blank line", async () => {
+    const { createCard, CardSyntaxError } = await freshEdit("a.md", FILE);
+
+    await expect(createCard(CONFIG, "a.md", "   \n  ")).rejects.toBeInstanceOf(
+      CardSyntaxError
+    );
+    expect(repo.commits).toHaveLength(0);
+  });
+
+  it("puts the new card in the deck store, so the list counts it", async () => {
+    const { createCard, sync } = await freshEdit("a.md", FILE);
+
+    await createCard(CONFIG, "a.md", "Q: What is S3 Glacier?\nA: Cold storage");
+
+    const questions = (await sync.loadCachedCards())
+      .filter((c) => c.content.type === "basic")
+      .map((c) => (c.content as { question: string }).question);
+    expect(questions).toContain("What is S3 Glacier?");
+  });
 });

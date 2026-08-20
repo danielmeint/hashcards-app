@@ -276,6 +276,27 @@ export async function readFile(
   return { text: decodeBase64(data.content), sha: data.sha };
 }
 
+/**
+ * The same read, for a path that is allowed not to exist yet — a new deck being
+ * written for the first time. Only a 404 comes back as `null`; anything else is
+ * still a failure, because "the token cannot see this repo" must not be
+ * mistaken for "the file is not there".
+ */
+export async function readFileIfPresent(
+  config: GitHubConfig,
+  path: string
+): Promise<FileRead | null> {
+  const res = await apiFetch(
+    `/repos/${config.owner}/${config.repo}/contents/${encodePath(path)}?ref=${
+      config.branch
+    }`
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await apiError(res));
+  const data = await res.json();
+  return { text: decodeBase64(data.content), sha: data.sha };
+}
+
 export async function getFileContent(
   config: GitHubConfig,
   path: string

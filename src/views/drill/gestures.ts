@@ -152,7 +152,10 @@ export function attachCardGestures(
 }
 
 /** Keyboard shortcuts, on the document. Returns a teardown. */
-export function attachKeyboard(session: Session): () => void {
+export function attachKeyboard(
+  session: Session,
+  actions: { onEdit?: () => void } = {}
+): () => void {
   const controller = new AbortController();
 
   document.addEventListener(
@@ -186,6 +189,11 @@ export function attachKeyboard(session: Session): () => void {
         session.grade(parseInt(e.key) as Grade);
       } else if (e.key === "u" || e.key === "U") {
         void session.undo();
+      } else if ((e.key === "e" || e.key === "E") && actions.onEdit) {
+        // Noticing the card is wrong is the moment to fix it, and reaching for
+        // the mouse is where that intention goes to die.
+        e.preventDefault();
+        actions.onEdit();
       }
     },
     { signal: controller.signal }

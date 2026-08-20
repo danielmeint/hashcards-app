@@ -4,6 +4,7 @@ import { createSession, SessionOptions } from "./session";
 import { createView } from "./view";
 import { loadMarkdown } from "../../render";
 import { warmTypesetting } from "../../typeset";
+import { getConfig } from "../../github";
 
 export type { SessionOptions as DrillOptions };
 
@@ -29,9 +30,38 @@ export async function renderDrill(
     createSession(dueCards, options),
     loadMarkdown(),
   ]);
-  const detachKeyboard = attachKeyboard(session);
+
+  // Demo cards are in no repo at all, and a drill without a configured one has
+  // nowhere to send an edit — in both cases the button would be a promise the
+  // app cannot keep, so it is not offered, by button or by key.
+  const repo = options.dryRun ? null : getConfig();
 
   let leaving = false;
+  let editing = false;
+
+  async function edit(): Promise<void> {
+    const card = session.current;
+    if (editing || leaving || !card || !repo) return;
+    editing = true;
+    // The sheet ignores keys typed into its own textarea, but a stray Space
+    // with focus anywhere else would reveal — or grade — the card sitting
+    // behind it. The drill's shortcuts go away for as long as it is open.
+    detachKeyboard();
+    try {
+      const { openCardEditor } = await import("../card-editor");
+      const result = await openCardEditor(card, repo);
+      if (result) {
+        session.replaceCard(card.hash, result.card, result.keptScheduling);
+      }
+    } finally {
+      editing = false;
+      if (!leaving) detachKeyboard = attachKeyboard(session, keyActions);
+    }
+  }
+
+  const keyActions = { onEdit: repo ? () => void edit() : undefined };
+  let detachKeyboard = attachKeyboard(session, keyActions);
+
   async function finish(): Promise<void> {
     if (leaving) return;
     leaving = true;
@@ -41,7 +71,7 @@ export async function renderDrill(
   }
 
   const view = createView(container, session, () => void finish(), {
-    sourceLinks: !options.dryRun,
+    onEdit: keyActions.onEdit,
   });
   session.onChange(() => view.paint());
   view.paint();

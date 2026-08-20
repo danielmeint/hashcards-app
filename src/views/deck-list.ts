@@ -91,6 +91,29 @@ export async function renderDeckList(
     paint();
   }
 
+  /**
+   * Quick capture. The deck list is where it belongs: it is the screen you are
+   * on when you are not drilling, and it already knows every deck by name.
+   */
+  async function capture(): Promise<void> {
+    const config = getConfig();
+    if (!config) {
+      onSettings();
+      return;
+    }
+    const decks = model.groups.flatMap((group) =>
+      group.decks.map((deck) => ({
+        path: deck.path,
+        // Two decks can share a name, so the one in a folder says which.
+        name: deck.dir ? `${deck.dir}/${deck.name}` : deck.name,
+      }))
+    );
+    // Loaded on the click rather than at startup: a sheet nobody has opened
+    // yet has no business in the bundle the deck list is waiting on.
+    const { openCapture } = await import("./capture");
+    if (await openCapture(config, decks)) await reload();
+  }
+
   const startSync = () => {
     const config = getConfig();
     if (!config) {
@@ -157,10 +180,27 @@ export async function renderDeckList(
         </div>
       </div>`;
     }
+    // A configured repo that synced and turned up nothing is an empty
+    // collection, not an unconfigured app — and an empty collection is exactly
+    // the one that most needs somewhere to write the first card.
+    const configured = getConfig() !== null;
     return html`<div class="deck-list-view deck-list-empty">
-      <h1>No cards loaded</h1>
-      <p>Configure your GitHub repo and sync first.</p>
+      <h1>${configured ? "No cards yet" : "No cards loaded"}</h1>
+      <p>
+        ${configured
+          ? "Nothing in this repository parses as a deck. Write the first card."
+          : "Configure your GitHub repo and sync first."}
+      </p>
       <div class="empty-actions">
+        ${configured
+          ? html`<button
+              id="new-card-btn"
+              class="btn btn-primary"
+              @click=${() => void capture()}
+            >
+              New card
+            </button>`
+          : nothing}
         <button id="goto-settings" class="btn" @click=${onSettings}>
           Settings
         </button>
@@ -177,6 +217,14 @@ export async function renderDeckList(
       <div class="deck-list-header">
         <h1>Decks</h1>
         <div class="deck-list-actions">
+          <button
+            id="new-card-btn"
+            class="btn"
+            title="New card"
+            @click=${() => void capture()}
+          >
+            + Card
+          </button>
           <button id="stats-btn" class="btn" title="Statistics" @click=${onStats}>
             Stats
           </button>

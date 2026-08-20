@@ -624,11 +624,16 @@ matters most. Reviews move with the card and the performance is copied, so a
 rewritten leech is still tracked as one rather than quietly leaving the list
 because its hash changed.
 
-Still open: **inline edit from the drill**, which wants care that the leech list
-does not — the session queue holds hashes, and editing the card in front of you
-changes the hash of the card you are part-way through. And **quick capture**, an
-"add card" flow that appends to a deck file, since ideas for cards arrive while
-reading rather than while drilling.
+*Drill-time edit and quick capture: done.* The drill's Edit is the same sheet
+rather than a link out, and `session.replaceCard` puts what the edit produced
+back in the slot the old card held — see `src/views/drill/session.ts` and the
+"a card rewritten during the drill" tests. Quick capture is
+`src/views/capture.ts`, appending to a deck rather than splicing into one, with
+`createCard` in `src/card-edit.ts` behind it.
+
+The deep link from the drill is gone. Nothing was lost with it: the sheet falls
+back to `cardSourceUrl` when it cannot read the file, which is the only case the
+link was ever the better answer.
 
 ### 4.3 Hunt leeches
 
@@ -914,7 +919,8 @@ evenings, not estimates.
 **Shipped so far:** the whole of section 2 (Feel), **1.1** durable grades,
 **1.2**/**1.3** the deck-list counts and names, **1.5** visible sync failures,
 **3.1** the conflict retry, **3.4** token detection, **4.1** sign-in with GitHub,
-**4.2**'s deep link and in-app editor, and **4.3** the leech list.
+the whole of **4.2** — deep link, in-app editor, drill-time editing and quick
+capture — and **4.3** the leech list.
 
 ---
 
@@ -995,22 +1001,47 @@ placeholder constant is gone.
 
 ---
 
-### Phase 4 — Authoring · ~8 evenings
+### Phase 4 — Authoring · ~8 evenings — **done**
 
-The rest of **4.2**: editing from *inside* the drill, and quick capture.
+*As shipped.* Three things rather than two, and the third was a defect found on
+the way in.
 
-Drill-time editing is the one that needs care, and it is not the UI that makes
-it hard — the session queue holds hashes, so rewriting the card in front of you
-changes the identity of the card you are part-way through. The editor already
-knows both hashes (`carryHistory`), so the queue substitution is the work:
-replace the hash in `queue`/`requeued`/`completed`, keep the position, do not
-re-ask a card that was already graded this session.
+**The parse moved to the other side of the write.** `runEdit` committed and
+*then* parsed, so text the parser refuses — a `Q:` with no `A:`, a `C:` with no
+deletion — reached the repo, the local store did not follow, and the SHA the
+sheet was holding went stale, so trying again conflicted rather than recovering.
+One file broken on every device that synced it. The parse happens first now, and
+a `CardSyntaxError` is shown in the sheet with the text still in the box.
 
-Quick capture appends to a deck file rather than splicing into it, which is the
-same machinery with a simpler shape.
+**Drill-time editing.** The hard part was never the UI. The session holds hashes
+in six places — the queue, `requeued`, `completed`, `gradedNew`, the scheduling
+cache, and the undo stack — and rewriting the card in front of you invalidates
+every one of them at once. `replaceCard` moves all six and drops the card's undo
+entries, along with the reviews that pair with them: reversing a grade means
+writing an earlier scheduling back, and after an edit there is no longer one
+card that scheduling belongs to. The grade itself stays in the log — it
+happened. Deleting the card mid-drill also shrinks the progress denominator,
+without which the bar could never fill again.
+
+The one judgement call worth recording is what "keep its scheduling" means to a
+session in progress. Unchecking it makes the card new to the *store*, so the
+session treats it as new too — new intervals on the grade buttons, and eligible
+for the day's new-card budget. What does *not* reset is a charge already made:
+the budget is per slot per sitting, so a card graded before the edit is not
+charged twice for being rewritten.
+
+**Quick capture** appends rather than splices, which needs no range and no SHA
+arithmetic, and can write a deck that does not exist yet. The box is the file
+format, not a question field and an answer field — `C:` cards have no two halves
+to put in two fields, and a form that could only express `Q:`/`A:` would be a
+worse authoring tool than the text file it writes to.
+
+Numbers: the initial bundle went *down*, 28.90 → 28.11 kB gzipped, because both
+sheets and `card-edit.ts` with them now load on the click that opens them. Two
+features, and a cold start 0.79 kB lighter than before them.
 
 *Why here:* this is where the app stops being a reader of a repo and becomes the
-place cards are made, and it is the reason Phase 2 is worth doing first.
+place cards are made, and it is the reason Phase 2 was worth doing first.
 
 *Done when:* a card can be written, fixed, and deleted without ever opening
 GitHub.

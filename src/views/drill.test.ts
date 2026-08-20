@@ -630,8 +630,21 @@ describe("drill summary", () => {
  * then is the difference between a card that gets rewritten and one you resolve
  * to rewrite.
  */
+/**
+ * The drill's Edit button used to be a deep link to GitHub: it took you out of
+ * the drill, into a web editor holding the whole file, and left you to find
+ * your way back. It opens the same sheet the leech list uses instead, over the
+ * card — which means the session has to survive the card in front of you
+ * changing its identity under it.
+ */
 describe("editing the card on screen", () => {
   let container: HTMLElement;
+  let files: Map<string, { text: string; sha: string }>;
+  let writes: string[];
+
+  const FILE = `Q: What does S3 stand for?
+A: Simple Storage Service
+`;
 
   beforeEach(() => {
     localStorage.clear();
@@ -643,76 +656,158 @@ describe("editing the card on screen", () => {
     localStorage.setItem("github_branch", "trunk");
   });
 
-  const editLink = () =>
-    container.querySelector("#edit-link") as HTMLAnchorElement;
+  const editButton = () =>
+    container.querySelector("#edit-link") as HTMLButtonElement;
+  const sheet = () => document.querySelector(".editor-text") as HTMLTextAreaElement;
+  const cardText = () =>
+    (container.querySelector(".card-content") as HTMLElement).textContent ?? "";
 
-  const sourced = (n: number, filePath: string, range: [number, number]): Card => ({
-    ...basicCard(n),
-    filePath,
-    range,
-  });
+  /** A drill over a real file, with a repo behind it the sheet can read. */
+  async function drillOnFile(options: { dryRun?: boolean } = {}) {
+    globalThis.indexedDB = new IDBFactory();
+    vi.resetModules();
+    files = new Map([["a.md", { text: FILE, sha: "sha-1" }]]);
+    writes = [];
 
-  it("links to the lines the card was parsed from, on the configured branch", async () => {
-    const { renderDrill } = await freshDrill();
-    await renderDrill(container, [sourced(1, "aws/Networking.md", [12, 18])], () => {});
+    globalThis.fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const path = decodeURIComponent(url.match(/\/contents\/([^?]+)/)![1]);
+        if (init?.method === "PUT") {
+          const body = JSON.parse(String(init.body)) as { content: string };
+          writes.push(atob(body.content));
+          return new Response(JSON.stringify({ content: { sha: "sha-2" } }), {
+            status: 200,
+          });
+        }
+        const file = files.get(path)!;
+        return new Response(
+          JSON.stringify({ content: btoa(file.text), sha: file.sha }),
+          { status: 200 }
+        );
+      }
+    ) as unknown as typeof fetch;
 
-    expect(editLink().href).toBe(
-      "https://github.com/someone/cards/blob/trunk/aws/Networking.md#L12-L18"
+    const { saveCredential } = await import("../auth");
+    await saveCredential({ kind: "pat", token: "token" });
+
+    const { parseFile } = await import("../parser");
+    const { updateDeckFiles } = await import("../db");
+    const cards = await parseFile(FILE, "a.md", "deck");
+    await updateDeckFiles([{ path: "a.md", sha: "sha-1", cards }], []);
+    const { loadCards } = await import("../sync");
+    await loadCards();
+
+    const { renderDrill } = await import("./drill");
+    await renderDrill(container, cards, () => {}, options);
+    return { cards };
+  }
+
+  /** Wait for what the sheet actually does; opening it awaits a fetch. */
+  async function until(done: () => boolean, label: string): Promise<void> {
+    for (let i = 0; i < 200; i++) {
+      if (done()) return;
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    throw new Error(`Timed out waiting for ${label}`);
+  }
+
+  async function openSheet(): Promise<void> {
+    editButton().click();
+    await until(() => sheet() !== null, "the editor to open");
+  }
+
+  async function saveSheet(text: string): Promise<void> {
+    const box = sheet();
+    box.value = text;
+    box.dispatchEvent(new Event("input"));
+    (document.querySelector(".editor-save") as HTMLButtonElement).click();
+    await until(() => sheet() === null, "the editor to close");
+  }
+
+  it("opens the card's own lines in a sheet, without leaving the drill", async () => {
+    await drillOnFile();
+    await openSheet();
+
+    expect(sheet().value).toBe(
+      "Q: What does S3 stand for?\nA: Simple Storage Service"
     );
-    expect(editLink().hidden).toBe(false);
+    expect(container.querySelector(".card-container")).not.toBeNull();
   });
 
-  it("links to a single line without a range", async () => {
-    const { renderDrill } = await freshDrill();
-    await renderDrill(container, [sourced(1, "a.md", [7, 7])], () => {});
+  it("opens on the e key too, since reaching for the mouse is where the intention dies", async () => {
+    await drillOnFile();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "e" }));
+    await until(() => sheet() !== null, "the editor to open");
 
-    expect(editLink().href).toBe(
-      "https://github.com/someone/cards/blob/trunk/a.md#L7"
+    expect(sheet()).not.toBeNull();
+  });
+
+  it("puts what the edit produced on screen, in the same slot", async () => {
+    await drillOnFile();
+    await openSheet();
+    await saveSheet("Q: What does S3 stand for?\nA: Simple Storage Service, obviously");
+
+    expect(writes).toHaveLength(1);
+    await until(
+      () => cardText().includes("obviously"),
+      "the rewritten card to be painted"
+    );
+    expect(cardText()).toContain("What does S3 stand for?");
+  });
+
+  it("ends the drill when the edit deleted the only card left", async () => {
+    await drillOnFile();
+    await openSheet();
+    await saveSheet("");
+
+    await until(
+      () => container.querySelector(".finished") !== null,
+      "the summary screen"
     );
   });
 
-  it("escapes a path with a space, without escaping its slashes", async () => {
-    const { renderDrill } = await freshDrill();
-    await renderDrill(container, [sourced(1, "my notes/deep dive.md", [1, 2])], () => {});
+  /**
+   * The drill listens for Space and 1–4 on the document. With a modal over the
+   * card, a key that reached them would grade a card the user is not looking
+   * at — and one they are in the middle of rewriting.
+   */
+  it("suspends the drill's shortcuts while the sheet is open", async () => {
+    await drillOnFile();
+    await openSheet();
 
-    expect(editLink().href).toContain("/blob/trunk/my%20notes/deep%20dive.md#L1-L2");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: " " }));
+
+    expect(
+      container.querySelector(".card-content")!.classList.contains("revealed")
+    ).toBe(false);
   });
 
-  it("follows the drill rather than going stale after the first card", async () => {
-    const { renderDrill } = await freshDrill();
-    await renderDrill(
-      container,
-      [sourced(1, "one.md", [1, 2]), sourced(2, "two.md", [30, 31])],
-      () => {}
-    );
+  it("gives the shortcuts back when the sheet is dismissed", async () => {
+    await drillOnFile();
+    await openSheet();
+    (document.querySelector(".editor-cancel") as HTMLButtonElement).click();
+    await until(() => sheet() === null, "the editor to close");
 
-    const seen = [editLink().href];
-    click(container, "#reveal-btn");
-    click(container, '.grade-btn[data-grade="4"]');
-    seen.push(editLink().href);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: " " }));
 
-    // The queue is shuffled, so which card comes first is not knowable — only
-    // that the link moved with it. Set once at mount, both would be the same.
-    expect(seen.map((href) => href.split("/blob/trunk/")[1]).sort()).toEqual([
-      "one.md#L1-L2",
-      "two.md#L30-L31",
-    ]);
+    expect(
+      container.querySelector(".card-content")!.classList.contains("revealed")
+    ).toBe(true);
   });
 
   it("is absent when no repo is configured", async () => {
     localStorage.clear();
     const { renderDrill } = await freshDrill();
-    await renderDrill(container, [sourced(1, "a.md", [1, 2])], () => {});
+    await renderDrill(container, [basicCard(1)], () => {});
 
-    expect(editLink().hidden).toBe(true);
+    expect(editButton().hidden).toBe(true);
   });
 
   it("is absent in demo mode, whose cards are in no repo at all", async () => {
     const { renderDrill } = await freshDrill();
-    await renderDrill(container, [sourced(1, "demo.md", [1, 2])], () => {}, {
-      dryRun: true,
-    });
+    await renderDrill(container, [basicCard(1)], () => {}, { dryRun: true });
 
-    expect(editLink().hidden).toBe(true);
+    expect(editButton().hidden).toBe(true);
   });
 });

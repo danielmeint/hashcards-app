@@ -1,7 +1,6 @@
 import { html, render, TemplateResult } from "lit-html";
 import { unsafeHTML } from "lit-html/directives/unsafe-html.js";
 import { Card, Grade, Review } from "../../types";
-import { cardSourceUrl, getConfig } from "../../github";
 import { renderCardBody } from "../../render";
 import { typeset } from "../../typeset";
 import { attachCardGestures } from "./gestures";
@@ -23,8 +22,9 @@ export type DrillView = {
 };
 
 export type ViewOptions = {
-  /** Demo cards have no repo behind them, so they get no edit link. */
-  sourceLinks?: boolean;
+  /** Opens the editor on the card in front of you. Absent in demo mode, which
+   *  has no repo behind it and so nothing to edit. */
+  onEdit?: () => void;
 };
 
 export function createView(
@@ -33,7 +33,7 @@ export function createView(
   onFinish: () => void,
   options: ViewOptions = {}
 ): DrillView {
-  const repo = options.sourceLinks === false ? null : getConfig();
+  const onEdit = options.onEdit;
   let summaryShown = false;
   let buildingSummary = false;
   /** The card node last put on screen, so a returning one can be un-swiped. */
@@ -96,7 +96,7 @@ export function createView(
     });
   }
 
-  function drill(card: Card, node: HTMLElement): TemplateResult {
+  function drill(node: HTMLElement): TemplateResult {
     const requeued = session.requeued;
     const revealed = session.revealed;
     // Cheap arithmetic, so computed up front rather than at reveal — by the
@@ -112,17 +112,18 @@ export function createView(
               style="width: ${session.progress * 100}%"
             ></div>
           </div>
-          <!-- Points at the card on screen, so it follows the drill rather
-               than being set once and quietly going stale. -->
-          <a
+          <!-- Was a deep link to GitHub, which meant leaving the drill,
+               finding the card in a web editor and finding your way back. The
+               same sheet the leech list uses opens over the card instead. -->
+          <button
             class="edit-link"
             id="edit-link"
-            target="_blank"
-            rel="noopener"
-            ?hidden=${repo === null}
-            href=${repo ? cardSourceUrl(repo, card) : ""}
-            >Edit</a
+            type="button"
+            ?hidden=${onEdit === undefined}
+            @click=${() => onEdit?.()}
           >
+            Edit
+          </button>
         </div>
         <div class="write-error" role="alert" ?hidden=${!session.writeFailed}>
           Couldn't save progress on this device — reviews from this session may
@@ -237,7 +238,7 @@ export function createView(
       session.revealed
     );
 
-    render(drill(card, node), container);
+    render(drill(node), container);
     attachGestures();
     prerenderNext();
     pruneNodeCache();

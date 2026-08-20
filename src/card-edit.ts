@@ -1,5 +1,11 @@
 import { Card } from "./types";
-import { GitHubConfig, deleteFile, readFile, writeFile } from "./github";
+import {
+  GitHubConfig,
+  deleteFile,
+  readFile,
+  readFileIfPresent,
+  writeFile,
+} from "./github";
 import { parseFile } from "./parser";
 import { getAllPerformances, migrateCardHistory, updateDeckFiles } from "./db";
 import { deckNameFor, exclusive, loadCachedCards, loadCards } from "./sync";
@@ -60,11 +66,27 @@ export function spliceLines(
 export type EditResult = {
   /** What the edited lines parse into now — empty if the edit removed them. */
   cards: Card[];
+  /**
+   * The one card that took the edited card's place, paired by position — the
+   * card a drill should put back on screen. Null if the edit deleted it.
+   */
+  card: Card | null;
   /** How many of them kept the history of the card they replaced. */
   migrated: number;
+  /** Whether the old card's history followed the new hash. */
+  keptScheduling: boolean;
   /** Whether the file itself was deleted, having nothing left in it. */
   removedFile: boolean;
 };
+
+/**
+ * The text in the box is not a card file.
+ *
+ * Distinguished from every other failure because it is the only one the user
+ * can fix from where they are standing — nothing has been sent anywhere, and
+ * the text is still in the box.
+ */
+export class CardSyntaxError extends Error {}
 
 /**
  * Commit an edit and reconcile everything local with it.
@@ -108,10 +130,23 @@ async function runEdit(
     );
     await updateDeckFiles([], [card.filePath]);
     await loadCards();
-    return { cards: [], migrated: 0, removedFile: true };
+    return {
+      cards: [],
+      card: null,
+      migrated: 0,
+      keptScheduling: false,
+      removedFile: true,
+    };
   }
 
   const removing = replacement.trim() === "";
+
+  // Parsed before it is committed, not after. `parseFile` throws on a file it
+  // cannot read, and a throw on this side of the write used to leave the repo
+  // holding a file the app then refused to load — with the SHA the edit was
+  // based on now stale, so trying again conflicted rather than recovering.
+  const parsed = await validate(updated, card.filePath, deck);
+
   const sha = await writeFile(config, card.filePath, updated, {
     sha: source.sha,
     message: removing
@@ -119,7 +154,6 @@ async function runEdit(
       : `Rewrite a card in ${card.filePath}`,
   });
 
-  const parsed = await parseFile(updated, card.filePath, deck);
   await updateDeckFiles([{ path: card.filePath, sha, cards: parsed }], []);
   await loadCards();
 
@@ -134,7 +168,36 @@ async function runEdit(
       ]);
 
   const migrated = options.keepScheduling ? await carryHistory(before, after) : 0;
-  return { cards: after, migrated, removedFile: false };
+
+  // Paired by position, the same way the history is: the card that replaced
+  // this one is the one that landed in its slot.
+  const slot = before.findIndex((c) => c.hash === card.hash);
+  return {
+    cards: after,
+    card: after[slot === -1 ? 0 : slot] ?? null,
+    migrated,
+    keptScheduling: options.keepScheduling,
+    removedFile: false,
+  };
+}
+
+/**
+ * What a file would parse into, or a `CardSyntaxError` saying why it would not.
+ *
+ * The parser's own message names the file and the line, which is the useful
+ * half; the prefix says whose fault it is, since the same message from a sync
+ * means "someone else broke this" and here it means "what you just typed".
+ */
+async function validate(
+  text: string,
+  path: string,
+  deck: string
+): Promise<Card[]> {
+  try {
+    return await parseFile(text, path, deck);
+  } catch (e) {
+    throw new CardSyntaxError(`That isn't a card yet — ${(e as Error).message}`);
+  }
 }
 
 /** Cards whose own lines overlap `range` — a cloze block yields several. */
@@ -173,4 +236,65 @@ async function carryHistory(before: Card[], after: Card[]): Promise<number> {
     migrated++;
   }
   return migrated;
+}
+
+/**
+ * A card written from scratch rather than fixed in place.
+ *
+ * The other half of authoring, and deliberately the simpler one: appending to
+ * the end of a file needs no range, no SHA arithmetic on the lines around it,
+ * and no history to carry — a card that did not exist has nothing to keep.
+ * What it does share with an edit is that the file is parsed before it is
+ * committed, so a half-typed `Q:` with no `A:` is refused here rather than
+ * pushed to the repo and refused by every device that syncs it.
+ */
+export type CaptureResult = {
+  /** What the appended text parsed into — usually one card, more for a cloze. */
+  cards: Card[];
+  path: string;
+  /** Whether this wrote the deck file into existence. */
+  created: boolean;
+};
+
+export function createCard(
+  config: GitHubConfig,
+  path: string,
+  text: string
+): Promise<CaptureResult> {
+  return exclusive(() => runCapture(config, path, text));
+}
+
+async function runCapture(
+  config: GitHubConfig,
+  path: string,
+  text: string
+): Promise<CaptureResult> {
+  const body = text.trim();
+  if (body === "") throw new CardSyntaxError("There is nothing to save yet.");
+
+  const existing = await readFileIfPresent(config, path);
+  const deck = deckNameFor(path);
+  const before = existing?.text ?? "";
+
+  // A blank line between cards, and exactly one — the format separates cards by
+  // their tags, but a file people also read should not run them together.
+  const head = before.replace(/\s+$/, "");
+  const updated = head === "" ? `${body}\n` : `${head}\n\n${body}\n`;
+
+  const parsed = await validate(updated, path, deck);
+
+  const sha = await writeFile(config, path, updated, {
+    ...(existing ? { sha: existing.sha } : {}),
+    message: existing ? `Add a card to ${path}` : `Add ${path}`,
+  });
+  await updateDeckFiles([{ path, sha, cards: parsed }], []);
+  await loadCards();
+
+  // The lines the new text occupies: everything after what was already there.
+  const firstLine = head === "" ? 1 : head.split("\n").length + 2;
+  return {
+    cards: cardsInRange(parsed, path, [firstLine, updated.split("\n").length]),
+    path,
+    created: existing === null,
+  };
 }

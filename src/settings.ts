@@ -103,6 +103,8 @@ export const settings = {
   intervalFuzz: setting("interval_fuzz", flag(true)),
   hapticFeedback: setting("haptic_feedback", flag(true)),
   theme: setting("theme", theme),
+  /** The deck quick capture offers first — where the last card went. */
+  lastDeckPath: setting("last_deck_path", optionalText),
   lastSyncedAt: setting("last_synced_at", optionalText),
   lastPushedAt: setting("last_pushed_at", optionalText),
 };

@@ -49,6 +49,13 @@ export type Session = {
   grade(grade: Grade): void;
   requeue(again: boolean): void;
   undo(): Promise<void>;
+  /**
+   * Put what an edit made of a card where the old one was, or drop it if the
+   * edit deleted it. `keptScheduling` says whether the old card's history
+   * followed the new hash; when it did not, this is a card nothing has ever
+   * seen, and the intervals it offers have to say so.
+   */
+  replaceCard(from: string, to: Card | null, keptScheduling: boolean): void;
   /** Formatted interval each grade would give the current card. */
   previews(): string[];
   /** Clear the stored position and push review state. */
@@ -122,6 +129,14 @@ export async function createSession(
   const queue = buildQueue(dueCards, resume);
   const cache = await buildCache(queue, options.cache);
 
+  /**
+   * Every card this session can reach, by hash — including ones already
+   * retired, which undo has to be able to bring back. A map rather than a
+   * search through `dueCards` because an edit changes a card's hash mid-drill,
+   * and the array the drill was started with cannot be told about that.
+   */
+  const known = new Map(dueCards.map((c) => [c.hash, c]));
+
   // Cards never reviewed before, so a grade can be charged against today's
   // new-card budget exactly once.
   const newCardHashes = new Set<string>();
@@ -136,7 +151,7 @@ export async function createSession(
   const completedHashes = new Set<string>(resume?.completed ?? []);
   const undoStack: UndoEntry[] = [];
   const startedAt = resume?.startedAt ?? new Date().toISOString();
-  const totalCards = resume?.totalCards ?? queue.length;
+  let totalCards = resume?.totalCards ?? queue.length;
 
   const reviews: Review[] = [];
   let revealed = false;
@@ -308,7 +323,7 @@ export async function createSession(
       if (undoStack.length === 0) return;
 
       const entry = undoStack.pop()!;
-      const card = dueCards.find((c) => c.hash === entry.cardHash);
+      const card = known.get(entry.cardHash);
       if (!card) return;
 
       if (entry.type === "requeue") {
@@ -361,6 +376,62 @@ export async function createSession(
         cache.set(card.hash, entry.prevPerf);
       }
 
+      revealed = false;
+      notify();
+    },
+
+    replaceCard(from: string, to: Card | null, keptScheduling: boolean) {
+      const at = queue.findIndex((c) => c.hash === from);
+      if (at === -1) return;
+      // An edit that only moved whitespace the parser trims produces the same
+      // card back. Nothing to substitute, and unpicking the undo stack for it
+      // would be throwing away history for no change at all.
+      if (to !== null && to.hash === from) return;
+
+      // Grades already given to the old text stand — they happened, and the
+      // review log has them. What cannot stand is undoing one: reversing a
+      // grade means writing the card's earlier scheduling back, and after an
+      // edit there is no longer a single card that scheduling belongs to. The
+      // entries go, and the reviews that pair with them go with them, so the
+      // stack and the list stay the parallel things the rest of undo assumes.
+      for (let i = undoStack.length - 1; i >= 0; i--) {
+        if (undoStack[i].cardHash === from) undoStack.splice(i, 1);
+      }
+      for (let i = reviews.length - 1; i >= 0; i--) {
+        if (reviews[i].cardHash === from) reviews.splice(i, 1);
+      }
+
+      if (to === null) {
+        queue.splice(at, 1);
+        // The progress bar counts completions against the size of the queue;
+        // a card that left without being answered has to leave the denominator
+        // too, or the bar can never fill.
+        if (!completedHashes.has(from)) totalCards = Math.max(0, totalCards - 1);
+      } else {
+        queue[at] = to;
+        known.set(to.hash, to);
+
+        // A rewrite that kept its history is the same card wearing a new hash;
+        // one that did not is a card nothing has ever seen.
+        const perf: Performance = keptScheduling
+          ? cache.get(from) ?? { type: "new" }
+          : { type: "new" };
+        cache.set(to.hash, perf);
+        if (perf.type === "new") newCardHashes.add(to.hash);
+
+        for (const set of [requeuedHashes, completedHashes, gradedNewCards]) {
+          if (set.delete(from)) set.add(to.hash);
+        }
+      }
+
+      known.delete(from);
+      cache.delete(from);
+      newCardHashes.delete(from);
+      requeuedHashes.delete(from);
+      completedHashes.delete(from);
+      gradedNewCards.delete(from);
+
+      savePosition();
       revealed = false;
       notify();
     },

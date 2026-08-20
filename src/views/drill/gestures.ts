@@ -8,8 +8,39 @@ import { Session } from "./session";
  * bottom edge while the card is the whole screen.
  */
 
-/** How far a drag must travel horizontally before it counts as a swipe. */
-const SWIPE_CLAIM_PX = 12;
+/**
+ * How far a drag must travel horizontally before it counts as a swipe.
+ *
+ * Deliberately below the browser's own pan slop. Two things decide what a
+ * gesture is, and the browser goes first: with `touch-action: pan-y` it watches
+ * the opening movement, and the moment it reads a vertical pan it takes the
+ * pointer and sends `pointercancel`. Nothing arrives after that — no further
+ * `pointermove` for that finger — so the swipe is not lost, it is *gone*, and
+ * no amount of horizontal travel afterwards can bring it back.
+ *
+ * At 12px this threshold guaranteed we were second: a thumb 30° off horizontal
+ * has moved 5px vertically by the time it has moved 9px sideways, which is
+ * enough for the browser to have started scrolling while we were still waiting
+ * to be sure.
+ */
+const SWIPE_CLAIM_PX = 8;
+
+/**
+ * How far off horizontal a swipe may lean, as a slope — `|dy|` over `|dx|`.
+ *
+ * A thumb pivots at its base, so a swipe someone means as horizontal arrives as
+ * an arc: steep at the start, flattening as it goes. Measured from the touch
+ * origin, the early steep part keeps `dy` inflated long after the finger is
+ * plainly moving sideways. The old rule was `|dx| > |dy|` — a 45° cone, which
+ * is narrower than a thumb is accurate.
+ *
+ * Widening it is safe because this test is not what protects scrolling. The
+ * browser arbitrates first, and a gesture it read as a vertical pan never
+ * reaches here at all; what this sorts is only what the browser has already
+ * declined to scroll.
+ */
+const SWIPE_CONE = 1.6; // ≈58° off horizontal
+
 /** How far it must travel before releasing commits, rather than springing back. */
 const SWIPE_COMMIT_PX = 90;
 
@@ -91,8 +122,11 @@ export function attachCardGestures(
     const dy = e.clientY - drag.y0;
 
     if (!drag.claimed) {
-      // Vertical wins ties, so scrolling a long card still works.
-      if (Math.abs(dx) < SWIPE_CLAIM_PX || Math.abs(dx) <= Math.abs(dy)) return;
+      // Re-tested on every move, so a gesture that opened steep and flattened
+      // out can still be claimed — the arc is the normal shape of a thumb
+      // swipe, not an edge case.
+      if (Math.abs(dx) < SWIPE_CLAIM_PX) return;
+      if (Math.abs(dy) > Math.abs(dx) * SWIPE_CONE) return;
       drag.claimed = true;
       cardContainer.setPointerCapture?.(e.pointerId);
     }
@@ -148,6 +182,12 @@ export function attachCardGestures(
   };
 
   cardContainer.addEventListener("pointerup", (e) => endDrag(e, true));
+  // A cancel is almost always the browser taking the gesture for a scroll. It
+  // is not recoverable — the pointer is finished and nothing further will be
+  // reported for it — so all this can do is put the card back. What keeps that
+  // from happening in the first place is `touch-action`: the container concedes
+  // vertical panning only while the card has somewhere to scroll to, and a card
+  // that fits on screen concedes nothing.
   cardContainer.addEventListener("pointercancel", (e) => endDrag(e, false));
 }
 

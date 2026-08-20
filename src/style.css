@@ -415,9 +415,19 @@ body {
   /* Anchors the swipe indicator. */
   position: relative;
   /* Vertical panning stays with the browser so long cards still scroll;
-     horizontal belongs to the swipe handler. */
+     horizontal belongs to the swipe handler. The cost of conceding it is that
+     the browser decides first, and a gesture it reads as a pan is taken away
+     mid-swipe and cannot be got back — so it is conceded only while a card
+     actually has somewhere to scroll to (see `.card-fits`). */
   touch-action: pan-y;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* A card that fits on screen has nothing to scroll, so there is nothing to
+   defer to: the browser gets no say, and a swipe cannot be lost to a pan that
+   would not have moved anything. */
+.root .card-container.card-fits {
+  touch-action: none;
 }
 
 /* Before the answer is showing, the card is a single large "reveal" target. */

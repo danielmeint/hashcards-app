@@ -539,6 +539,89 @@ describe("drill input", () => {
     expect(isRevealed(container)).toBe(true);
   });
 
+  /**
+   * A thumb pivots at its base, so a swipe meant as horizontal arrives as an
+   * arc. The old rule was a 45° cone measured from the touch origin, where the
+   * steep opening of that arc keeps `dy` ahead of `dx` well past the point the
+   * finger is plainly going sideways — so a swipe that reads as deliberate to
+   * the person making it was refused.
+   */
+  it("takes a swipe that leans, not only one drawn with a ruler", async () => {
+    const { renderDrill, getAllReviews } = await freshDrill();
+    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+    click(container, "#reveal-btn");
+    drag(container, 100, 120); // ~50° off horizontal: refused under |dx| > |dy|
+    const reviews = await waitFor(
+      getAllReviews,
+      (r) => r.length === 1,
+      "the leaning swipe"
+    );
+
+    expect(reviews[0].grade).toBe(Grade.Good);
+  });
+
+  /**
+   * Which of the two deciders arbitrates a gesture. While a card overflows, the
+   * browser is handed vertical panning and goes first — a gesture it reads as a
+   * pan is taken and cancelled, and a cancelled pointer reports nothing more,
+   * so the swipe is gone rather than delayed. While a card fits, conceding that
+   * buys nothing and costs swipes.
+   *
+   * jsdom does no layout, so the heights are the test's to supply.
+   */
+  describe("who owns the gesture", () => {
+    const measure = (scrollHeight: number, clientHeight: number): void => {
+      const content = container.querySelector(".card-content")!;
+      for (const [prop, value] of [
+        ["scrollHeight", scrollHeight],
+        ["clientHeight", clientHeight],
+      ] as const) {
+        Object.defineProperty(content, prop, {
+          value,
+          configurable: true,
+        });
+      }
+    };
+
+    const fits = () =>
+      container.querySelector(".card-container")!.classList.contains("card-fits");
+
+    it("gives the browser no say over a card that fits on screen", async () => {
+      const { renderDrill } = await freshDrill();
+      await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+      measure(200, 200);
+      click(container, "#reveal-btn");
+
+      expect(fits()).toBe(true);
+    });
+
+    it("hands vertical panning back the moment a card has somewhere to scroll", async () => {
+      const { renderDrill } = await freshDrill();
+      await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+      measure(900, 300);
+      click(container, "#reveal-btn");
+
+      expect(fits()).toBe(false);
+    });
+  });
+
+  it("still leaves a gesture that is mostly downwards alone", async () => {
+    const { renderDrill, getAllReviews } = await freshDrill();
+    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+    click(container, "#reveal-btn");
+    // Far enough sideways to commit if it were claimed at all — a flick down a
+    // long card curves, and 100px of drift over 400px is an ordinary scroll,
+    // not a swipe. Widening the cone must not reach this far.
+    drag(container, 100, 400);
+    await settle();
+
+    expect(await getAllReviews()).toHaveLength(0);
+  });
+
   it("space reveals and never grades", async () => {
     const { renderDrill, getAllReviews } = await freshDrill();
     await renderDrill(container, [basicCard(1)], () => {});

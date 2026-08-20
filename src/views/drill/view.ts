@@ -64,10 +64,36 @@ export function createView(
           <div class="card-content">${unsafeHTML(renderCardBody(card))}</div>`,
         node
       );
-      void typeset(node.querySelector(".card-content") as HTMLElement);
+      const built = node;
+      // Maths and highlighting change how tall the card is, so whether it has
+      // anywhere to scroll is not settled until they have run.
+      void typeset(built.querySelector(".card-content") as HTMLElement).then(
+        () => {
+          if (mountedNode === built) syncScrollLock();
+        }
+      );
       nodeCache.set(card.hash, node);
     }
     return node;
+  }
+
+  /**
+   * Tell the container whether the card on screen has anywhere to scroll.
+   *
+   * This is what decides who arbitrates the gesture. While a card overflows,
+   * the browser is given vertical panning and takes precedence over the swipe
+   * handler — a gesture it reads as a pan is claimed and cancelled, and there
+   * is no getting it back. While a card fits, conceding that buys nothing and
+   * costs swipes, so nothing is conceded.
+   */
+  function syncScrollLock(): void {
+    const container = mountedNode?.closest(".card-container");
+    const content = mountedNode?.querySelector(".card-content");
+    if (!container || !content) return;
+    container.classList.toggle(
+      "card-fits",
+      content.scrollHeight <= content.clientHeight
+    );
   }
 
   function pruneNodeCache(): void {
@@ -240,6 +266,7 @@ export function createView(
 
     render(drill(node), container);
     attachGestures();
+    syncScrollLock();
     prerenderNext();
     pruneNodeCache();
   }

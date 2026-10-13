@@ -412,12 +412,17 @@ describe("drill rendering", () => {
  * and the keyboard inconsistency found alongside them.
  */
 
-/** jsdom has no PointerEvent, so synthesize one with the fields read. */
+/**
+ * jsdom has no PointerEvent, so synthesize one with the fields read. The time
+ * is explicit: a flick is decided by speed, and events dispatched back to back
+ * would otherwise all be "now" — an infinitely fast gesture.
+ */
 function pointer(
   el: Element,
   type: string,
   x: number,
   y: number,
+  t: number,
   id = 1
 ): void {
   const ev = new Event(type, { bubbles: true, cancelable: true });
@@ -427,15 +432,33 @@ function pointer(
     clientX: x,
     clientY: y,
   });
+  // A getter on the prototype, so it cannot simply be assigned.
+  Object.defineProperty(ev, "timeStamp", { value: t });
   el.dispatchEvent(ev);
 }
 
+let clock = 1000;
+
+/** A deliberate drag: half a second out, and held still before lifting. */
 function drag(container: HTMLElement, dx: number, dy = 0): void {
   const target = container.querySelector(".card-container")!;
-  pointer(target, "pointerdown", 200, 300);
-  pointer(target, "pointermove", 200 + dx / 2, 300 + dy / 2);
-  pointer(target, "pointermove", 200 + dx, 300 + dy);
-  pointer(target, "pointerup", 200 + dx, 300 + dy);
+  const t = (clock += 10_000);
+  pointer(target, "pointerdown", 200, 300, t);
+  pointer(target, "pointermove", 200 + dx / 2, 300 + dy / 2, t + 200);
+  pointer(target, "pointermove", 200 + dx, 300 + dy, t + 400);
+  pointer(target, "pointerup", 200 + dx, 300 + dy, t + 550);
+}
+
+/** A quick sideways flick: `dx` covered in `ms`, lifted while still moving. */
+function flick(container: HTMLElement, dx: number, ms: number, holdMs = 0): void {
+  const target = container.querySelector(".card-container")!;
+  const t = (clock += 10_000);
+  const steps = 4;
+  pointer(target, "pointerdown", 200, 300, t);
+  for (let i = 1; i <= steps; i++) {
+    pointer(target, "pointermove", 200 + (dx * i) / steps, 300, t + (ms * i) / steps);
+  }
+  pointer(target, "pointerup", 200 + dx, 300, t + ms + holdMs);
 }
 
 function press(key: string): void {
@@ -561,6 +584,108 @@ describe("drill input", () => {
     );
 
     expect(reviews[0].grade).toBe(Grade.Good);
+  });
+
+  /**
+   * A distance threshold alone refuses the fastest swipes: a thumb flicked
+   * across 50px and lifted mid-motion means the same as a 120px drag, and used
+   * to spring back. Speed now counts — but only speed at the moment of
+   * release, in the direction of the swipe, and never below a floor distance.
+   */
+  describe("flicks", () => {
+    it("grades a short fast flick, in either direction", async () => {
+      const { renderDrill, getAllReviews } = await freshDrill();
+      await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+      click(container, "#reveal-btn");
+      flick(container, 50, 60);
+      let reviews = await waitFor(getAllReviews, (r) => r.length === 1, "the flick right");
+      expect(reviews[0].grade).toBe(Grade.Good);
+
+      click(container, "#reveal-btn");
+      flick(container, -50, 60);
+      reviews = await waitFor(getAllReviews, (r) => r.length === 2, "the flick left");
+      expect(reviews[1].grade).toBe(Grade.Forgot);
+    });
+
+    it("reveals, never grades, when flicked before the answer shows", async () => {
+      const { renderDrill, getAllReviews } = await freshDrill();
+      await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+      flick(container, 50, 60);
+      await settle();
+
+      expect(isRevealed(container)).toBe(true);
+      expect(await getAllReviews()).toHaveLength(0);
+    });
+
+    it("ignores a fast twitch too short to mean anything", async () => {
+      const { renderDrill, getAllReviews } = await freshDrill();
+      await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+      click(container, "#reveal-btn");
+      flick(container, 30, 20);
+      await settle();
+
+      expect(await getAllReviews()).toHaveLength(0);
+    });
+
+    it("lets a flick be called off by holding still before lifting", async () => {
+      const { renderDrill, getAllReviews } = await freshDrill();
+      await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+      click(container, "#reveal-btn");
+      flick(container, 60, 60, 300);
+      await settle();
+
+      expect(await getAllReviews()).toHaveLength(0);
+    });
+
+    it("does not commit a drag that is quickly pulled back towards the start", async () => {
+      const { renderDrill, getAllReviews } = await freshDrill();
+      await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+      click(container, "#reveal-btn");
+      const target = container.querySelector(".card-container")!;
+      const t = (clock += 10_000);
+      pointer(target, "pointerdown", 200, 300, t);
+      pointer(target, "pointermove", 280, 300, t + 400); // out, slowly
+      pointer(target, "pointermove", 260, 300, t + 420); // back, fast
+      pointer(target, "pointerup", 250, 300, t + 440);
+      await settle();
+
+      expect(await getAllReviews()).toHaveLength(0);
+    });
+
+    it("ticks when a flick commits, having never reached the distance tick", async () => {
+      const vibrate = vi.fn();
+      Object.defineProperty(navigator, "vibrate", { value: vibrate, configurable: true });
+      const { renderDrill, getAllReviews } = await freshDrill();
+      await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+      click(container, "#reveal-btn");
+      vibrate.mockClear();
+      flick(container, 50, 60);
+      await waitFor(getAllReviews, (r) => r.length === 1, "the flick");
+
+      expect(vibrate).toHaveBeenCalled();
+    });
+
+    it("is never committed by a gesture the browser took for a scroll", async () => {
+      const { renderDrill, getAllReviews } = await freshDrill();
+      await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+      click(container, "#reveal-btn");
+      const target = container.querySelector(".card-container")!;
+      const t = (clock += 10_000);
+      pointer(target, "pointerdown", 200, 300, t);
+      pointer(target, "pointermove", 230, 300, t + 15);
+      pointer(target, "pointermove", 260, 300, t + 30);
+      pointer(target, "pointercancel", 260, 300, t + 40);
+      await settle();
+
+      expect(await getAllReviews()).toHaveLength(0);
+    });
   });
 
   /**

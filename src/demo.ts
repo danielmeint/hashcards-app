@@ -59,6 +59,28 @@ C: [Ephemeral] means [lasting for a very short time].
 
 Q: Define *ubiquitous*.
 A: Present, appearing, or found everywhere.
+
+---
+
+Q: What does the CAP theorem say, and what does it not say?
+A: A distributed data store cannot guarantee all three of these at once while
+a network partition is happening:
+
+- **Consistency** — every read sees the most recent write.
+- **Availability** — every request to a live node gets an answer.
+- **Partition tolerance** — the system keeps working when messages between
+  nodes are lost.
+
+Partitions are not optional in a real network, so the actual choice is made
+*during* one: refuse some requests (stay consistent) or answer them with
+possibly stale data (stay available).
+
+What it does not say: that you pick two of three forever. With no partition,
+a system can be both consistent and available, and the interesting trade-off
+there is latency against consistency — which is what PACELC adds.
+
+(This card is long on purpose: on a phone it scrolls, which is the case where
+the browser and a sideways swipe both want the same finger.)
 `;
 
 // Performance templates applied to cards by index to simulate diverse SRS states.

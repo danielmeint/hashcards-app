@@ -3,6 +3,7 @@ import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Card, Grade } from "../../types";
+import { todayStr } from "../../fsrs";
 
 /**
  * The drill's rules, driven through the session API rather than through
@@ -137,6 +138,10 @@ describe("drill session", () => {
     expect(relearned.type === "reviewed" && lapsed.type === "reviewed" &&
       relearned.stability >= lapsed.stability).toBe(true);
     expect(session.finished).toBe(true);
+    // Failed, it was due again today; passed, it is not — the April trap was a
+    // card that stayed due today however often it was passed.
+    expect(lapsed.type === "reviewed" && lapsed.dueDate).toBe(todayStr());
+    expect(relearned.type === "reviewed" && relearned.dueDate > todayStr()).toBe(true);
   });
 
   it("keeps sending a card round until it is passed", async () => {

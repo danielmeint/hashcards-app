@@ -196,6 +196,57 @@ describe("same-day reviews", () => {
 });
 
 /**
+ * The April "stuck card": a card forgotten and then passed again and again on
+ * the same day stayed due that same day. Under FSRS-5 it could never leave —
+ * a 0-day gap zeroed stability growth. Under FSRS-6 it grows, but slowly, and
+ * a 0-day interval still kept it due today for seven passes.
+ */
+describe("the same-day trap", () => {
+  it("lets the production sequence leave the day it was failed", () => {
+    const results = review([
+      [Grade.Forgot, "2026-04-02T12:50:00Z"],
+      [Grade.Forgot, "2026-04-02T12:54:00Z"],
+      [Grade.Good, "2026-04-02T13:52:00Z"],
+      [Grade.Good, "2026-04-02T14:33:00Z"],
+      [Grade.Easy, "2026-04-02T14:45:00Z"],
+    ]);
+    const last = results[results.length - 1];
+    expect(last.intervalDays).toBeGreaterThanOrEqual(1);
+    expect(last.dueDate).not.toBe("2026-04-02");
+  });
+
+  it("needs one pass after a lapse, whichever pass it is", () => {
+    for (const grade of [Grade.Hard, Grade.Good, Grade.Easy]) {
+      const [, passed] = review([
+        [Grade.Forgot, "2026-04-02T10:00:00Z"],
+        [grade, "2026-04-02T10:05:00Z"],
+      ]);
+      expect(passed.dueDate).toBe("2026-04-03");
+    }
+  });
+
+  it("keeps a failed weak card due today, for a later drill to retry", () => {
+    const [failed] = review([[Grade.Forgot, "2026-04-02T10:00:00Z"]]);
+    expect(failed.intervalDays).toBe(0);
+    expect(failed.dueDate).toBe("2026-04-02");
+  });
+
+  it("does not inflate what was learned to get there", () => {
+    // The day out is scheduling; the memory model still says the card is weak,
+    // and tomorrow's review is what grows it.
+    const [failed, passed] = review([
+      [Grade.Forgot, "2026-04-02T10:00:00Z"],
+      [Grade.Good, "2026-04-02T10:05:00Z"],
+    ]);
+    const expected = reference({ s: failed.stability, d: failed.difficulty }, 0, Grade.Good);
+    expect(feq(passed.stability, expected.s)).toBe(true);
+    expect(passed.stability).toBeLessThan(0.5);
+    const [tomorrow] = review([[Grade.Good, "2026-04-03T10:00:00Z"]], passed);
+    expect(tomorrow.stability).toBeGreaterThan(1);
+  });
+});
+
+/**
  * Due dates are compared with the local day, so the review's day has to be the
  * local day too. It was the UTC date of the timestamp.
  */

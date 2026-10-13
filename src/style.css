@@ -518,7 +518,6 @@ body {
 
 .rich-text {
   font-size: 30px;
-  text-align: justify;
   line-height: 1.4;
 }
 
@@ -1315,8 +1314,14 @@ body {
     padding: 32px;
   }
 
+  /* Under the card rather than at the window's edges, and as tall as the
+     grade buttons from the start: the card is centred in what the controls
+     leave over, so a row that grew on reveal nudged it upwards. */
   .root .controls .control-row {
     flex-direction: row;
+    max-width: 900px;
+    min-height: 52px;
+    margin: 0 auto;
   }
 
   .root .controls button {

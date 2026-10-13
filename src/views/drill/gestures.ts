@@ -44,6 +44,20 @@ const SWIPE_CONE = 1.6; // ≈58° off horizontal
 /** How far it must travel before releasing commits, rather than springing back. */
 const SWIPE_COMMIT_PX = 90;
 
+/**
+ * A flick commits short of `SWIPE_COMMIT_PX`: a thumb thrown across 50px and
+ * lifted mid-motion means the same as a slow 120px drag, and used to spring
+ * back. Speed is measured over only the last `FLICK_WINDOW_MS` before release,
+ * so it is the speed the finger *left* at — holding still before lifting calls
+ * a flick off, and a slow start does not drag the average down.
+ *
+ * Below `FLICK_MIN_PX` nothing commits however fast it was: that is a twitch,
+ * not a decision. These are first guesses, meant to be tuned on a phone.
+ */
+const FLICK_MIN_PX = 40;
+const FLICK_VELOCITY = 0.5; // px/ms, i.e. 500 px/s, towards the swipe's side
+const FLICK_WINDOW_MS = 100;
+
 type Drag = {
   id: number;
   x0: number;
@@ -53,7 +67,27 @@ type Drag = {
   claimed: boolean;
   /** Set once it has passed the commit distance, for a single haptic tick. */
   armed: boolean;
+  /** Recent positions, for the speed at release. Pruned to the flick window. */
+  samples: { t: number; x: number }[];
 };
+
+/**
+ * Horizontal speed over the last `FLICK_WINDOW_MS`, in px/ms, signed. Zero when
+ * the finger has not moved within the window — it stopped before it lifted.
+ */
+function releaseVelocity(drag: Drag, t: number, x: number): number {
+  const recent = drag.samples.find(
+    (s) => t - s.t > 0 && t - s.t <= FLICK_WINDOW_MS
+  );
+  return recent ? (x - recent.x) / (t - recent.t) : 0;
+}
+
+function track(drag: Drag, t: number, x: number): void {
+  drag.samples.push({ t, x });
+  while (drag.samples.length > 0 && t - drag.samples[0].t > FLICK_WINDOW_MS) {
+    drag.samples.shift();
+  }
+}
 
 /** What a release in this direction would do, for the drag indicator. */
 function swipeAction(
@@ -113,6 +147,7 @@ export function attachCardGestures(
       dx: 0,
       claimed: false,
       armed: false,
+      samples: [{ t: e.timeStamp, x: e.clientX }],
     };
   });
 
@@ -120,6 +155,7 @@ export function attachCardGestures(
     if (!drag || e.pointerId !== drag.id) return;
     const dx = e.clientX - drag.x0;
     const dy = e.clientY - drag.y0;
+    track(drag, e.timeStamp, e.clientX);
 
     if (!drag.claimed) {
       // Re-tested on every move, so a gesture that opened steep and flattened
@@ -160,7 +196,8 @@ export function attachCardGestures(
 
   const endDrag = (e: PointerEvent, commit: boolean) => {
     if (!drag || e.pointerId !== drag.id) return;
-    const { dx, claimed } = drag;
+    const { dx, claimed, armed } = drag;
+    const velocity = releaseVelocity(drag, e.timeStamp, e.clientX);
     drag = null;
 
     const node = currentCard();
@@ -178,7 +215,17 @@ export function attachCardGestures(
       swipeAteClick = false;
     }, 0);
 
-    if (commit && Math.abs(dx) >= SWIPE_COMMIT_PX) commitSwipe(session, dx > 0);
+    if (!commit) return;
+    const far = Math.abs(dx) >= SWIPE_COMMIT_PX;
+    // Speed counts only towards the side the card is already on: a quick pull
+    // back towards the middle is someone changing their mind.
+    const flicked =
+      Math.abs(dx) >= FLICK_MIN_PX && velocity * Math.sign(dx) >= FLICK_VELOCITY;
+    if (!far && !flicked) return;
+    // The distance tick is the "this will count" signal; a flick commits
+    // without ever reaching it, so it gets its tick as it lands.
+    if (!armed) haptic(8);
+    commitSwipe(session, dx > 0);
   };
 
   cardContainer.addEventListener("pointerup", (e) => endDrag(e, true));

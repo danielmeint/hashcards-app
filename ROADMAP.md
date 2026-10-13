@@ -568,7 +568,8 @@ classifies the token by string prefix (`github_pat_` / `ghp_`). Largely moot if
 **Started.** `npm run e2e`: Playwright on the installed Chrome, desktop and
 phone profiles, the real app against a fake GitHub (`e2e/fake-github.ts`), gated
 in CI before deploy. Covers the 1.1 reload-mid-drill case, reveal not moving the
-card, and 1.4. Original report below.
+card, 1.4, retention, and swipes as real touches through Chrome's input
+pipeline (flick, slow drag, vertical drag). Original report below.
 
 There is good unit coverage of the parser and FSRS, and none of the drill loop —
 which is where 1.1 lives. A Playwright run that drills a session and asserts on

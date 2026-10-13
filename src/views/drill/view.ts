@@ -127,11 +127,10 @@ export function createView(
   }
 
   function drill(node: HTMLElement): TemplateResult {
-    const requeued = session.requeued;
     const revealed = session.revealed;
     // Cheap arithmetic, so computed up front rather than at reveal — by the
     // time the grades appear there is nothing left to do.
-    const previews = requeued ? [] : session.previews();
+    const previews = session.previews();
 
     return html`<div class="root">
       <div class="header">
@@ -164,7 +163,7 @@ export function createView(
         ${node}
         <div class="swipe-hint" aria-hidden="true" hidden></div>
       </div>
-      <div class="controls ${requeued ? "requeue-controls" : ""}">
+      <div class="controls">
         <div class="control-row">
           <button
             id="undo-btn"
@@ -178,7 +177,7 @@ export function createView(
             ?hidden=${revealed}
             @click=${() => session.reveal()}
           >Reveal</button>
-          <div class="grades" ?hidden=${!revealed || requeued}>
+          <div class="grades" ?hidden=${!revealed}>
             ${GRADES.map(
               ([grade, label], i) => html`<button
                 class="btn grade-btn"
@@ -188,21 +187,6 @@ export function createView(
                 ${label}<span class="interval-preview">${previews[i] ?? ""}</span>
               </button>`
             )}
-          </div>
-          <div
-            class="grades requeue-grades"
-            ?hidden=${!revealed || !requeued}
-          >
-            <button
-              class="btn requeue-btn"
-              data-action="again"
-              @click=${() => session.requeue(true)}
-            >Again</button>
-            <button
-              class="btn requeue-btn"
-              data-action="done"
-              @click=${() => session.requeue(false)}
-            >Got it</button>
           </div>
           <button id="end-btn" class="btn" @click=${onFinish}>End</button>
         </div>

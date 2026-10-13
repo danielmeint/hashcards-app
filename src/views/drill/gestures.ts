@@ -95,11 +95,6 @@ function swipeAction(
   right: boolean
 ): { label: string; positive: boolean } {
   if (!session.revealed) return { label: "Reveal", positive: true };
-  if (session.requeued) {
-    return right
-      ? { label: "Got it", positive: true }
-      : { label: "Again", positive: false };
-  }
   return right
     ? { label: "Good", positive: true }
     : { label: "Forgot", positive: false };
@@ -112,8 +107,7 @@ function commitSwipe(session: Session, right: boolean): void {
     session.reveal();
     return;
   }
-  if (session.requeued) session.requeue(!right);
-  else session.grade(right ? Grade.Good : Grade.Forgot);
+  session.grade(right ? Grade.Good : Grade.Forgot);
 }
 
 export function attachCardGestures(
@@ -254,25 +248,10 @@ export function attachKeyboard(
       ) {
         return;
       }
-      const requeued = session.requeued;
-
       if (e.key === " " || e.key === "Spacebar") {
         e.preventDefault();
         session.reveal(); // Reveal, and only ever reveal
-      } else if (
-        session.revealed &&
-        requeued &&
-        (e.key === "Enter" || e.key === "2")
-      ) {
-        session.requeue(false); // Enter or 2 = Got it
-      } else if (session.revealed && requeued && e.key === "1") {
-        session.requeue(true); // 1 = Again
-      } else if (
-        session.revealed &&
-        !requeued &&
-        e.key >= "1" &&
-        e.key <= "4"
-      ) {
+      } else if (session.revealed && e.key >= "1" && e.key <= "4") {
         session.grade(parseInt(e.key) as Grade);
       } else if (e.key === "u" || e.key === "U") {
         void session.undo();

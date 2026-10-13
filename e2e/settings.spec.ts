@@ -19,7 +19,8 @@ test("a lower desired retention schedules further out", async ({ page, github })
   await page.locator("#back-btn").click();
 
   const atSeventy = await goodPreview(page);
-  // A new card graded Good: stability ~3.2 days, so 3d at 90% and ~2w at 70%.
-  expect(atDefault).toBe("3d");
-  expect(atSeventy).toBe("2w");
+  // A new card graded Good: FSRS-6 stability 2.3 days, so 2d at 90%. Its
+  // forgetting curve is flat, so at 70% that stretches to ~21 days.
+  expect(atDefault).toBe("2d");
+  expect(atSeventy).toBe("3w");
 });

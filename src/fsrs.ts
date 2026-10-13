@@ -144,10 +144,18 @@ export function updatePerformance(
   // No cap beyond the model's own (stability tops out at 100 years). There
   // was a 256-day one, which only ever meant a card known cold came back every
   // eight months whether or not it needed to.
+  //
+  // A pass is never due again the same day. Only a lapse may be: that is what
+  // lets a card you failed come back in a later drill today. This was 0 for
+  // everything, and a weak card that was passed the same day kept rounding to
+  // 0 — under FSRS-5 it could not escape at all (the April "stuck card"), and
+  // under FSRS-6 a forgotten card still took seven same-day passes to leave.
+  // Anki draws the same line: minutes are for learning steps, which here is
+  // the drill bringing a card round again, and a graduated card is a day out.
   const intervalRaw = interval(retention, stability);
   let intervalDays = Math.round(intervalRaw);
   if (fuzz) intervalDays = fuzzInterval(intervalDays);
-  intervalDays = Math.max(0, intervalDays);
+  intervalDays = Math.max(grade === Grade.Forgot ? 0 : 1, intervalDays);
 
   return {
     type: "reviewed",

@@ -8,7 +8,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p e2e",
     "lint": "tsc --noEmit && tsc --noEmit -p e2e",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "deploy:dev": "vite build && npx wrangler pages deploy dist --project-name hashcards-app --branch dev"
   },
   "license": "MIT",
   "type": "module",

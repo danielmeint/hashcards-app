@@ -74,6 +74,11 @@ export type Review = {
   intervalRaw: number;
   intervalDays: number;
   dueDate: string;
+  /**
+   * How long the card was in front of you before this grade, as Anki records
+   * it. Absent on reviews from before it was measured.
+   */
+  durationMs?: number;
 };
 
 /**

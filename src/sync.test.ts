@@ -24,6 +24,10 @@ class FakeRepo {
   fetchedPaths: string[] = [];
   /** Paths of every file fetched through the blobs API, i.e. media. */
   fetchedBlobs: string[] = [];
+  /** Every ordinary file committed, in order — the review log's writes. */
+  fileWrites: { path: string; content: string }[] = [];
+  /** Every request whose URL mentions the review log, writes or reads. */
+  logRequests = 0;
   treeRequests: { conditional: boolean }[] = [];
   /** The repo's `hashcards-state.json`, base64 as the contents API returns it. */
   state: { content: string; sha: string } | null = null;
@@ -107,6 +111,23 @@ class FakeRepo {
         : new Response(null, { status: 404 });
       this.onStateRead?.();
       return res;
+    }
+
+    if (url.includes("/contents/hashcards-reviews/")) this.logRequests++;
+    const put = url.match(/\/contents\/([^?]+)$/);
+    if (put && init?.method === "PUT") {
+      const path = decodeURIComponent(put[1]);
+      const body = JSON.parse(String(init.body)) as { content: string; sha?: string };
+      if ((body.sha ?? null) !== (this.files.get(path)?.sha ?? null)) {
+        return new Response(JSON.stringify({ message: "sha mismatch" }), { status: 409 });
+      }
+      const content = new TextDecoder().decode(
+        Uint8Array.from(atob(body.content), (c) => c.charCodeAt(0))
+      );
+      const sha = `sha-w${this.fileWrites.length + 1}`;
+      this.fileWrites.push({ path, content });
+      this.files.set(path, { sha, content });
+      return new Response(JSON.stringify({ content: { sha } }), { status: 200 });
     }
 
     const blob = url.match(/\/git\/blobs\/(.+)$/);
@@ -1115,5 +1136,157 @@ describe("a deck store from before collections", () => {
     const again = await import("./db");
 
     expect(await again.getAllDeckFiles()).toEqual([]);
+  });
+});
+
+/**
+ * The state file says where each card is; fitting FSRS to a person needs where
+ * each card has been. That history used to stay in the IndexedDB of whichever
+ * device recorded it.
+ */
+describe("review history", () => {
+  let repo: FakeRepo;
+
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem("device_id", "phone1");
+    repo = new FakeRepo();
+    install(repo);
+  });
+
+  /** Record reviews as a drill would have left them in the local log. */
+  async function seedReviews(reviews: { hash: string; at: string; grade?: number }[]) {
+    await new Promise<void>((resolve, reject) => {
+      const open = indexedDB.open("hashcards");
+      open.onsuccess = () => {
+        const tx = open.result.transaction("reviews", "readwrite");
+        for (const r of reviews) {
+          tx.objectStore("reviews").add({
+            cardHash: r.hash,
+            reviewedAt: r.at,
+            grade: r.grade ?? 3,
+            stability: 2.3,
+            difficulty: 5,
+            intervalRaw: 2.3,
+            intervalDays: 2,
+            dueDate: "2026-01-01",
+          });
+        }
+        tx.oncomplete = () => {
+          open.result.close();
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+    });
+  }
+
+  it("writes this device's reviews into one file per month, oldest first", async () => {
+    repo.set("a.md", card("one"), "sha-a");
+    const hash = await hashOf(card("one"));
+    const { syncAll } = await freshSync();
+    await syncAll({ ...CONFIG });
+    await seedReviews([
+      { hash, at: "2026-10-02T09:00:00.000Z" },
+      { hash, at: "2026-09-20T09:00:00.000Z", grade: 1 },
+      { hash, at: "2026-10-01T09:00:00.000Z" },
+    ]);
+
+    await syncAll({ ...CONFIG });
+
+    const writes = Object.fromEntries(repo.fileWrites.map((w) => [w.path, w.content]));
+    expect(Object.keys(writes).sort()).toEqual([
+      "hashcards-reviews/2026-09.phone1.jsonl",
+      "hashcards-reviews/2026-10.phone1.jsonl",
+    ]);
+    const october = writes["hashcards-reviews/2026-10.phone1.jsonl"]
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(october.map((r) => r.at)).toEqual([
+      "2026-10-01T09:00:00.000Z",
+      "2026-10-02T09:00:00.000Z",
+    ]);
+    expect(october[0]).toMatchObject({ card: hash, grade: 3 });
+  });
+
+  it("asks nothing of GitHub when no review is new", async () => {
+    repo.set("a.md", card("one"), "sha-a");
+    const hash = await hashOf(card("one"));
+    const { syncAll } = await freshSync();
+    await syncAll({ ...CONFIG });
+    await seedReviews([{ hash, at: "2026-10-02T09:00:00.000Z" }]);
+    await syncAll({ ...CONFIG });
+    repo.logRequests = 0;
+
+    await syncAll({ ...CONFIG });
+
+    expect(repo.logRequests).toBe(0);
+  });
+
+  it("rewrites only the month that gained a review", async () => {
+    repo.set("a.md", card("one"), "sha-a");
+    const hash = await hashOf(card("one"));
+    const { syncAll } = await freshSync();
+    await syncAll({ ...CONFIG });
+    await seedReviews([
+      { hash, at: "2026-09-20T09:00:00.000Z" },
+      { hash, at: "2026-10-02T09:00:00.000Z" },
+    ]);
+    await syncAll({ ...CONFIG });
+    repo.fileWrites = [];
+
+    await seedReviews([{ hash, at: "2026-10-05T09:00:00.000Z" }]);
+    await syncAll({ ...CONFIG });
+
+    expect(repo.fileWrites.map((w) => w.path)).toEqual([
+      "hashcards-reviews/2026-10.phone1.jsonl",
+    ]);
+    expect(repo.fileWrites[0].content.trim().split("\n")).toHaveLength(2);
+  });
+
+  it("files a month by the local day, not the UTC one", async () => {
+    // 23:30 UTC on 31 October is already November in Berlin.
+    process.env.TZ = "Europe/Berlin";
+    repo.set("a.md", card("one"), "sha-a");
+    const hash = await hashOf(card("one"));
+    const { syncAll } = await freshSync();
+    await syncAll({ ...CONFIG });
+    await seedReviews([{ hash, at: "2026-10-31T23:30:00.000Z" }]);
+
+    await syncAll({ ...CONFIG });
+
+    expect(repo.fileWrites.map((w) => w.path)).toEqual([
+      "hashcards-reviews/2026-11.phone1.jsonl",
+    ]);
+  });
+
+  it("keeps reviews of a subscribed collection's cards on this device", async () => {
+    const mine = new FakeRepo();
+    const theirs = new FakeRepo();
+    mine.set("a.md", card("one"), "sha-a");
+    theirs.set("b.md", card("two"), "sha-b");
+    installMany({ "me/cards": mine, "someone/shared": theirs });
+    localStorage.setItem(
+      "repos",
+      JSON.stringify([
+        { owner: "me", repo: "cards", branch: "main" },
+        { owner: "someone", repo: "shared", branch: "main", readOnly: true },
+      ])
+    );
+    const { syncEverything } = await freshSync();
+    await syncEverything();
+    await seedReviews([
+      { hash: await hashOf(card("one")), at: "2026-10-02T09:00:00.000Z" },
+      { hash: await hashOf(card("two")), at: "2026-10-02T09:05:00.000Z" },
+    ]);
+
+    await syncEverything();
+
+    expect(theirs.fileWrites).toEqual([]);
+    expect(theirs.logRequests).toBe(0);
+    // And theirs does not leak into yours.
+    expect(mine.fileWrites).toHaveLength(1);
+    expect(mine.fileWrites[0].content.trim().split("\n")).toHaveLength(1);
   });
 });

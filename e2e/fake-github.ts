@@ -90,6 +90,21 @@ export class FakeGitHub {
     }
 
     const contents = url.pathname.match(new RegExp(`^${base}/contents/(.+)$`));
+    if (contents && req.method() === "PUT") {
+      const path = decodeURIComponent(contents[1]);
+      const body = req.postDataJSON() as { content: string; sha?: string };
+      if ((body.sha ?? null) !== (this.files.get(path)?.sha ?? null)) {
+        return json({ message: "does not match" }, 409);
+      }
+      this.set(path, Buffer.from(body.content, "base64").toString());
+      return json({ content: { sha: this.files.get(path)!.sha } });
+    }
+    // A file the app may look for before writing it — the review log.
+    if (contents && !this.files.has(decodeURIComponent(contents[1]))) {
+      if (decodeURIComponent(contents[1]).startsWith("hashcards-reviews/")) {
+        return json({ message: "Not Found" }, 404);
+      }
+    }
     const file = contents && this.files.get(decodeURIComponent(contents[1]));
     if (file) {
       return json({ content: Buffer.from(file.content).toString("base64"), sha: file.sha });

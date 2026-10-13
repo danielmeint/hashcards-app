@@ -1,9 +1,10 @@
+// Days are local days, so the tests pin a zone with a UTC offset — one where
+// the old UTC-date arithmetic and the local calendar disagree around midnight.
+process.env.TZ = "Europe/Berlin";
+
 import { describe, it, expect } from "vitest";
 import {
-  initialStability,
-  initialDifficulty,
-  newStability,
-  newDifficulty,
+  PARAMETERS,
   interval,
   retrievability,
   updatePerformance,
@@ -11,44 +12,60 @@ import {
 } from "./fsrs";
 import { Grade, Performance, ReviewedPerformance } from "./types";
 
-function feq(a: number, b: number): boolean {
-  return Math.abs(a - b) < 0.01;
+function feq(a: number, b: number, eps = 1e-4): boolean {
+  return Math.abs(a - b) < eps;
 }
 
-type Step = { t: number; s: number; d: number; i: number };
-
-function sim(grades: Grade[]): Step[] {
-  let t = 0;
-  const rd = 0.9;
-  const steps: Step[] = [];
-
-  const g0 = grades[0];
-  let s = initialStability(g0);
-  let d = initialDifficulty(g0);
-  let i = Math.max(Math.round(interval(rd, s)), 1);
-  steps.push({ t, s, d, i });
-
-  for (let idx = 1; idx < grades.length; idx++) {
-    const g = grades[idx];
-    t += i;
-    const r = retrievability(i, s);
-    s = newStability(d, s, r, g);
-    d = newDifficulty(d, g);
-    i = Math.max(Math.round(interval(rd, s)), 1);
-    steps.push({ t, s, d, i });
+/**
+ * FSRS-6's state transition, transcribed from the reference implementation
+ * (fsrs-rs `model_v6.rs`, `next_state_scalar`), as an oracle the library is
+ * checked against. Kept deliberately literal.
+ */
+function reference(
+  state: { s: number; d: number } | null,
+  deltaT: number,
+  g: number
+): { s: number; d: number } {
+  const w = PARAMETERS;
+  const clampD = (d: number) => Math.min(10, Math.max(1, d));
+  const initD = (r: number) => w[4] - Math.exp(w[5] * (r - 1)) + 1;
+  if (!state) return { s: w[g - 1], d: clampD(initD(g)) };
+  const { s, d } = state;
+  const decay = -w[20];
+  const factor = Math.pow(0.9, 1 / decay) - 1;
+  const r = Math.pow(1 + (factor * deltaT) / s, decay);
+  let next: number;
+  if (deltaT === 0) {
+    const sinc = Math.exp(w[17] * (g - 3 + w[18])) * Math.pow(s, -w[19]);
+    next = s * (g >= 2 ? Math.max(sinc, 1) : sinc);
+  } else if (g === 1) {
+    const floor = s / Math.exp(w[17] * w[18]);
+    const fail =
+      w[11] * Math.pow(d, -w[12]) * (Math.pow(s + 1, w[13]) - 1) * Math.exp((1 - r) * w[14]);
+    next = Math.min(fail, floor);
+  } else {
+    const hard = g === 2 ? w[15] : 1;
+    const easy = g === 4 ? w[16] : 1;
+    next =
+      s *
+      (Math.exp(w[8]) * (11 - d) * Math.pow(s, -w[9]) * (Math.exp((1 - r) * w[10]) - 1) * hard * easy +
+        1);
   }
-
-  return steps;
+  const delta = -w[6] * (g - 3);
+  const linear = d + ((10 - d) / 9) * delta;
+  const reverted = w[7] * initD(4) + (1 - w[7]) * linear;
+  return { s: next, d: clampD(reverted) };
 }
 
-function assertSteps(actual: Step[], expected: Step[]) {
-  expect(actual.length).toBe(expected.length);
-  for (let i = 0; i < actual.length; i++) {
-    expect(feq(actual[i].t, expected[i].t)).toBe(true);
-    expect(feq(actual[i].s, expected[i].s)).toBe(true);
-    expect(feq(actual[i].d, expected[i].d)).toBe(true);
-    expect(feq(actual[i].i, expected[i].i)).toBe(true);
+/** Review a card through the app at each `[grade, ISO time]`, in order. */
+function review(steps: [Grade, string][], start: Performance = { type: "new" }) {
+  const out: ReviewedPerformance[] = [];
+  let perf = start;
+  for (const [grade, at] of steps) {
+    perf = updatePerformance(perf, grade, at);
+    out.push(perf);
   }
+  return out;
 }
 
 describe("formatInterval", () => {
@@ -80,177 +97,124 @@ describe("formatInterval", () => {
   });
 });
 
-describe("FSRS", () => {
-  it("interval equals stability at R=0.9", () => {
-    for (let i = 0; i < 100; i++) {
-      const s = 0.1 + i * ((5.0 - 0.1) / 99);
-      expect(feq(interval(0.9, s), s)).toBe(true);
-    }
+describe("FSRS-6", () => {
+  it("runs on the published FSRS-6 defaults", () => {
+    expect(PARAMETERS).toHaveLength(21);
+    expect(PARAMETERS[20]).toBe(0.1542);
   });
 
-  it("initial difficulty of Forgot equals W[4]", () => {
-    expect(initialDifficulty(Grade.Forgot)).toBe(7.1949);
+  it("puts recall at exactly 90% one stability out", () => {
+    expect(feq(retrievability(7, 7), 0.9)).toBe(true);
+    expect(feq(interval(0.9, 7), 7)).toBe(true);
   });
 
-  it("test_3e - three easies", () => {
-    const g = Grade.Easy;
-    const actual = sim([g, g, g]);
-    assertSteps(actual, [
-      { t: 0, s: 15.69, d: 3.22, i: 16 },
-      { t: 16, s: 150.28, d: 2.13, i: 150 },
-      { t: 166, s: 1252.22, d: 1.0, i: 1252 },
-    ]);
+  it("matches the reference transition across days, grades and lapses", () => {
+    const steps: [Grade, string][] = [
+      [Grade.Good, "2026-04-01T10:00:00Z"],
+      [Grade.Good, "2026-04-03T10:00:00Z"],
+      [Grade.Hard, "2026-04-10T10:00:00Z"],
+      [Grade.Forgot, "2026-05-02T10:00:00Z"],
+      [Grade.Easy, "2026-05-04T10:00:00Z"],
+      [Grade.Good, "2026-05-20T10:00:00Z"],
+    ];
+    const actual = review(steps);
+
+    let state: { s: number; d: number } | null = null;
+    let last: string | null = null;
+    steps.forEach(([grade, at], i) => {
+      const day = at.slice(0, 10); // 10:00Z is the same day in Berlin
+      const deltaT = last ? Math.round((Date.parse(day) - Date.parse(last)) / 86_400_000) : 0;
+      state = reference(state, deltaT, grade);
+      last = day;
+      expect(feq(actual[i].stability, state.s)).toBe(true);
+      expect(feq(actual[i].difficulty, state.d)).toBe(true);
+    });
   });
 
-  it("test_3g - three goods", () => {
-    const g = Grade.Good;
-    const actual = sim([g, g, g]);
-    assertSteps(actual, [
-      { t: 0, s: 3.17, d: 5.28, i: 3 },
-      { t: 3, s: 10.73, d: 5.27, i: 11 },
-      { t: 14, s: 34.57, d: 5.26, i: 35 },
-    ]);
-  });
-
-  it("test_2h - two hards", () => {
-    const g = Grade.Hard;
-    const actual = sim([g, g]);
-    assertSteps(actual, [
-      { t: 0, s: 1.18, d: 6.48, i: 1 },
-      { t: 1, s: 1.7, d: 7.04, i: 2 },
-    ]);
-  });
-
-  it("test_2f - two forgots", () => {
-    const g = Grade.Forgot;
-    const actual = sim([g, g]);
-    assertSteps(actual, [
-      { t: 0, s: 0.4, d: 7.19, i: 1 },
-      { t: 1, s: 0.26, d: 8.08, i: 1 },
-    ]);
-  });
-
-  it("test_gf - good then forgot", () => {
-    const actual = sim([Grade.Good, Grade.Forgot]);
-    assertSteps(actual, [
-      { t: 0, s: 3.17, d: 5.28, i: 3 },
-      { t: 3, s: 1.06, d: 6.8, i: 1 },
-    ]);
+  it("carries a state written under FSRS-5 over as it is", () => {
+    // Stability is the interval at 90% recall in both versions, so an existing
+    // card needs no conversion — it simply continues under the new model.
+    const fsrs5: Performance = {
+      type: "reviewed",
+      lastReviewedAt: "2026-04-01T10:00:00Z",
+      stability: 10,
+      difficulty: 5,
+      intervalRaw: 10,
+      intervalDays: 10,
+      dueDate: "2026-04-11",
+      reviewCount: 4,
+    };
+    const [next] = review([[Grade.Good, "2026-04-11T10:00:00Z"]], fsrs5);
+    const expected = reference({ s: 10, d: 5 }, 10, Grade.Good);
+    expect(feq(next.stability, expected.s)).toBe(true);
+    expect(next.reviewCount).toBe(5);
   });
 });
 
-// Helper: chain updatePerformance calls with explicit timestamps
-function chain(
-  grades: { grade: Grade; at: string }[]
-): ReviewedPerformance[] {
-  const results: ReviewedPerformance[] = [];
-  let perf: Performance = { type: "new" };
-  for (const { grade, at } of grades) {
-    const next = updatePerformance(perf, grade, at);
-    results.push(next);
-    perf = next;
-  }
-  return results;
-}
-
-describe("same-day re-reviews", () => {
-  it("Forgot then same-day Easy escapes the 0-day trap", () => {
-    const results = chain([
-      { grade: Grade.Forgot, at: "2026-04-02T10:00:00Z" },
-      { grade: Grade.Easy, at: "2026-04-02T10:05:00Z" },
+/**
+ * A gap of zero days used to mean predicted recall of 1.0, which zeroes the
+ * growth term — a card forgotten and re-learned the same day went nowhere, and
+ * the workaround was to pretend a day had passed. FSRS-6 has its own formula
+ * for the same day.
+ */
+describe("same-day reviews", () => {
+  const forgotThen = (grade: Grade) =>
+    review([
+      [Grade.Forgot, "2026-04-02T08:00:00Z"],
+      [grade, "2026-04-02T15:00:00Z"],
     ]);
-    // After Forgot: stability = W[0] = 0.40, intervalDays = 0
-    expect(results[0].stability).toBeCloseTo(0.40255, 2);
-    expect(results[0].intervalDays).toBe(0);
-    expect(results[0].dueDate).toBe("2026-04-02");
 
-    // After same-day Easy: stability must grow, interval must be >= 1
-    expect(results[1].stability).toBeGreaterThan(results[0].stability);
-    expect(results[1].intervalDays).toBeGreaterThanOrEqual(1);
-    expect(results[1].dueDate).not.toBe("2026-04-02");
+  it("use the short-term formula, not a pretend day", () => {
+    const [first, second] = forgotThen(Grade.Good);
+    const expected = reference({ s: first.stability, d: first.difficulty }, 0, Grade.Good);
+    expect(feq(second.stability, expected.s)).toBe(true);
   });
 
-  it("Forgot then same-day Good also escapes", () => {
-    const results = chain([
-      { grade: Grade.Forgot, at: "2026-04-02T10:00:00Z" },
-      { grade: Grade.Good, at: "2026-04-02T10:05:00Z" },
-    ]);
-    expect(results[1].stability).toBeGreaterThan(results[0].stability);
-    expect(results[1].intervalDays).toBeGreaterThanOrEqual(1);
-  });
-
-  it("Forgot then same-day Hard also escapes", () => {
-    const results = chain([
-      { grade: Grade.Forgot, at: "2026-04-02T10:00:00Z" },
-      { grade: Grade.Hard, at: "2026-04-02T10:05:00Z" },
-    ]);
-    expect(results[1].stability).toBeGreaterThan(results[0].stability);
-    expect(results[1].intervalDays).toBeGreaterThanOrEqual(1);
-  });
-
-  it("repeated same-day Easy keeps increasing stability", () => {
-    const results = chain([
-      { grade: Grade.Forgot, at: "2026-04-02T10:00:00Z" },
-      { grade: Grade.Easy, at: "2026-04-02T10:01:00Z" },
-      { grade: Grade.Easy, at: "2026-04-02T10:02:00Z" },
-      { grade: Grade.Easy, at: "2026-04-02T10:03:00Z" },
-    ]);
-    // Each successive Easy should keep growing stability
-    for (let i = 1; i < results.length; i++) {
-      expect(results[i].stability).toBeGreaterThan(results[i - 1].stability);
+  it("never lose stability on a pass", () => {
+    for (const grade of [Grade.Hard, Grade.Good, Grade.Easy]) {
+      const [first, second] = forgotThen(grade);
+      expect(second.stability).toBeGreaterThanOrEqual(first.stability);
     }
-    // Should definitely not be stuck at dueDate = today
-    expect(results[3].intervalDays).toBeGreaterThanOrEqual(1);
   });
 
-  it("same-day Forgot still resets stability (no artificial boost)", () => {
-    const results = chain([
-      { grade: Grade.Good, at: "2026-04-02T10:00:00Z" },
-      { grade: Grade.Forgot, at: "2026-04-02T10:05:00Z" },
-    ]);
-    // Forgot should reduce stability, not benefit from the time=1 boost
-    expect(results[1].stability).toBeLessThan(results[0].stability);
+  it("can lose it on a second lapse", () => {
+    const [first, second] = forgotThen(Grade.Forgot);
+    expect(second.stability).toBeLessThan(first.stability);
   });
 
-  it("reproduces the stuck-card scenario from production", () => {
-    // Simulate what happened: Forgot, then 5 more reviews on the same day
-    // Before the fix, stability stayed at 0.40 forever
-    const results = chain([
-      { grade: Grade.Forgot, at: "2026-04-02T12:50:00Z" },
-      { grade: Grade.Forgot, at: "2026-04-02T12:54:00Z" },
-      { grade: Grade.Good, at: "2026-04-02T13:52:00Z" },
-      { grade: Grade.Good, at: "2026-04-02T14:33:00Z" },
-      { grade: Grade.Easy, at: "2026-04-02T14:45:00Z" },
-    ]);
-    // After the Good/Easy grades, should have escaped
-    const last = results[results.length - 1];
-    expect(last.stability).toBeGreaterThan(0.41);
-    expect(last.intervalDays).toBeGreaterThanOrEqual(1);
-    expect(last.dueDate).not.toBe("2026-04-02");
+  it("still update difficulty", () => {
+    const [first, second] = forgotThen(Grade.Easy);
+    expect(second.difficulty).toBeLessThan(first.difficulty);
   });
 
-  it("normal next-day review still works as before", () => {
-    const results = chain([
-      { grade: Grade.Good, at: "2026-04-01T10:00:00Z" },
-      { grade: Grade.Good, at: "2026-04-04T10:00:00Z" },
-    ]);
-    // 3 days later (matching interval), stability should grow
-    expect(results[1].stability).toBeGreaterThan(results[0].stability);
-    expect(results[1].intervalDays).toBeGreaterThan(results[0].intervalDays);
+  it("leave a relearned card able to grow the next day", () => {
+    const [, relearned] = forgotThen(Grade.Good);
+    const [next] = review([[Grade.Good, "2026-04-03T08:00:00Z"]], relearned);
+    expect(next.stability).toBeGreaterThan(relearned.stability);
+    expect(next.intervalDays).toBeGreaterThanOrEqual(1);
+  });
+});
+
+/**
+ * Due dates are compared with the local day, so the review's day has to be the
+ * local day too. It was the UTC date of the timestamp.
+ */
+describe("days are local days", () => {
+  it("dates a review after local midnight to that day, not the UTC one before it", () => {
+    // 00:30 in Berlin on the 14th is 22:30 UTC on the 13th.
+    const [card] = review([[Grade.Good, "2026-10-13T22:30:00Z"]]);
+    expect(card.dueDate > "2026-10-14").toBe(true);
+    expect(card.dueDate).toBe(`2026-10-${14 + card.intervalDays}`);
   });
 
-  it("difficulty decreases with Easy and increases with Forgot", () => {
-    const forgotChain = chain([
-      { grade: Grade.Good, at: "2026-04-01T10:00:00Z" },
-      { grade: Grade.Forgot, at: "2026-04-01T10:05:00Z" },
+  it("counts reviews either side of local midnight as a day apart", () => {
+    // 22:00 and 00:30 local: the same UTC date, different days where you are.
+    const [first, second] = review([
+      [Grade.Good, "2026-10-13T20:00:00Z"],
+      [Grade.Good, "2026-10-13T22:30:00Z"],
     ]);
-    expect(forgotChain[1].difficulty).toBeGreaterThan(forgotChain[0].difficulty);
-
-    const easyChain = chain([
-      { grade: Grade.Good, at: "2026-04-01T10:00:00Z" },
-      { grade: Grade.Easy, at: "2026-04-01T10:05:00Z" },
-    ]);
-    expect(easyChain[1].difficulty).toBeLessThan(easyChain[0].difficulty);
+    const nextDay = reference({ s: first.stability, d: first.difficulty }, 1, Grade.Good);
+    expect(feq(second.stability, nextDay.s)).toBe(true);
   });
 });
 

@@ -1,99 +1,79 @@
+import { FSRSAlgorithm, default_w, generatorParameters } from "ts-fsrs";
 import { Grade, Performance, ReviewedPerformance } from "./types";
 
-const W: number[] = [
-  0.40255, 1.18385, 3.173, 15.69105, 7.1949, 0.5345, 1.4604, 0.0046, 1.54575,
-  0.1192, 1.01925, 1.9395, 0.11, 0.29605, 2.2698, 0.2315, 2.9898, 0.51655,
-  0.6621,
-];
+/**
+ * Scheduling: FSRS-6, through the reference TypeScript implementation.
+ *
+ * This was a hand port of FSRS-5 that left out FSRS-5's same-day formula. A
+ * card reviewed twice in one day then had a gap of 0 days, which means
+ * predicted recall of 1.0, which zeroes the stability growth term — so a card
+ * forgotten and re-learned the same day could not get anywhere. The fix was to
+ * pretend the gap was a day.
+ *
+ * FSRS-6 models the same day directly, and is measurably better at it: on the
+ * open SRS benchmark, with same-day reviews included, log loss falls from
+ * 0.457 (FSRS-5) to 0.384. It is also the version the FSRS optimizer fits,
+ * which is where per-collection tuning will come from.
+ *
+ * `ts-fsrs` is the memory model only — stability and difficulty after a
+ * review. What this app does around it is its own: whole-day due dates in local
+ * time, fuzz, the interval cap, and desired retention. FSRS-7 exists, but its
+ * gains are mostly in fractional, within-day intervals, which a day-based
+ * schedule cannot use, and it is still settling upstream.
+ *
+ * Stability means the same thing in both versions — the interval at which
+ * recall has fallen to 90% — so states written under FSRS-5 carry over as they
+ * are.
+ */
 
-const F = 19.0 / 81.0;
-const C = -0.5;
+/** FSRS-6's published defaults: 21 weights, the last of them the curve's decay. */
+export const PARAMETERS: readonly number[] = default_w;
+
+const algorithm = new FSRSAlgorithm(
+  generatorParameters({ w: [...PARAMETERS], enable_short_term: true })
+);
+
+/**
+ * The forgetting curve's shape. FSRS-5 fixed it at 0.5; FSRS-6 learns it, and
+ * the factor follows from it so that recall is exactly 90% at t = S.
+ */
+const DECAY = -PARAMETERS[20];
+const FACTOR = Math.pow(0.9, 1 / DECAY) - 1;
 
 /**
  * The recall probability a card is scheduled to have decayed to when it comes
- * due. At 0.9 an interval equals the card's stability, which is what the
- * default weights were fitted for.
+ * due. At 0.9 an interval equals the card's stability.
  */
 export const DEFAULT_RETENTION = 0.9;
 export const MIN_RETENTION = 0.7;
 export const MAX_RETENTION = 0.97;
-const MIN_INTERVAL = 0.0;
-const MAX_INTERVAL = 256.0;
 
+const MIN_INTERVAL = 0;
+const MAX_INTERVAL = 256;
+
+/** Probability of recall `t` days after a review that left stability `s`. */
 export function retrievability(t: number, s: number): number {
-  return Math.pow(1.0 + F * (t / s), C);
+  return Math.pow(1 + FACTOR * (t / s), DECAY);
 }
 
+/** Days until recall falls to `rd`, for stability `s`. */
 export function interval(rd: number, s: number): number {
-  return (s / F) * (Math.pow(rd, 1.0 / C) - 1.0);
+  return (s / FACTOR) * (Math.pow(rd, 1 / DECAY) - 1);
 }
 
-export function initialStability(g: Grade): number {
-  switch (g) {
-    case Grade.Forgot:
-      return W[0];
-    case Grade.Hard:
-      return W[1];
-    case Grade.Good:
-      return W[2];
-    case Grade.Easy:
-      return W[3];
-  }
+/** The local calendar day of an instant, as `YYYY-MM-DD`. */
+export function localDay(at: Date = new Date()): string {
+  return (
+    at.getFullYear() +
+    "-" +
+    String(at.getMonth() + 1).padStart(2, "0") +
+    "-" +
+    String(at.getDate()).padStart(2, "0")
+  );
 }
 
-function sSuccess(d: number, s: number, r: number, g: Grade): number {
-  const td = 11.0 - d;
-  const ts = Math.pow(s, -W[9]);
-  const tr = Math.exp(W[10] * (1.0 - r)) - 1.0;
-  const h = g === Grade.Hard ? W[15] : 1.0;
-  const b = g === Grade.Easy ? W[16] : 1.0;
-  const c = Math.exp(W[8]);
-  const alpha = 1.0 + td * ts * tr * h * b * c;
-  return s * alpha;
-}
-
-function sFail(d: number, s: number, r: number): number {
-  const df = Math.pow(d, -W[12]);
-  const sf = Math.pow(s + 1.0, W[13]) - 1.0;
-  const rf = Math.exp(W[14] * (1.0 - r));
-  const cf = W[11];
-  const result = df * sf * rf * cf;
-  return Math.min(result, s);
-}
-
-export function newStability(
-  d: number,
-  s: number,
-  r: number,
-  g: Grade
-): number {
-  if (g === Grade.Forgot) {
-    return sFail(d, s, r);
-  } else {
-    return sSuccess(d, s, r, g);
-  }
-}
-
-function clampD(d: number): number {
-  return Math.max(1.0, Math.min(10.0, d));
-}
-
-export function initialDifficulty(g: Grade): number {
-  const gf = g as number;
-  return clampD(W[4] - Math.exp(W[5] * (gf - 1.0)) + 1.0);
-}
-
-export function newDifficulty(d: number, g: Grade): number {
-  return clampD(W[7] * initialDifficulty(Grade.Easy) + (1.0 - W[7]) * dp(d, g));
-}
-
-function dp(d: number, g: Grade): number {
-  return d + deltaD(g) * ((10.0 - d) / 9.0);
-}
-
-function deltaD(g: Grade): number {
-  const gf = g as number;
-  return -W[6] * (gf - 3.0);
+export function todayStr(): string {
+  return localDay();
 }
 
 function daysBetween(a: string, b: string): number {
@@ -106,17 +86,6 @@ function addDays(dateStr: string, days: number): string {
   const d = new Date(dateStr + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
-}
-
-export function todayStr(): string {
-  const now = new Date();
-  return (
-    now.getFullYear() +
-    "-" +
-    String(now.getMonth() + 1).padStart(2, "0") +
-    "-" +
-    String(now.getDate()).padStart(2, "0")
-  );
 }
 
 function fuzzInterval(days: number): number {
@@ -147,42 +116,31 @@ export function updatePerformance(
   reviewedAt: string,
   { fuzz = false, retention = DEFAULT_RETENTION }: ScheduleOptions = {}
 ): ReviewedPerformance {
-  const today = reviewedAt.slice(0, 10);
-  let stability: number;
-  let difficulty: number;
-  let reviewCount: number;
+  // Days are local days, as `todayStr` — and so the due list — counts them.
+  // These used to be the UTC date of the timestamp: reviewing after midnight
+  // in Europe landed on the day before, and two reviews either side of local
+  // midnight could count as the same day.
+  const today = localDay(new Date(reviewedAt));
+  const elapsed =
+    perf.type === "new"
+      ? 0
+      : Math.max(0, daysBetween(localDay(new Date(perf.lastReviewedAt)), today));
 
-  if (perf.type === "new") {
-    stability = initialStability(grade);
-    difficulty = initialDifficulty(grade);
-    reviewCount = 0;
-  } else {
-    const lastDate = perf.lastReviewedAt.slice(0, 10);
-    let time = daysBetween(lastDate, today);
-    // Same-day re-reviews produce r=1.0 which zeroes out the FSRS stability
-    // growth term. Use time=1 for successful same-day grades so stability
-    // can actually increase and the card isn't stuck forever.
-    if (time === 0 && grade !== Grade.Forgot) {
-      time = 1;
-    }
-    const retr = retrievability(time, perf.stability);
-    stability = newStability(perf.difficulty, perf.stability, retr, grade);
-    difficulty = newDifficulty(perf.difficulty, grade);
-    reviewCount = perf.reviewCount;
-  }
+  const { stability, difficulty } = algorithm.next_state(
+    perf.type === "new"
+      ? null
+      : { stability: perf.stability, difficulty: perf.difficulty },
+    elapsed,
+    grade
+  );
 
   // Retention moves the due date only. Stability and difficulty are what the
   // review taught us about the card, and they do not depend on when we chose
   // to ask again.
   const intervalRaw = interval(retention, stability);
-  let intervalRounded = Math.round(intervalRaw);
-  if (fuzz) intervalRounded = fuzzInterval(intervalRounded);
-  const intervalClamped = Math.max(
-    MIN_INTERVAL,
-    Math.min(MAX_INTERVAL, intervalRounded)
-  );
-  const intervalDays = intervalClamped;
-  const dueDate = addDays(today, intervalDays);
+  let intervalDays = Math.round(intervalRaw);
+  if (fuzz) intervalDays = fuzzInterval(intervalDays);
+  intervalDays = Math.max(MIN_INTERVAL, Math.min(MAX_INTERVAL, intervalDays));
 
   return {
     type: "reviewed",
@@ -191,7 +149,7 @@ export function updatePerformance(
     difficulty,
     intervalRaw,
     intervalDays,
-    dueDate,
-    reviewCount: reviewCount + 1,
+    dueDate: addDays(today, intervalDays),
+    reviewCount: (perf.type === "new" ? 0 : perf.reviewCount) + 1,
   };
 }

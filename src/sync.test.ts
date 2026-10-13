@@ -31,6 +31,11 @@ class FakeRepo {
   writeAttempts: unknown[] = [];
   /** Runs after each read of the state file, to stand in for another device. */
   onStateRead: (() => void) | null = null;
+  /**
+   * Answer the tree with only the first file and `truncated: true`, as GitHub
+   * does past 100,000 entries or 7 MB of listing.
+   */
+  truncated = false;
 
   set(path: string, content: string, sha: string): void {
     this.files.set(path, { sha, content });
@@ -55,12 +60,13 @@ class FakeRepo {
       if (sent === this.etag) {
         return new Response(null, { status: 304 });
       }
-      const tree = [...this.files].map(([path, f]) => ({
+      const all = [...this.files].map(([path, f]) => ({
         path,
         sha: f.sha,
         type: "blob",
       }));
-      return new Response(JSON.stringify({ tree }), {
+      const tree = this.truncated ? all.slice(0, 1) : all;
+      return new Response(JSON.stringify({ tree, truncated: this.truncated }), {
         status: 200,
         headers: { etag: this.etag },
       });
@@ -227,6 +233,22 @@ describe("card sync", () => {
     const cards = await syncCards(CONFIG);
     expect(cards).toHaveLength(1);
     expect(cards[0].filePath).toBe("a.md");
+  });
+
+  it("keeps every card when GitHub truncates the tree", async () => {
+    repo.set("a.md", card("one"), "sha-a");
+    repo.set("b.md", card("two"), "sha-b");
+    const { syncCards } = await freshSync();
+    await syncCards(CONFIG);
+
+    // A partial listing is not a list of deletions: `b.md` is still in the
+    // repo, the tree just stopped before reaching it.
+    repo.truncated = true;
+    repo.retag('W/"tree-2"');
+
+    await expect(syncCards(CONFIG)).rejects.toThrow(/too large/);
+    const { loadCards } = await import("./sync");
+    expect(await loadCards()).toHaveLength(2);
   });
 
   it("does not record the tree tag when a fetch fails", async () => {

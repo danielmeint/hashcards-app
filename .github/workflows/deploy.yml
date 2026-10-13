@@ -19,6 +19,24 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Runs on the runner's own Google Chrome (`channel: "chrome"`), so there
+      # is no browser to download.
+      - run: npm run e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results/
+
   lighthouse:
     runs-on: ubuntu-latest
     steps:
@@ -34,7 +52,7 @@ jobs:
           configPath: lighthouserc.json
 
   deploy:
-    needs: [test, lighthouse]
+    needs: [test, e2e, lighthouse]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

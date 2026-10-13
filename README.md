@@ -67,6 +67,16 @@ npm run build     # production build
 
 `npm run build` outputs static files to `dist/`, deployed to Cloudflare Pages by `.github/workflows/deploy.yml`. The `functions/` directory at the repo root is picked up by the same `wrangler pages deploy` invocation and served at `/api/auth/*`.
 
+### Dev deployment
+
+`npm run deploy:dev` builds whatever is checked out and publishes it to
+**https://dev.hashcards-app.pages.dev** — a Pages preview, never production, so
+a branch can be tried on a phone before it merges. It needs `npx wrangler login`
+once. Sign-in works there because the GitHub App lists that URL as a callback and
+the Pages *preview* environment has its own `GITHUB_CLIENT_ID` and
+`GITHUB_CLIENT_SECRET` (set with `--env preview`; preview and production
+secrets are separate).
+
 ### Sign-in setup
 
 "Sign in with GitHub" needs a GitHub App of your own. Without one the app still works — the sign-in button simply does not appear, and the token path is the only way in.

@@ -24,3 +24,7 @@ coverage/
 
 # GitHub App credentials from scripts/create-github-app.mjs
 .github-app/
+
+# Playwright
+test-results/
+playwright-report/

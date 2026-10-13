@@ -6,12 +6,15 @@
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p e2e",
+    "lint": "tsc --noEmit && tsc --noEmit -p e2e",
+    "e2e": "playwright test"
   },
   "license": "MIT",
   "type": "module",
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "@types/node": "^26.6.5",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^30.0.1",
     "typescript": "^5.9.3",

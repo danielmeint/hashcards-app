@@ -93,8 +93,12 @@ export type Review = {
 export type DrillSession = {
   /** Remaining cards, in queue order. */
   queue: string[];
-  /** Cards in reinforcement (graded Forgot or Hard, awaiting "Got it"). */
-  requeued: string[];
+  /**
+   * Cards in the old reinforcement mode (Again / Got it). No longer written —
+   * a re-shown card is graded like any other — but a session saved before that
+   * change may still carry it, and it is safe to ignore.
+   */
+  requeued?: string[];
   /** Cards retired from the queue. */
   completed: string[];
   /** New cards already charged against today's budget this session. */

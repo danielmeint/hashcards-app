@@ -183,19 +183,19 @@ describe("drill persistence", () => {
     expect([...perfs.keys()]).toEqual([reviews[0].cardHash]);
   });
 
-  it("a re-queued card is graded once, not twice", async () => {
+  it("offers the ordinary grades for a card that comes round again", async () => {
     const { renderDrill, getAllReviews } = await freshDrill();
     await renderDrill(container, [basicCard(1)], () => {});
 
-    // Forgot re-queues the card for reinforcement without further FSRS.
     grade(container, Grade.Forgot);
     await waitFor(getAllReviews, (r) => r.length === 1, "the grade");
 
     click(container, "#reveal-btn");
-    click(container, '.requeue-btn[data-action="done"]');
-    await settle();
+    expect(container.querySelectorAll(".grade-btn")).toHaveLength(4);
+    grade(container, Grade.Good);
+    const reviews = await waitFor(getAllReviews, (r) => r.length === 2, "the second grade");
 
-    expect(await getAllReviews()).toHaveLength(1);
+    expect(reviews.map((r) => r.grade)).toEqual([Grade.Forgot, Grade.Good]);
   });
 
   it("records drill position and clears it when the session ends", async () => {
@@ -530,28 +530,28 @@ describe("drill input", () => {
     expect(reviews[1].grade).toBe(Grade.Forgot);
   });
 
-  it("maps a swipe on a re-queued card to Again and Got it", async () => {
+  it("swipes a card that comes round again like any other", async () => {
     const { renderDrill, getAllReviews } = await freshDrill();
     await renderDrill(container, [basicCard(1)], () => {});
 
-    // Forgot re-queues the card, so the controls become Again / Got it.
     grade(container, Grade.Forgot);
     await waitFor(getAllReviews, (r) => r.length === 1, "the grade");
 
     click(container, "#reveal-btn");
-    drag(container, -120); // Again: back to the end of the queue
+    drag(container, -120); // Forgot again: still not passed
+    await waitFor(getAllReviews, (r) => r.length === 2, "the left swipe");
     expect(container.querySelector(".finished")).toBeNull();
 
     click(container, "#reveal-btn");
-    drag(container, 120); // Got it: retires the card
+    drag(container, 120); // Good: passed, done
 
     await waitFor(
       async () => container.querySelector(".finished"),
       (el) => el !== null,
       "the session to finish"
     );
-    // Reinforcement, not re-grading — still the one review.
-    expect(await getAllReviews()).toHaveLength(1);
+    const reviews = await getAllReviews();
+    expect(reviews.map((r) => r.grade)).toEqual([Grade.Forgot, Grade.Forgot, Grade.Good]);
   });
 
   it("reveals rather than grades when swiped before the answer is showing", async () => {

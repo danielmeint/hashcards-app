@@ -14,11 +14,13 @@ import { Card, Grade } from "../../types";
 async function fresh() {
   globalThis.indexedDB = new IDBFactory();
   vi.resetModules();
-  const [{ createSession }, budget] = await Promise.all([
-    import("./session"),
-    import("../../new-card-budget"),
-  ]);
-  return { createSession, ...budget };
+  const [{ createSession }, budget, { getAllReviews, getAllPerformances }] =
+    await Promise.all([
+      import("./session"),
+      import("../../new-card-budget"),
+      import("../../db"),
+    ]);
+  return { createSession, getAllReviews, getAllPerformances, ...budget };
 }
 
 function card(n: number, familyHash: string | null = null): Card {
@@ -93,21 +95,78 @@ describe("drill session", () => {
     expect(getIntroducedToday()).toBe(0);
   });
 
-  it("does not charge the budget twice for a re-queued card", async () => {
+  it("does not charge the budget twice for a card that comes round again", async () => {
     const { createSession, getIntroducedToday } = await fresh();
     const session = await createSession([card(1)]);
 
-    // Forgot sends the card round again for reinforcement.
+    // Forgot sends the card round again, and its second answer is a grade.
     session.reveal();
     session.grade(Grade.Forgot);
     await settle();
-    expect(session.requeued).toBe(true);
+    expect(session.current?.hash).toBe("hash-1");
 
     session.reveal();
-    session.requeue(false); // Got it
+    session.grade(Grade.Good);
 
     await settle();
     expect(getIntroducedToday()).toBe(1);
+  });
+
+  /**
+   * A card that comes round again used to get Again / Got it — a mode the
+   * scheduler never saw, because a same-day review meant nothing to it. FSRS-6
+   * models the same day, so the second answer is an ordinary grade.
+   */
+  it("grades a card that comes round again like any other, as a same-day review", async () => {
+    const { createSession, getAllReviews, getAllPerformances } = await fresh();
+    const session = await createSession([card(1)]);
+
+    session.reveal();
+    session.grade(Grade.Forgot);
+    await settle();
+    const lapsed = (await getAllPerformances()).get("hash-1")!;
+
+    session.reveal();
+    session.grade(Grade.Good);
+    await settle();
+
+    const reviews = await getAllReviews();
+    expect(reviews.map((r) => r.grade)).toEqual([Grade.Forgot, Grade.Good]);
+    const relearned = (await getAllPerformances()).get("hash-1")!;
+    expect(relearned.type === "reviewed" && relearned.reviewCount).toBe(2);
+    expect(relearned.type === "reviewed" && lapsed.type === "reviewed" &&
+      relearned.stability >= lapsed.stability).toBe(true);
+    expect(session.finished).toBe(true);
+  });
+
+  it("keeps sending a card round until it is passed", async () => {
+    const { createSession } = await fresh();
+    const session = await createSession([card(1)]);
+
+    for (const grade of [Grade.Forgot, Grade.Hard, Grade.Forgot]) {
+      session.reveal();
+      session.grade(grade);
+      expect(session.current?.hash).toBe("hash-1");
+    }
+    session.reveal();
+    session.grade(Grade.Easy);
+    expect(session.finished).toBe(true);
+  });
+
+  it("undoes the second answer back to the card coming round", async () => {
+    const { createSession } = await fresh();
+    const session = await createSession([card(1), card(2)]);
+    session.reveal();
+    session.grade(Grade.Forgot); // hash-1 goes behind hash-2
+    session.reveal();
+    session.grade(Grade.Good); // hash-2 done
+    session.reveal();
+    session.grade(Grade.Good); // hash-1, second time
+
+    await session.undo();
+
+    expect(session.current?.hash).toBe("hash-1");
+    expect(session.finished).toBe(false);
   });
 
   it("restores the pre-grade schedule on undo, not the graded one", async () => {
@@ -323,21 +382,9 @@ describe("a card rewritten during the drill", () => {
 
     session.replaceCard("hash-1", rewritten(1), true);
     session.reveal();
-    session.requeue(false);
+    session.grade(Grade.Good);
 
     expect(getIntroducedToday()).toBe(1);
-  });
-
-  it("keeps a re-queued card in reinforcement rather than sending it back to FSRS", async () => {
-    const { createSession } = await fresh();
-    const session = await createSession([card(1)]);
-    session.reveal();
-    session.grade(Grade.Forgot);
-    expect(session.requeued).toBe(true);
-
-    session.replaceCard("hash-1", rewritten(1), true);
-
-    expect(session.requeued).toBe(true);
   });
 
   /**

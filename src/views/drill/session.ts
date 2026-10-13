@@ -34,8 +34,6 @@ export type Session = {
   /** The one behind it, which the view typesets ahead of time. */
   readonly next: Card | null;
   readonly revealed: boolean;
-  /** The current card is being reinforced, not FSRS-graded. */
-  readonly requeued: boolean;
   /** 0 to 1, over the whole session including an earlier sitting. */
   readonly progress: number;
   readonly canUndo: boolean;
@@ -47,7 +45,6 @@ export type Session = {
 
   reveal(): void;
   grade(grade: Grade): void;
-  requeue(again: boolean): void;
   undo(): Promise<void>;
   /**
    * Put what an edit made of a card where the old one was, or drop it if the
@@ -66,17 +63,14 @@ export type Session = {
   onChange(listener: () => void): void;
 };
 
-type UndoEntry =
-  | {
-      type: "grade";
-      cardHash: string;
-      grade: Grade;
-      /** Scheduling state before the grade, used to reverse the write. */
-      prevPerf: Performance;
-      /** Key of the persisted review; null until the write lands. */
-      reviewKey: IDBValidKey | null;
-    }
-  | { type: "requeue"; cardHash: string; again: boolean };
+type UndoEntry = {
+  cardHash: string;
+  grade: Grade;
+  /** Scheduling state before the grade, used to reverse the write. */
+  prevPerf: Performance;
+  /** Key of the persisted review; null until the write lands. */
+  reviewKey: IDBValidKey | null;
+};
 
 /** Fresh drills shuffle and bury cloze siblings; resumed ones keep their order. */
 function buildQueue(dueCards: Card[], resume?: DrillSession): Card[] {
@@ -147,7 +141,6 @@ export async function createSession(
 
   // The undo stack is intentionally not persisted: undo is a within-sitting
   // correction, and a resumed drill starts with a clean one.
-  const requeuedHashes = new Set<string>(resume?.requeued ?? []);
   const completedHashes = new Set<string>(resume?.completed ?? []);
   const undoStack: UndoEntry[] = [];
   const startedAt = resume?.startedAt ?? new Date().toISOString();
@@ -184,7 +177,6 @@ export async function createSession(
   function snapshot(): DrillSession {
     return {
       queue: queue.map((c) => c.hash),
-      requeued: [...requeuedHashes],
       completed: [...completedHashes],
       gradedNew: [...gradedNewCards],
       totalCards,
@@ -216,10 +208,6 @@ export async function createSession(
     },
     get revealed() {
       return revealed;
-    },
-    get requeued() {
-      const card = queue[0];
-      return card !== undefined && requeuedHashes.has(card.hash);
     },
     get progress() {
       return totalCards === 0 ? 0 : completedHashes.size / totalCards;
@@ -277,9 +265,12 @@ export async function createSession(
         if (!dryRun) recordIntroduced(todayStr(), 1);
       }
 
-      // Forgot and Hard go to the back for reinforcement, with no further FSRS.
+      // Forgot and Hard come round again later in the drill — hashcards' version
+      // of Anki's learning steps, since a whole-day schedule cannot say "in ten
+      // minutes". The next answer is an ordinary grade: FSRS-6 models a review
+      // on the same day, so it counts, rather than being a separate
+      // "reinforcement" mode the scheduler never saw.
       if (grade === Grade.Forgot || grade === Grade.Hard) {
-        requeuedHashes.add(card.hash);
         queue.push(card);
       } else {
         completedHashes.add(card.hash);
@@ -288,7 +279,6 @@ export async function createSession(
       reviews.push(review);
 
       const undoEntry: UndoEntry = {
-        type: "grade",
         cardHash: card.hash,
         grade,
         prevPerf: perf,
@@ -312,25 +302,6 @@ export async function createSession(
       notify();
     },
 
-    requeue(again: boolean) {
-      if (!revealed) return;
-      haptic();
-
-      const card = queue.shift()!;
-      undoStack.push({ type: "requeue", cardHash: card.hash, again });
-
-      if (again) {
-        queue.push(card);
-      } else {
-        requeuedHashes.delete(card.hash);
-        completedHashes.add(card.hash);
-      }
-
-      savePosition();
-      revealed = false;
-      notify();
-    },
-
     async undo() {
       if (undoStack.length === 0) return;
 
@@ -338,55 +309,40 @@ export async function createSession(
       const card = known.get(entry.cardHash);
       if (!card) return;
 
-      if (entry.type === "requeue") {
-        if (entry.again) {
-          // "Again" pushed the card to the back — take it out again.
-          const idx = queue.findLastIndex((c) => c.hash === card.hash);
-          if (idx >= 0) queue.splice(idx, 1);
-        } else {
-          // "Got it" retired the card — put it back into reinforcement.
-          requeuedHashes.add(card.hash);
-          completedHashes.delete(card.hash);
-        }
-        queue.unshift(card);
-        savePosition();
+      reviews.pop();
+
+      if (entry.grade === Grade.Forgot || entry.grade === Grade.Hard) {
+        const idx = queue.findLastIndex((c) => c.hash === card.hash);
+        if (idx >= 0) queue.splice(idx, 1);
       } else {
-        reviews.pop();
-
-        if (entry.grade === Grade.Forgot || entry.grade === Grade.Hard) {
-          const idx = queue.findLastIndex((c) => c.hash === card.hash);
-          if (idx >= 0) queue.splice(idx, 1);
-          requeuedHashes.delete(card.hash);
-        } else {
-          completedHashes.delete(card.hash);
-        }
-
-        // Give back the new-card budget if this was the card's first grade.
-        if (gradedNewCards.has(card.hash)) {
-          const stillGraded = reviews.some((r) => r.cardHash === card.hash);
-          if (!stillGraded) {
-            gradedNewCards.delete(card.hash);
-            if (!dryRun) recordIntroduced(todayStr(), -1);
-          }
-        }
-
-        queue.unshift(card);
-
-        // Reverse the persisted write. Writes are serialized, so the grade's
-        // write has landed and its key is populated by the time this runs.
-        if (!dryRun) {
-          const position = snapshot();
-          await enqueueWrite(() =>
-            revertReview(
-              entry.cardHash,
-              entry.prevPerf,
-              entry.reviewKey,
-              position
-            )
-          );
-        }
-        cache.set(card.hash, entry.prevPerf);
+        completedHashes.delete(card.hash);
       }
+
+      // Give back the new-card budget if this was the card's first grade.
+      if (gradedNewCards.has(card.hash)) {
+        const stillGraded = reviews.some((r) => r.cardHash === card.hash);
+        if (!stillGraded) {
+          gradedNewCards.delete(card.hash);
+          if (!dryRun) recordIntroduced(todayStr(), -1);
+        }
+      }
+
+      queue.unshift(card);
+
+      // Reverse the persisted write. Writes are serialized, so the grade's
+      // write has landed and its key is populated by the time this runs.
+      if (!dryRun) {
+        const position = snapshot();
+        await enqueueWrite(() =>
+          revertReview(
+            entry.cardHash,
+            entry.prevPerf,
+            entry.reviewKey,
+            position
+          )
+        );
+      }
+      cache.set(card.hash, entry.prevPerf);
 
       revealed = false;
       notify();
@@ -431,7 +387,7 @@ export async function createSession(
         cache.set(to.hash, perf);
         if (perf.type === "new") newCardHashes.add(to.hash);
 
-        for (const set of [requeuedHashes, completedHashes, gradedNewCards]) {
+        for (const set of [completedHashes, gradedNewCards]) {
           if (set.delete(from)) set.add(to.hash);
         }
       }
@@ -439,7 +395,6 @@ export async function createSession(
       known.delete(from);
       cache.delete(from);
       newCardHashes.delete(from);
-      requeuedHashes.delete(from);
       completedHashes.delete(from);
       gradedNewCards.delete(from);
 

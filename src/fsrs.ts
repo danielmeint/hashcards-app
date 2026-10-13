@@ -45,11 +45,14 @@ const FACTOR = Math.pow(0.9, 1 / DECAY) - 1;
  * due. At 0.9 an interval equals the card's stability.
  */
 export const DEFAULT_RETENTION = 0.9;
-export const MIN_RETENTION = 0.7;
-export const MAX_RETENTION = 0.97;
-
-const MIN_INTERVAL = 0;
-const MAX_INTERVAL = 256;
+/**
+ * Narrower than Anki's 70–97%. FSRS-6's curve is flat, so retention bites
+ * hard: a new card graded Good is 2 days out at 90% but ~3 weeks at 70%, the
+ * "massive interval jumps at low desired retention" the FSRS benchmark warns
+ * of. At the top, Anki's own manual calls workload above 95% overwhelming.
+ */
+export const MIN_RETENTION = 0.8;
+export const MAX_RETENTION = 0.95;
 
 /** Probability of recall `t` days after a review that left stability `s`. */
 export function retrievability(t: number, s: number): number {
@@ -137,10 +140,14 @@ export function updatePerformance(
   // Retention moves the due date only. Stability and difficulty are what the
   // review taught us about the card, and they do not depend on when we chose
   // to ask again.
+  //
+  // No cap beyond the model's own (stability tops out at 100 years). There
+  // was a 256-day one, which only ever meant a card known cold came back every
+  // eight months whether or not it needed to.
   const intervalRaw = interval(retention, stability);
   let intervalDays = Math.round(intervalRaw);
   if (fuzz) intervalDays = fuzzInterval(intervalDays);
-  intervalDays = Math.max(MIN_INTERVAL, Math.min(MAX_INTERVAL, intervalDays));
+  intervalDays = Math.max(0, intervalDays);
 
   return {
     type: "reviewed",

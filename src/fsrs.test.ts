@@ -238,7 +238,7 @@ describe("desired retention", () => {
   it("schedules further out for less, and sooner for more", () => {
     const at90 = reviewed(0.9).intervalRaw;
     expect(reviewed(0.8).intervalRaw).toBeGreaterThan(at90);
-    expect(reviewed(0.97).intervalRaw).toBeLessThan(at90);
+    expect(reviewed(0.95).intervalRaw).toBeLessThan(at90);
   });
 
   it("is the interval at which predicted recall falls to the target", () => {
@@ -247,7 +247,7 @@ describe("desired retention", () => {
   });
 
   it("changes when a card is due, not what was learned about it", () => {
-    const [low, high] = [reviewed(0.75), reviewed(0.95)];
+    const [low, high] = [reviewed(0.8), reviewed(0.95)];
     expect(low.stability).toBe(high.stability);
     expect(low.difficulty).toBe(high.difficulty);
   });

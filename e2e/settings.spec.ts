@@ -15,12 +15,12 @@ test("a lower desired retention schedules further out", async ({ page, github })
 
   await page.locator("#settings-btn").click();
   await expect(page.locator("#desired-retention")).toHaveValue("0.9");
-  await page.locator("#desired-retention").selectOption("0.7");
+  await page.locator("#desired-retention").selectOption("0.8");
   await page.locator("#back-btn").click();
 
-  const atSeventy = await goodPreview(page);
+  const atEighty = await goodPreview(page);
   // A new card graded Good: FSRS-6 stability 2.3 days, so 2d at 90%. Its
-  // forgetting curve is flat, so at 70% that stretches to ~21 days.
+  // forgetting curve is flat, so at 80% that already stretches to 7.65 days.
   expect(atDefault).toBe("2d");
-  expect(atSeventy).toBe("3w");
+  expect(atEighty).toBe("8d");
 });

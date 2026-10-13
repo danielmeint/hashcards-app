@@ -3,6 +3,8 @@ import {
   getConfig,
   getIntervalFuzz,
   setIntervalFuzz,
+  getDesiredRetention,
+  setDesiredRetention,
   getHapticFeedback,
   setHapticFeedback,
 } from "../github";
@@ -14,12 +16,23 @@ import {
   getIntroducedToday,
   resetIntroduced,
 } from "../new-card-budget";
-import { todayStr } from "../fsrs";
+import { DEFAULT_RETENTION, todayStr } from "../fsrs";
 import { getTheme, setTheme, Theme } from "../theme";
 import { adoptRepo, syncAll, getCachedCards } from "../sync";
 import { getSyncStatus, onSyncStatus } from "../sync-state";
 import { renderAuthPanel } from "./auth-panel";
 import { renderCollections } from "./collections";
+
+/** Presets across the range the setting allows (`MIN_RETENTION`–`MAX_RETENTION`). */
+const RETENTIONS = [0.7, 0.75, 0.8, 0.85, 0.9, 0.93, 0.95, 0.97];
+
+/** The presets, plus the stored value if it is none of them, so it shows as chosen. */
+function retentionChoices(): number[] {
+  const current = getDesiredRetention();
+  return RETENTIONS.includes(current)
+    ? RETENTIONS
+    : [...RETENTIONS, current].sort((a, b) => a - b);
+}
 
 /**
  * Settings, in two halves: how the app connects to GitHub (delegated to
@@ -141,6 +154,29 @@ export async function renderSettings(
                 </button>`
               : nothing}
           </div>
+        </div>
+        <div class="field-group">
+          <label for="desired-retention">Desired retention</label>
+          <select
+            id="desired-retention"
+            @change=${(e: Event) =>
+              setDesiredRetention(Number((e.target as HTMLSelectElement).value))}
+          >
+            ${retentionChoices().map(
+              (value) =>
+                html`<option
+                  value=${value}
+                  ?selected=${value === getDesiredRetention()}
+                >
+                  ${`${Math.round(value * 100)}%${value === DEFAULT_RETENTION ? " (default)" : ""}`}
+                </option>`
+            )}
+          </select>
+          <p class="field-hint">
+            How likely you should be to remember a card when it comes due.
+            Higher means more reviews; it changes future intervals, not past
+            ones.
+          </p>
         </div>
         <div class="field-group">
           <label for="theme">Theme</label>

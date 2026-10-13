@@ -115,6 +115,14 @@ export function cardSourceUrl(config: GitHubConfig, card: Card): string {
   return `https://github.com/${config.owner}/${config.repo}/blob/${config.branch}/${path}${lines}`;
 }
 
+export function getDesiredRetention(): number {
+  return settings.desiredRetention.get();
+}
+
+export function setDesiredRetention(value: number): void {
+  settings.desiredRetention.set(value);
+}
+
 export function getIntervalFuzz(): boolean {
   return settings.intervalFuzz.get();
 }

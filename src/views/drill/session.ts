@@ -8,7 +8,7 @@ import {
   saveSession,
   clearSession,
 } from "../../db";
-import { getConfig, getIntervalFuzz } from "../../github";
+import { getConfig, getDesiredRetention, getIntervalFuzz } from "../../github";
 import { recordIntroduced } from "../../new-card-budget";
 import { syncStateOnly } from "../../sync";
 import { haptic } from "../../haptics";
@@ -156,6 +156,8 @@ export async function createSession(
   const reviews: Review[] = [];
   let revealed = false;
   const useFuzz = getIntervalFuzz();
+  // Read once, like fuzz: a session schedules every card it grades the same way.
+  const retention = getDesiredRetention();
 
   let listener: (() => void) | null = null;
   const notify = () => listener?.();
@@ -242,7 +244,10 @@ export async function createSession(
       const reviewedAt = new Date().toISOString();
       const card = queue.shift()!;
       const perf = cache.get(card.hash)!;
-      const newPerf = updatePerformance(perf, grade, reviewedAt, useFuzz);
+      const newPerf = updatePerformance(perf, grade, reviewedAt, {
+        fuzz: useFuzz,
+        retention,
+      });
 
       const review: Review = {
         cardHash: card.hash,
@@ -442,7 +447,9 @@ export async function createSession(
       const perf = cache.get(card.hash)!;
       const now = new Date().toISOString();
       return [Grade.Forgot, Grade.Hard, Grade.Good, Grade.Easy].map((grade) =>
-        formatInterval(updatePerformance(perf, grade, now, false).intervalDays)
+        formatInterval(
+          updatePerformance(perf, grade, now, { retention }).intervalDays
+        )
       );
     },
 

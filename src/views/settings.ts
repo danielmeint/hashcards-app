@@ -24,7 +24,7 @@ import { renderAuthPanel } from "./auth-panel";
 import { renderCollections } from "./collections";
 
 /** Presets across the range the setting allows (`MIN_RETENTION`–`MAX_RETENTION`). */
-const RETENTIONS = [0.7, 0.75, 0.8, 0.85, 0.9, 0.93, 0.95, 0.97];
+const RETENTIONS = [0.8, 0.85, 0.9, 0.93, 0.95];
 
 /** The presets, plus the stored value if it is none of them, so it shows as chosen. */
 function retentionChoices(): number[] {

@@ -156,16 +156,18 @@ describe("drill session", () => {
   it("undoes the second answer back to the card coming round", async () => {
     const { createSession } = await fresh();
     const session = await createSession([card(1), card(2)]);
+    // A fresh drill is shuffled, so follow whichever card comes first.
+    const missed = session.current!.hash;
     session.reveal();
-    session.grade(Grade.Forgot); // hash-1 goes behind hash-2
+    session.grade(Grade.Forgot); // goes behind the other card
     session.reveal();
-    session.grade(Grade.Good); // hash-2 done
+    session.grade(Grade.Good); // the other card, done
     session.reveal();
-    session.grade(Grade.Good); // hash-1, second time
+    session.grade(Grade.Good); // the missed card, second time
 
     await session.undo();
 
-    expect(session.current?.hash).toBe("hash-1");
+    expect(session.current?.hash).toBe(missed);
     expect(session.finished).toBe(false);
   });
 

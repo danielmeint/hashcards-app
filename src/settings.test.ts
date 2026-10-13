@@ -19,10 +19,11 @@ describe("settings", () => {
   it("keeps desired retention inside the range FSRS is sensible in", () => {
     settings.desiredRetention.set(0.85);
     expect(settings.desiredRetention.get()).toBe(0.85);
-    localStorage.setItem("desired_retention", "0.5");
-    expect(settings.desiredRetention.get()).toBe(0.7);
+    // Including a value an earlier, wider range allowed.
+    localStorage.setItem("desired_retention", "0.7");
+    expect(settings.desiredRetention.get()).toBe(0.8);
     localStorage.setItem("desired_retention", "1");
-    expect(settings.desiredRetention.get()).toBe(0.97);
+    expect(settings.desiredRetention.get()).toBe(0.95);
     // Corrupt is the default, not NaN carried into every interval.
     localStorage.setItem("desired_retention", "lots");
     expect(settings.desiredRetention.get()).toBe(0.9);

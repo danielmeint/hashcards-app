@@ -922,7 +922,7 @@ shared `freshApp()` helper first and see what is left to complain about.
 
 Carried forward, still open, none of it urgent.
 
-- ~~**Custom desired retention**~~ — done: a 70–97% setting in Reviewing,
+- ~~**Custom desired retention**~~ — done: an 80–95% setting in Reviewing,
   threaded into `updatePerformance` and the grade previews. It moves due dates
   only; stability and difficulty are unchanged by it.
 - ~~**FSRS-6, and same-day reviews**~~ — done: `ts-fsrs` on FSRS-6 defaults,

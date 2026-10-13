@@ -7,6 +7,8 @@ import {
   repoKey,
   listMdFiles,
   getFilesContent,
+  getBlob,
+  FileEntry,
   readStateFile,
   writeStateFile,
   StateFile,
@@ -23,7 +25,11 @@ import {
   recordOrigins,
   setMeta,
   updateDeckFiles,
+  getMediaShas,
+  updateMedia,
+  MediaFile,
 } from "./db";
+import { forgetMediaUrl, mediaRefs, mediaType } from "./media";
 import { parseFile } from "./parser";
 import { recordSyncSuccess, setSyncStatus } from "./sync-state";
 import { AuthError } from "./auth";
@@ -254,6 +260,7 @@ export async function syncCards(
   }
 
   await updateDeckFiles(updated, removed);
+  await syncMedia(config, listing.media, onProgress);
   // Only now, and only if every fetch above succeeded — a failure throws out of
   // here, so the tag is never recorded for a state we did not reach. Recording
   // it early would make the next sync report "nothing changed" over files we
@@ -266,6 +273,59 @@ export async function syncCards(
     key
   );
   return cards;
+}
+
+/**
+ * Bring the stored images and audio in line with what this collection's cards
+ * reference: fetch what is new or changed, drop what nothing points at.
+ *
+ * Only referenced files. A repository's other pictures — a README screenshot,
+ * a logo — are none of the app's business, and fetching them would cost a
+ * request each for nothing.
+ */
+async function syncMedia(
+  config: GitHubConfig,
+  inTree: FileEntry[],
+  onProgress?: (progress: SyncProgress) => void
+): Promise<void> {
+  const key = repoKey(config);
+  const referenced = new Set(
+    (await getAllDeckFiles())
+      .filter((file) => file.repo === key)
+      .flatMap((file) => file.cards.flatMap((card) => mediaRefs(card)))
+  );
+  const wanted = inTree.filter((f) => referenced.has(f.path));
+  const stored = await getMediaShas(key);
+  const stale = wanted.filter((f) => stored.get(f.path) !== f.sha);
+  const keep = new Set(wanted.map((f) => f.path));
+  const removed = [...stored.keys()]
+    .filter((path) => !keep.has(path))
+    .map((path) => ({ repo: key, path }));
+
+  const fetched: MediaFile[] = [];
+  const concurrency = 5;
+  for (let i = 0; i < stale.length; i += concurrency) {
+    const batch = stale.slice(i, i + concurrency);
+    onProgress?.({
+      phase: "Fetching media",
+      current: i,
+      total: stale.length,
+    });
+    fetched.push(
+      ...(await Promise.all(
+        batch.map(async (f) => ({
+          repo: key,
+          path: f.path,
+          sha: f.sha,
+          type: mediaType(f.path) ?? "application/octet-stream",
+          bytes: await getBlob(config, f.sha),
+        }))
+      ))
+    );
+  }
+
+  await updateMedia(fetched, removed);
+  for (const { path } of [...fetched, ...removed]) forgetMediaUrl(key, path);
 }
 
 /**

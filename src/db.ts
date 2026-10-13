@@ -10,7 +10,7 @@ import {
 } from "./types";
 
 const DB_NAME = "hashcards";
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
@@ -18,7 +18,7 @@ let dbPromise: Promise<IDBPDatabase> | null = null;
 function getDb(): Promise<IDBPDatabase> {
   if (!dbPromise) {
     dbPromise = openDB(DB_NAME, DB_VERSION, {
-      upgrade(db) {
+      upgrade(db, oldVersion, _newVersion, tx) {
         if (!db.objectStoreNames.contains("performances")) {
           db.createObjectStore("performances", { keyPath: "hash" });
         }
@@ -49,6 +49,21 @@ function getDb(): Promise<IDBPDatabase> {
         // contents have been carried across.
         if (!db.objectStoreNames.contains("deckFiles")) {
           db.createObjectStore("deckFiles", { keyPath: ["repo", "path"] });
+        }
+        // The images and audio cards reference, keyed like the deck files they
+        // sit beside. Bytes rather than a Blob: a Blob in IndexedDB is not
+        // something every browser (or test double) has always round-tripped.
+        if (!db.objectStoreNames.contains("media")) {
+          db.createObjectStore("media", { keyPath: ["repo", "path"] });
+          // Media is fetched by a sync that finds the tree changed. A device
+          // already up to date would get a 304 and never fetch the images its
+          // cards already have, so the recorded tree tags go: one full listing
+          // per collection, and the deck files themselves still match by SHA.
+          if (oldVersion > 0 && db.objectStoreNames.contains("meta")) {
+            tx.objectStore("meta").delete(
+              IDBKeyRange.bound("tree_etag:", "tree_etag:\uffff")
+            );
+          }
         }
       },
     }).then(async (db) => {
@@ -270,12 +285,58 @@ export async function updateDeckFiles(
 /** Forget a whole collection, for a repository the user has removed. */
 export async function forgetRepo(repo: string): Promise<void> {
   const db = await getDb();
-  const tx = db.transaction("deckFiles", "readwrite");
-  for (const file of await tx.store.getAll()) {
-    if ((file as DeckFile).repo === repo) {
-      tx.store.delete([repo, (file as DeckFile).path]);
+  const tx = db.transaction(["deckFiles", "media"], "readwrite");
+  for (const name of ["deckFiles", "media"] as const) {
+    const store = tx.objectStore(name);
+    for (const file of await store.getAll()) {
+      const { path } = file as { repo: string; path: string };
+      if ((file as { repo: string }).repo === repo) store.delete([repo, path]);
     }
   }
+  await tx.done;
+}
+
+export type MediaFile = {
+  /** `owner/repo` — the collection the file is in. */
+  repo: string;
+  path: string;
+  /** The blob SHA, so a sync can tell a changed file from one it already has. */
+  sha: string;
+  type: string;
+  bytes: ArrayBuffer;
+};
+
+export async function getMedia(
+  repo: string,
+  path: string
+): Promise<MediaFile | undefined> {
+  const db = await getDb();
+  return db.get("media", [repo, path]);
+}
+
+/** The SHA of each file one collection has stored, by path. */
+export async function getMediaShas(repo: string): Promise<Map<string, string>> {
+  const db = await getDb();
+  const shas = new Map<string, string>();
+  const range = IDBKeyRange.bound([repo, ""], [repo, "\uffff"]);
+  let cursor = await db.transaction("media").store.openCursor(range);
+  while (cursor) {
+    const { path, sha } = cursor.value as MediaFile;
+    shas.set(path, sha);
+    cursor = await cursor.continue();
+  }
+  return shas;
+}
+
+export async function updateMedia(
+  updated: MediaFile[],
+  removed: { repo: string; path: string }[]
+): Promise<void> {
+  if (updated.length === 0 && removed.length === 0) return;
+  const db = await getDb();
+  const tx = db.transaction("media", "readwrite");
+  for (const file of updated) tx.store.put(file);
+  for (const { repo, path } of removed) tx.store.delete([repo, path]);
   await tx.done;
 }
 

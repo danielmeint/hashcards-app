@@ -22,6 +22,8 @@ class FakeRepo {
   files = new Map<string, { sha: string; content: string }>();
   etag = 'W/"tree-1"';
   fetchedPaths: string[] = [];
+  /** Paths of every file fetched through the blobs API, i.e. media. */
+  fetchedBlobs: string[] = [];
   treeRequests: { conditional: boolean }[] = [];
   /** The repo's `hashcards-state.json`, base64 as the contents API returns it. */
   state: { content: string; sha: string } | null = null;
@@ -105,6 +107,14 @@ class FakeRepo {
         : new Response(null, { status: 404 });
       this.onStateRead?.();
       return res;
+    }
+
+    const blob = url.match(/\/git\/blobs\/(.+)$/);
+    if (blob) {
+      const entry = [...this.files].find(([, f]) => f.sha === blob[1]);
+      if (!entry) return new Response(null, { status: 404 });
+      this.fetchedBlobs.push(entry[0]);
+      return new Response(entry[1].content, { status: 200 });
     }
 
     const contents = url.match(/\/contents\/(.+)\?/);
@@ -249,6 +259,125 @@ describe("card sync", () => {
     await expect(syncCards(CONFIG)).rejects.toThrow(/too large/);
     const { loadCards } = await import("./sync");
     expect(await loadCards()).toHaveLength(2);
+  });
+
+  it("fetches the media a card references, and only that", async () => {
+    repo.set("aws/s3.md", card("![](diagram.png)"), "sha-deck");
+    repo.set("aws/diagram.png", "PNG-BYTES", "sha-img");
+    repo.set("aws/unused.png", "OTHER", "sha-unused");
+    const { syncCards } = await freshSync();
+
+    await syncCards(CONFIG);
+
+    expect(repo.fetchedBlobs).toEqual(["aws/diagram.png"]);
+    const { getMedia } = await import("./db");
+    const stored = await getMedia("someone/cards", "aws/diagram.png");
+    expect(stored?.type).toBe("image/png");
+    expect(new TextDecoder().decode(stored?.bytes)).toBe("PNG-BYTES");
+  });
+
+  it("fetches a file again only when its SHA moves", async () => {
+    repo.set("a.md", card("![](a.png)"), "sha-a");
+    repo.set("a.png", "v1", "sha-img-1");
+    const { syncCards } = await freshSync();
+    await syncCards(CONFIG);
+
+    // Something else changed: the image is still the same blob.
+    repo.set("b.md", card("two"), "sha-b");
+    repo.retag('W/"tree-2"');
+    await syncCards(CONFIG);
+    expect(repo.fetchedBlobs).toEqual(["a.png"]);
+
+    repo.set("a.png", "v2", "sha-img-2");
+    repo.retag('W/"tree-3"');
+    await syncCards(CONFIG);
+    expect(repo.fetchedBlobs).toEqual(["a.png", "a.png"]);
+  });
+
+  it("drops media no card references any more", async () => {
+    repo.set("a.md", card("![](a.png)"), "sha-a");
+    repo.set("a.png", "bytes", "sha-img");
+    const { syncCards } = await freshSync();
+    await syncCards(CONFIG);
+
+    repo.set("a.md", card("no picture now"), "sha-a2");
+    repo.retag('W/"tree-2"');
+    await syncCards(CONFIG);
+
+    const { getMedia } = await import("./db");
+    expect(await getMedia("someone/cards", "a.png")).toBeUndefined();
+  });
+
+  it("does not record the tree tag when a media fetch fails", async () => {
+    repo.set("a.md", card("![](a.png)"), "sha-a");
+    repo.set("a.png", "bytes", "sha-img");
+    const { syncCards } = await freshSync();
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/git/blobs/")) throw new Error("network down");
+      return repo.handler(url, init);
+    }) as unknown as typeof fetch;
+
+    await expect(syncCards(CONFIG)).rejects.toThrow("network down");
+
+    install(repo);
+    await syncCards(CONFIG);
+    expect(repo.fetchedBlobs).toEqual(["a.png"]);
+  });
+
+  it("fetches media a device's cards already had before media was stored", async () => {
+    repo.set("a.md", card("![](a.png)"), "sha-a");
+    repo.set("a.png", "bytes", "sha-img");
+    const { syncCards } = await freshSync();
+    await syncCards(CONFIG);
+
+    // As a device on the previous schema left it: the deck file and the tree
+    // tag stored, and no media store at all.
+    const { getMeta } = await import("./db");
+    const etag = await getMeta<string>("tree_etag:someone/cards");
+    const deckFiles = await new Promise<unknown[]>((resolve) => {
+      const open = indexedDB.open("hashcards");
+      open.onsuccess = () => {
+        const req = open.result.transaction("deckFiles").objectStore("deckFiles").getAll();
+        req.onsuccess = () => {
+          open.result.close();
+          resolve(req.result);
+        };
+      };
+    });
+    globalThis.indexedDB = new IDBFactory();
+    await new Promise<void>((resolve) => {
+      const open = indexedDB.open("hashcards", 6);
+      open.onupgradeneeded = () => {
+        const db = open.result;
+        for (const name of ["performances", "origins", "deckFiles", "meta"]) {
+          const keyPath =
+            name === "performances" ? "hash" : name === "deckFiles" ? ["repo", "path"] : undefined;
+          db.createObjectStore(name, keyPath ? { keyPath } : undefined);
+        }
+        for (const name of ["reviews"]) db.createObjectStore(name, { autoIncrement: true });
+        for (const name of ["session", "decks", "credentials"]) db.createObjectStore(name);
+        const tx = open.transaction!;
+        tx.objectStore("meta").put(etag, "tree_etag:someone/cards");
+        for (const file of deckFiles) tx.objectStore("deckFiles").put(file);
+      };
+      open.onsuccess = () => {
+        open.result.close();
+        resolve();
+      };
+    });
+    vi.resetModules();
+    const { saveCredential } = await import("./auth");
+    await saveCredential({ kind: "pat", token: "token" });
+    const upgraded = await import("./sync");
+    repo.fetchedBlobs = [];
+    repo.fetchedPaths = [];
+
+    await upgraded.syncCards(CONFIG);
+
+    expect(repo.fetchedBlobs).toEqual(["a.png"]);
+    // The listing was full, but the deck file still matched by SHA.
+    expect(repo.fetchedPaths).toEqual([]);
   });
 
   it("does not record the tree tag when a fetch fails", async () => {

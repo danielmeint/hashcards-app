@@ -3,6 +3,7 @@ import { attachKeyboard } from "./gestures";
 import { createSession, SessionOptions } from "./session";
 import { createView } from "./view";
 import { loadMarkdown } from "../../render";
+import { prepareMedia } from "../../media";
 import { warmTypesetting } from "../../typeset";
 import { repoFor } from "../../github";
 
@@ -25,10 +26,12 @@ export async function renderDrill(
   warmTypesetting(dueCards);
 
   // Markdown is not in the initial bundle; a drill is the only thing that
-  // needs it, and this is the last await before the first card is drawn.
+  // needs it, and this is the last await before the first card is drawn —
+  // which is also why the cards' stored media is turned into URLs here.
   const [session] = await Promise.all([
     createSession(dueCards, options),
     loadMarkdown(),
+    prepareMedia(dueCards),
   ]);
 
   /**

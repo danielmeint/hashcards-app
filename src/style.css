@@ -541,6 +541,11 @@ body {
   height: auto;
 }
 
+.rich-text audio {
+  display: block;
+  width: 100%;
+}
+
 .rich-text ul,
 .rich-text ol {
   padding-left: 24px;

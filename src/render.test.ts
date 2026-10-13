@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import "fake-indexeddb/auto";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { loadMarkdown, renderCardBody } from "./render";
+import { updateMedia } from "./db";
+import { prepareMedia } from "./media";
 import { Card } from "./types";
 import { parseFile } from "./parser";
 
@@ -14,30 +17,59 @@ const card = (question: string, filePath = "aws.md"): Card => ({
   familyHash: null,
 });
 
-describe("image URLs in card text", () => {
+describe("media in card text", () => {
   // Markdown is not in the initial bundle any more; `renderDrill` awaits it at
   // the door so that everything past that stays synchronous.
   beforeAll(() => loadMarkdown());
 
   beforeEach(() => {
     localStorage.clear();
-    localStorage.setItem("github_owner", "daniel");
-    localStorage.setItem("github_repo", "my-hashcards");
-    localStorage.setItem("github_branch", "main");
+    localStorage.setItem(
+      "repos",
+      JSON.stringify([
+        { owner: "someone", repo: "cards", branch: "main" },
+        { owner: "teacher", repo: "course", branch: "cards-v2", readOnly: true },
+      ])
+    );
   });
 
-  it("resolves a relative image against the configured repo", () => {
+  it("falls back to GitHub for a file sync has not stored", () => {
     const html = renderCardBody(card("![](diagram.png)"));
     expect(html).toContain(
-      'src="https://raw.githubusercontent.com/daniel/my-hashcards/main/diagram.png"'
+      'src="https://raw.githubusercontent.com/someone/cards/main/diagram.png"'
     );
   });
 
-  it("resolves it against the directory the card lives in", () => {
+  it("resolves against the directory the card lives in", () => {
     const html = renderCardBody(card("![](diagram.png)", "aws/s3.md"));
-    expect(html).toContain(
-      'src="https://raw.githubusercontent.com/daniel/my-hashcards/main/aws/diagram.png"'
+    expect(html).toContain("/someone/cards/main/aws/diagram.png");
+  });
+
+  it("resolves @/ against the repository root", () => {
+    const html = renderCardBody(card("![](@/img/diagram.png)", "aws/s3.md"));
+    expect(html).toContain("/someone/cards/main/img/diagram.png");
+  });
+
+  it("resolves against the card's own collection, on its own branch", () => {
+    // This used to resolve against whichever repo was configured first, so a
+    // subscribed collection's images pointed into yours.
+    const html = renderCardBody({ ...card("![](diagram.png)"), repo: "teacher/course" });
+    expect(html).toContain("/teacher/course/cards-v2/diagram.png");
+  });
+
+  it("uses the stored copy when there is one", async () => {
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: () => "blob:stored" }));
+    await updateMedia(
+      [{ repo: "someone/cards", path: "aws/diagram.png", sha: "s", type: "image/png", bytes: new ArrayBuffer(4) }],
+      []
     );
+    const withImage = card("![a diagram](diagram.png)", "aws/s3.md");
+    await prepareMedia([withImage]);
+
+    const html = renderCardBody(withImage);
+    expect(html).toContain('src="blob:stored"');
+    expect(html).toContain('alt="a diagram"');
+    expect(html).not.toContain("raw.githubusercontent.com");
   });
 
   it("leaves an absolute URL alone", () => {
@@ -45,17 +77,15 @@ describe("image URLs in card text", () => {
     expect(html).toContain('src="https://example.com/a.png"');
   });
 
-  it("follows the branch the repo is configured on", () => {
-    localStorage.setItem("github_branch", "cards-v2");
-    const html = renderCardBody(card("![](diagram.png)"));
-    expect(html).toContain("/my-hashcards/cards-v2/diagram.png");
+  it("plays audio rather than showing it as a broken image", () => {
+    const html = renderCardBody(card("![](audio/parande.mp3)"));
+    expect(html).toContain("<audio controls");
+    expect(html).toContain("/someone/cards/main/audio/parande.mp3");
   });
 
-  it("leaves the path alone when there is no repo to resolve it against", () => {
+  it("leaves the path alone for a card in no configured repo", () => {
     localStorage.clear();
     const html = renderCardBody(card("![](diagram.png)"));
-    // This used to build `https://raw.githubusercontent.com///main/diagram.png`
-    // from its own reading of the config, which is a 404 with extra steps.
     expect(html).toContain('src="diagram.png"');
     expect(html).not.toContain("raw.githubusercontent.com");
   });

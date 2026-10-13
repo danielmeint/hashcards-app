@@ -310,6 +310,14 @@ export async function listMdFiles(
   if (res.status === 304) return { changed: false };
   if (!res.ok) throw new Error(await apiError(res));
   const data = await res.json();
+  // Past 100,000 entries or 7 MB GitHub sends part of the tree and says so.
+  // Everything missing from it would read as deleted and take its cards along,
+  // so a partial listing is a failure, not a smaller repo.
+  if (data.truncated) {
+    throw new Error(
+      `${config.owner}/${config.repo} is too large to list in one request`
+    );
+  }
   const files: FileEntry[] = data.tree
     .filter(
       (item: { path: string; type: string }) =>

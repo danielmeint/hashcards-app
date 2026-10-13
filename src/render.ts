@@ -1,6 +1,7 @@
-import type { Marked, Token, TokenizerAndRendererExtension } from "marked";
+import type { Marked, Token, Tokens, TokenizerAndRendererExtension } from "marked";
 import { Card, ClozeCard } from "./types";
-import { getConfig } from "./github";
+import { repoFor } from "./github";
+import { isAudio, mediaUrl, resolveMediaPath } from "./media";
 
 /**
  * Card text into HTML.
@@ -20,7 +21,10 @@ let loading: Promise<Marked> | null = null;
 
 export function loadMarkdown(): Promise<Marked> {
   return (loading ??= import("marked").then(({ Marked }) => {
-    markdown = new Marked({ extensions: [clozeExtension] });
+    markdown = new Marked({
+      extensions: [clozeExtension],
+      renderer: { image: renderMedia },
+    });
     return markdown;
   }));
 }
@@ -70,50 +74,64 @@ const clozeExtension: TokenizerAndRendererExtension = {
   },
 };
 
-function renderMarkdown(text: string): string {
+/**
+ * The card being rendered, for `renderMedia` to resolve paths against. Set and
+ * cleared around one synchronous parse, so it can never describe another card.
+ */
+let rendering: Pick<Card, "repo" | "filePath"> | null = null;
+
+function renderMarkdown(text: string, card: Pick<Card, "repo" | "filePath">): string {
   if (!markdown) {
     throw new Error("Markdown is not loaded yet — await loadMarkdown() first.");
   }
-  return markdown.parse(text, { async: false }) as string;
+  rendering = card;
+  try {
+    return markdown.parse(text, { async: false }) as string;
+  } finally {
+    rendering = null;
+  }
+}
+
+function escapeAttr(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 /**
- * Where a relative image path resolves to, or `null` when there is no repo to
- * resolve it against.
+ * `![alt](src)` as an image, or as a player when the file is audio.
  *
- * This used to read `github_owner`, `github_repo` and `github_branch` out of
- * `localStorage` itself, with its own defaults — a second reading of the
- * configuration that disagreed with `getConfig()` about the unconfigured case.
- * `getConfig()` says "there is no repo"; this said the repo was `""`, and built
- * `https://raw.githubusercontent.com///main/diagram.png`, which is a 404 with
- * extra steps. Now there is one reading, and no repo means the `src` is left
- * exactly as the card wrote it.
+ * This used to be a regex over the finished HTML, rewriting every relative
+ * `<img src>` to `raw.githubusercontent.com` under whichever repository was
+ * configured first — so a subscribed collection's images pointed into yours,
+ * `@/` paths were not understood, and a private repository's were a 401. Now
+ * the path is resolved here, against the card's own file and repository, to
+ * the copy sync stored. Only a file sync does not have (yet) falls back to
+ * GitHub, which still serves a public repository.
  */
-function imageBaseUrl(): string | null {
-  const config = getConfig();
-  if (!config) return null;
-  return `https://raw.githubusercontent.com/${config.owner}/${config.repo}/${config.branch}`;
+function renderMedia({ href, title, text }: Tokens.Image): string {
+  const card = rendering;
+  const path = card ? resolveMediaPath(href, card.filePath) : null;
+  let src = href;
+  if (card && path) {
+    const config = repoFor(card.repo);
+    src =
+      mediaUrl(card.repo, path) ??
+      (config
+        ? `https://raw.githubusercontent.com/${card.repo}/${config.branch}/${encodeURI(path)}`
+        : href);
+  }
+  const titled = title ? ` title="${escapeAttr(title)}"` : "";
+  if (isAudio(path ?? href)) {
+    return `<audio controls preload="metadata" src="${escapeAttr(src)}"${titled}></audio>`;
+  }
+  return `<img src="${escapeAttr(src)}" alt="${escapeAttr(text)}"${titled}>`;
 }
 
-function rewriteImageUrls(html: string, filePath: string): string {
-  const baseUrl = imageBaseUrl();
-  if (!baseUrl) return html;
-
-  const dir = filePath.includes("/")
-    ? filePath.substring(0, filePath.lastIndexOf("/"))
-    : "";
-
-  return html.replace(
-    /(<img\s+[^>]*src=")(?!https?:\/\/)([^"]+)(")/g,
-    (_match, pre, src, post) => {
-      const fullPath = dir ? `${dir}/${src}` : src;
-      return `${pre}${baseUrl}/${fullPath}${post}`;
-    }
-  );
-}
-
-function richText(html: string, filePath: string): string {
-  return `<div class="rich-text">${rewriteImageUrls(html, filePath)}</div>`;
+function richText(html: string): string {
+  return `<div class="rich-text">${html}</div>`;
 }
 
 /** The card's text with the deleted span wrapped, spliced by byte. */
@@ -139,12 +157,11 @@ export function renderCardBody(card: Card): string {
   const content = card.content;
   if (content.type === "basic") {
     return (
-      `<div class="question">${richText(renderMarkdown(content.question), card.filePath)}</div>` +
-      `<div class="answer">${richText(renderMarkdown(content.answer), card.filePath)}</div>`
+      `<div class="question">${richText(renderMarkdown(content.question, card))}</div>` +
+      `<div class="answer">${richText(renderMarkdown(content.answer, card))}</div>`
     );
   }
   return `<div class="prompt">${richText(
-    renderMarkdown(withClozeMarkers(content)),
-    card.filePath
+    renderMarkdown(withClozeMarkers(content), card)
   )}</div>`;
 }

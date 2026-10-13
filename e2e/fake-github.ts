@@ -9,7 +9,9 @@ export type FakeRepoConfig = { owner: string; repo: string; branch: string };
  * the app asked for nothing it should not have.
  */
 export class FakeGitHub {
-  files = new Map<string, { sha: string; content: string }>();
+  files = new Map<string, { sha: string; content: string | Buffer }>();
+  /** Every request that reached raw.githubusercontent.com — a private repo refuses them all. */
+  rawRequests: string[] = [];
   state: { content: string; sha: string } | null = null;
   stateWrites: unknown[] = [];
   unhandled: string[] = [];
@@ -17,7 +19,7 @@ export class FakeGitHub {
 
   constructor(readonly config: FakeRepoConfig) {}
 
-  set(path: string, content: string): void {
+  set(path: string, content: string | Buffer): void {
     this.files.set(path, { sha: `sha-${++this.shas}`, content });
   }
 
@@ -30,6 +32,11 @@ export class FakeGitHub {
       localStorage.setItem("repos", JSON.stringify(repos));
     }, [this.config]);
     await page.route("https://api.github.com/**", (route) => this.handle(route));
+    // Behaves as a private repository does: an <img> cannot authenticate.
+    await page.route("https://raw.githubusercontent.com/**", (route) => {
+      this.rawRequests.push(route.request().url());
+      return route.fulfill({ status: 404, headers: { "access-control-allow-origin": "*" } });
+    });
   }
 
   private async handle(route: Route): Promise<void> {
@@ -68,6 +75,18 @@ export class FakeGitHub {
         return json({});
       }
       return this.state ? json(this.state) : json({ message: "Not Found" }, 404);
+    }
+
+    const blob = url.pathname.match(new RegExp(`^${base}/git/blobs/(.+)$`));
+    if (blob) {
+      const file = [...this.files.values()].find((f) => f.sha === blob[1]);
+      if (!file) return json({ message: "Not Found" }, 404);
+      return route.fulfill({
+        status: 200,
+        headers: cors,
+        contentType: "application/octet-stream",
+        body: Buffer.from(file.content),
+      });
     }
 
     const contents = url.pathname.match(new RegExp(`^${base}/contents/(.+)$`));

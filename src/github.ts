@@ -1,6 +1,7 @@
 import { Card } from "./types";
 import { getAccessToken, loadCredential, recordLogin, refreshCredential } from "./auth";
 import { legacy, settings } from "./settings";
+import { mediaType } from "./media";
 
 /**
  * Which repository to read cards from. Deliberately carries no credential: the
@@ -288,7 +289,13 @@ export type FileEntry = {
 export type TreeListing =
   /** The tree is byte-for-byte what the caller already has. */
   | { changed: false }
-  | { changed: true; files: FileEntry[]; etag: string | null };
+  | {
+      changed: true;
+      files: FileEntry[];
+      /** Every image and audio file, for sync to pick the referenced ones from. */
+      media: FileEntry[];
+      etag: string | null;
+    };
 
 /**
  * List the repo's Markdown files, with each file's blob SHA so a caller can
@@ -318,16 +325,33 @@ export async function listMdFiles(
       `${config.owner}/${config.repo} is too large to list in one request`
     );
   }
-  const files: FileEntry[] = data.tree
-    .filter(
-      (item: { path: string; type: string }) =>
-        item.type === "blob" && item.path.endsWith(".md")
-    )
-    .map((item: { path: string; sha: string }) => ({
-      path: item.path,
-      sha: item.sha,
-    }));
-  return { changed: true, files, etag: res.headers.get("etag") };
+  const blobs: FileEntry[] = (
+    data.tree as { path: string; sha: string; type: string }[]
+  )
+    .filter((item) => item.type === "blob")
+    .map((item) => ({ path: item.path, sha: item.sha }));
+  return {
+    changed: true,
+    files: blobs.filter((f) => f.path.endsWith(".md")),
+    media: blobs.filter((f) => mediaType(f.path) !== null),
+    etag: res.headers.get("etag"),
+  };
+}
+
+/**
+ * A file's bytes, by blob SHA. The blobs API rather than contents: it has no
+ * 1 MB ceiling, and asking for the raw media type skips the base64 round trip.
+ */
+export async function getBlob(
+  config: GitHubConfig,
+  sha: string
+): Promise<ArrayBuffer> {
+  const res = await apiFetch(
+    `/repos/${config.owner}/${config.repo}/git/blobs/${sha}`,
+    { headers: { Accept: "application/vnd.github.raw" } }
+  );
+  if (!res.ok) throw new Error(await apiError(res));
+  return res.arrayBuffer();
 }
 
 /** A path as a URL carries it: spaces encoded, its slashes left as structure. */

@@ -107,6 +107,16 @@ worse than a display bug: pressing Drill on either deck drilled cards from both.
 
 ### 1.4 Images are broken in private repos
 
+**Fixed.** Sync fetches each image or audio file a card references through the
+blobs API, by SHA, into an IndexedDB `media` store keyed by repo and path, and
+drops what nothing references any more. A drill turns them into object URLs
+before its first card, so rendering stays synchronous; a marked `image`
+renderer replaced the HTML regex, which also fixed `@/` paths and subscribed
+collections resolving into the first configured repo. The v7 upgrade forgets
+recorded tree tags, so an up-to-date device still fetches media it never had.
+Covered by `src/media.test.ts`, `src/sync.test.ts` and `e2e/media.spec.ts`
+(private repo and offline). Original report below.
+
 **P2 today, P0 the day you add a diagram.** `render.ts:6-11` rewrites relative
 image sources to `raw.githubusercontent.com`. That host requires authentication
 for private repos, and an `<img>` tag cannot carry an `Authorization` header.
@@ -536,7 +546,8 @@ opaquely.
 
 ### 3.3 Large repos
 
-The tree API truncates on large repos and the current serial-ish content fetch
+*Partly addressed:* a truncated tree now fails the sync instead of reading as
+deleted files. The tree API truncates on large repos and the current serial-ish content fetch
 scales linearly with file count. 2.3's SHA diffing addresses the steady state;
 the cold-start case wants either the GraphQL API to batch blob fetches, or a
 single tarball/zipball request unpacked client-side.
@@ -553,6 +564,11 @@ classifies the token by string prefix (`github_pat_` / `ghp_`). Largely moot if
 4.1 lands, since OAuth removes user-supplied tokens entirely.
 
 ### 3.5 E2E tests
+
+**Started.** `npm run e2e`: Playwright on the installed Chrome, desktop and
+phone profiles, the real app against a fake GitHub (`e2e/fake-github.ts`), gated
+in CI before deploy. Covers the 1.1 reload-mid-drill case, reveal not moving the
+card, and 1.4. Original report below.
 
 There is good unit coverage of the parser and FSRS, and none of the drill loop —
 which is where 1.1 lives. A Playwright run that drills a session and asserts on
@@ -910,9 +926,7 @@ Carried forward, still open, none of it urgent.
 - **FSRS parameter optimization** — fit `W` to actual review history rather than
   shipping defaults. Wants a meaningful review corpus first.
 - **Search / filter across decks** — a search bar on the deck list.
-- **Audio cards** — the CLI supports `![](audio.mp3)`; detect audio extensions
-  and render an `<audio>` element. Shares the private-repo blob-fetching work
-  from 1.4.
+- ~~**Audio cards**~~ — done with 1.4, on the same pipeline.
 - ~~**Bundle size**~~ — done in Phase 3. Initial JS 40.46 → 28.86 kB gzipped,
   and a collection with no maths and no code now fetches neither KaTeX nor the
   highlighter at all.

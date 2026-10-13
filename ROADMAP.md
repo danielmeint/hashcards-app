@@ -921,8 +921,9 @@ shared `freshApp()` helper first and see what is left to complain about.
 
 Carried forward, still open, none of it urgent.
 
-- **Custom desired retention** — `TARGET_RECALL` is hardcoded at 0.9
-  (`src/fsrs.ts:12`); expose it as a 0.7–0.97 setting.
+- ~~**Custom desired retention**~~ — done: a 70–97% setting in Reviewing,
+  threaded into `updatePerformance` and the grade previews. It moves due dates
+  only; stability and difficulty are unchanged by it.
 - **FSRS parameter optimization** — fit `W` to actual review history rather than
   shipping defaults. Wants a meaningful review corpus first.
 - **Search / filter across decks** — a search bar on the deck list.

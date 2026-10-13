@@ -253,3 +253,38 @@ describe("same-day re-reviews", () => {
     expect(easyChain[1].difficulty).toBeLessThan(easyChain[0].difficulty);
   });
 });
+
+describe("desired retention", () => {
+  // A card reviewed Good twice, ten days apart: stable enough that the
+  // interval is far from both rounding and the clamp.
+  const reviewed = (retention?: number) =>
+    updatePerformance(
+      updatePerformance({ type: "new" }, Grade.Good, "2026-04-01T10:00:00Z"),
+      Grade.Good,
+      "2026-04-11T10:00:00Z",
+      retention === undefined ? {} : { retention }
+    );
+
+  it("defaults to 90%, where the interval is the stability itself", () => {
+    const perf = reviewed();
+    expect(feq(perf.intervalRaw, perf.stability)).toBe(true);
+    expect(reviewed(0.9)).toEqual(perf);
+  });
+
+  it("schedules further out for less, and sooner for more", () => {
+    const at90 = reviewed(0.9).intervalRaw;
+    expect(reviewed(0.8).intervalRaw).toBeGreaterThan(at90);
+    expect(reviewed(0.97).intervalRaw).toBeLessThan(at90);
+  });
+
+  it("is the interval at which predicted recall falls to the target", () => {
+    const perf = reviewed(0.8);
+    expect(feq(retrievability(perf.intervalRaw, perf.stability), 0.8)).toBe(true);
+  });
+
+  it("changes when a card is due, not what was learned about it", () => {
+    const [low, high] = [reviewed(0.75), reviewed(0.95)];
+    expect(low.stability).toBe(high.stability);
+    expect(low.difficulty).toBe(high.difficulty);
+  });
+});

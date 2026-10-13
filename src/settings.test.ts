@@ -13,6 +13,19 @@ describe("settings", () => {
     expect(settings.theme.get()).toBe("system");
     expect(settings.lastPushedAt.get()).toBeNull();
     expect(settings.introducedToday.get()).toBeNull();
+    expect(settings.desiredRetention.get()).toBe(0.9);
+  });
+
+  it("keeps desired retention inside the range FSRS is sensible in", () => {
+    settings.desiredRetention.set(0.85);
+    expect(settings.desiredRetention.get()).toBe(0.85);
+    localStorage.setItem("desired_retention", "0.5");
+    expect(settings.desiredRetention.get()).toBe(0.7);
+    localStorage.setItem("desired_retention", "1");
+    expect(settings.desiredRetention.get()).toBe(0.97);
+    // Corrupt is the default, not NaN carried into every interval.
+    localStorage.setItem("desired_retention", "lots");
+    expect(settings.desiredRetention.get()).toBe(0.9);
   });
 
   it("keeps the keys the app already has in the field", () => {

@@ -9,7 +9,14 @@ const W: number[] = [
 const F = 19.0 / 81.0;
 const C = -0.5;
 
-const TARGET_RECALL = 0.9;
+/**
+ * The recall probability a card is scheduled to have decayed to when it comes
+ * due. At 0.9 an interval equals the card's stability, which is what the
+ * default weights were fitted for.
+ */
+export const DEFAULT_RETENTION = 0.9;
+export const MIN_RETENTION = 0.7;
+export const MAX_RETENTION = 0.97;
 const MIN_INTERVAL = 0.0;
 const MAX_INTERVAL = 256.0;
 
@@ -127,11 +134,18 @@ export function formatInterval(days: number): string {
   return `${(days / 365).toFixed(1)}y`;
 }
 
+export type ScheduleOptions = {
+  /** Vary the interval slightly, so cards learned together spread out. */
+  fuzz?: boolean;
+  /** Target recall at the due date; see `DEFAULT_RETENTION`. */
+  retention?: number;
+};
+
 export function updatePerformance(
   perf: Performance,
   grade: Grade,
   reviewedAt: string,
-  fuzz: boolean = false
+  { fuzz = false, retention = DEFAULT_RETENTION }: ScheduleOptions = {}
 ): ReviewedPerformance {
   const today = reviewedAt.slice(0, 10);
   let stability: number;
@@ -157,7 +171,10 @@ export function updatePerformance(
     reviewCount = perf.reviewCount;
   }
 
-  const intervalRaw = interval(TARGET_RECALL, stability);
+  // Retention moves the due date only. Stability and difficulty are what the
+  // review taught us about the card, and they do not depend on when we chose
+  // to ask again.
+  const intervalRaw = interval(retention, stability);
   let intervalRounded = Math.round(intervalRaw);
   if (fuzz) intervalRounded = fuzzInterval(intervalRounded);
   const intervalClamped = Math.max(

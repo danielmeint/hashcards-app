@@ -791,6 +791,13 @@ body {
   font-family: var(--font-ui);
 }
 
+.settings-view .field-hint {
+  margin: 8px 0 0;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
 .settings-view input:focus,
 .settings-view select:focus {
   outline: none;

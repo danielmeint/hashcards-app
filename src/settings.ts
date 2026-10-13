@@ -1,5 +1,6 @@
 import type { Theme } from "./theme";
 import type { RepoConfig } from "./github";
+import { DEFAULT_RETENTION, MAX_RETENTION, MIN_RETENTION } from "./fsrs";
 
 /**
  * Everything this app keeps in `localStorage`, in one place.
@@ -69,6 +70,15 @@ const count = (fallback: number): Codec<number> => ({
   write: (value) => String(value),
 });
 
+/** A number kept inside `[min, max]`, so a hand-edited value cannot escape it. */
+const bounded = (fallback: number, min: number, max: number): Codec<number> => ({
+  read: (raw) => {
+    const parsed = parseFloat(raw ?? "");
+    return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+  },
+  write: (value) => String(value),
+});
+
 function json<T>(fallback: T): Codec<T> {
   return {
     read: (raw) => {
@@ -105,6 +115,10 @@ export const settings = {
     json<IntroducedToday | null>(null)
   ),
   intervalFuzz: setting("interval_fuzz", flag(true)),
+  desiredRetention: setting(
+    "desired_retention",
+    bounded(DEFAULT_RETENTION, MIN_RETENTION, MAX_RETENTION)
+  ),
   hapticFeedback: setting("haptic_feedback", flag(true)),
   theme: setting("theme", theme),
   /** The deck quick capture offers first — where the last card went. */

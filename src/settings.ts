@@ -124,6 +124,8 @@ export const settings = {
   /** The deck quick capture offers first — where the last card went. */
   lastDeckPath: setting("last_deck_path", optionalText),
   lastSyncedAt: setting("last_synced_at", optionalText),
+  /** Names this device's review-log files, so no two devices write one file. */
+  deviceId: setting("device_id", optionalText),
   lastPushedAt: setting("last_pushed_at", optionalText),
 };
 

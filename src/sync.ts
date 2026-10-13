@@ -30,6 +30,7 @@ import {
   MediaFile,
 } from "./db";
 import { forgetMediaUrl, mediaRefs, mediaType } from "./media";
+import { pushReviewLog } from "./review-log";
 import { parseFile } from "./parser";
 import { recordSyncSuccess, setSyncStatus } from "./sync-state";
 import { AuthError } from "./auth";
@@ -160,8 +161,19 @@ async function runSync(
     // not left the device, and the deck list has to say so.
     let inStep = true;
     for (const repo of repos) {
-      const pushed = await fullSync(repo, scope.push && !repo.readOnly, report);
+      const push = scope.push && !repo.readOnly;
+      const pushed = await fullSync(repo, push, report);
       inStep = inStep && pushed;
+      // The same consent as the state file: a collection you may write to and
+      // whose cards you have actually been reviewing.
+      const key = repoKey(repo);
+      const holds = new Set(
+        (await loadCachedCards()).filter((c) => c.repo === key).map((c) => c.hash)
+      );
+      if (push && holds.size > 0) {
+        report({ phase: "Saving review history" });
+        await pushReviewLog(repo, holds);
+      }
     }
     recordSyncSuccess(inStep);
     setSyncStatus({ phase: "idle" });

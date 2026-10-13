@@ -32,3 +32,21 @@ test("revealing the answer does not move the card", async ({ page, github }) => 
   await expect(page.locator(".grade-btn").first()).toBeVisible();
   expect((await card.boundingBox())?.y).toBe(before?.y);
 });
+
+test("ending a drill saves its reviews to the repo's history", async ({ page, github }) => {
+  github.set("Capitals.md", deck("Japan", "Peru"));
+  await page.goto("/");
+  await page.locator("#drill-all").click();
+  await page.locator("#reveal-btn").click();
+  await page.locator('.grade-btn[data-grade="3"]').click();
+  await page.locator("#end-btn").click();
+
+  const logs = () => [...github.files.keys()].filter((p) => p.startsWith("hashcards-reviews/"));
+  await expect.poll(logs).toHaveLength(1);
+  const [path] = logs();
+  expect(path).toMatch(/^hashcards-reviews\/\d{4}-\d{2}\.[0-9a-f]{8}\.jsonl$/);
+  const [line] = String(github.files.get(path)!.content).trim().split("\n");
+  expect(JSON.parse(line)).toMatchObject({ grade: 3 });
+  expect(JSON.parse(line).ms).toBeGreaterThan(0);
+  expect(github.unhandled).toEqual([]);
+});

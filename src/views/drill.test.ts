@@ -489,6 +489,20 @@ describe("drill input", () => {
     expect(isRevealed(container)).toBe(true);
   });
 
+  it("records how long a card was on screen before it was graded", async () => {
+    const { renderDrill, getAllReviews } = await freshDrill();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+
+    now.mockReturnValue(1_004_500); // four and a half seconds of thinking
+    click(container, "#reveal-btn");
+    grade(container, Grade.Good);
+    const [review] = await waitFor(getAllReviews, (r) => r.length === 1, "the grade");
+    now.mockRestore();
+
+    expect(review.durationMs).toBe(4500);
+  });
+
   it("does not grade when a revealed card is tapped", async () => {
     const { renderDrill, getAllReviews } = await freshDrill();
     await renderDrill(container, [basicCard(1), basicCard(2)], () => {});

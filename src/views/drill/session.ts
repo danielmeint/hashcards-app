@@ -155,6 +155,8 @@ export async function createSession(
 
   const reviews: Review[] = [];
   let revealed = false;
+  /** The card on screen and since when, for each review's duration. */
+  let shown: { hash: string; at: number } | null = null;
   const useFuzz = getIntervalFuzz();
   // Read once, like fuzz: a session schedules every card it grades the same way.
   const retention = getDesiredRetention();
@@ -203,7 +205,11 @@ export async function createSession(
 
   const session: Session = {
     get current() {
-      return queue[0] ?? null;
+      const card = queue[0] ?? null;
+      // The first time the view asks for a card is when it goes on screen,
+      // which is where the time spent on it starts.
+      if (card && shown?.hash !== card.hash) shown = { hash: card.hash, at: Date.now() };
+      return card;
     },
     get next() {
       return queue[1] ?? null;
@@ -258,6 +264,7 @@ export async function createSession(
         intervalRaw: newPerf.intervalRaw,
         intervalDays: newPerf.intervalDays,
         dueDate: newPerf.dueDate,
+        ...(shown?.hash === card.hash ? { durationMs: Date.now() - shown.at } : {}),
       };
 
       cache.set(card.hash, newPerf);

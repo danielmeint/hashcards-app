@@ -925,8 +925,22 @@ Carried forward, still open, none of it urgent.
 - ~~**Custom desired retention**~~ — done: a 70–97% setting in Reviewing,
   threaded into `updatePerformance` and the grade previews. It moves due dates
   only; stability and difficulty are unchanged by it.
-- **FSRS parameter optimization** — fit `W` to actual review history rather than
-  shipping defaults. Wants a meaningful review corpus first.
+- ~~**FSRS-6, and same-day reviews**~~ — done: `ts-fsrs` on FSRS-6 defaults,
+  with FSRS-6's same-day formula replacing the "pretend a day passed"
+  workaround, and days counted in local time rather than UTC.
+- ~~**Review history in the repo**~~ — done: each device writes
+  `hashcards-reviews/<YYYY-MM>.<device>.jsonl` (card, time, grade, S/D,
+  duration), backfilled from the local log on first sync.
+- **Profiles** — group decks by kind of material (directory, or a `profile`
+  key in deck frontmatter), each with its own desired retention and, later,
+  its own FSRS parameters. Anki's advice is the reason: language and facts
+  forget differently; per-deck fitting overfits. Retention per profile needs
+  no history and could come first.
+- **FSRS parameter fitting** — at roughly 1,000 synced reviews, or once there
+  is a profile big enough to separate. Fit globally, then each profile from
+  the global fit with L2 pulling towards it (as fsrs-rs pulls towards the
+  defaults), via `@open-spaced-repetition/binding` in a script over the review
+  files. Adopt a fit only if it beats the current parameters on log loss.
 - **Search / filter across decks** — a search bar on the deck list.
 - ~~**Audio cards**~~ — done with 1.4, on the same pipeline.
 - ~~**Bundle size**~~ — done in Phase 3. Initial JS 40.46 → 28.86 kB gzipped,

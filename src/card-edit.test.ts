@@ -541,6 +541,153 @@ C: The capital of [France] is [Paris]
 });
 
 /**
+ * A v2 card's range covers its metadata lines, so the editor shows them. The ID
+ * is the one that must survive an edit: everything the card has learned will
+ * hang on it.
+ */
+describe("editing a card with metadata", () => {
+  const V2 = `---
+name = "Nordic"
+---
+
+ID: est-capital
+Tags: capitals
+Q: What is the capital of Estonia?
+A: Tallinn
+
+---
+
+ID: k3n9wq2p
+C: The capital of [Norway] is [Oslo].
+`;
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("puts the card's metadata in the box", async () => {
+    const { readCardSource, sync } = await freshEdit("v2.md", V2);
+    const card = (await sync.loadCachedCards())[0];
+    expect((await readCardSource(card)).text).toBe(
+      "ID: est-capital\nTags: capitals\nQ: What is the capital of Estonia?\nA: Tallinn"
+    );
+  });
+
+  it("keeps the metadata through an edit of the text", async () => {
+    const { readCardSource, commitCardEdit, sync } = await freshEdit("v2.md", V2);
+    const card = (await sync.loadCachedCards())[0];
+    const source = await readCardSource(card);
+
+    const result = await commitCardEdit(
+      card,
+      source,
+      source.text.replace("Tallinn", "Tallinn (Reval)"),
+      { keepScheduling: true }
+    );
+
+    expect(repo.files.get("v2.md")!.text).toBe(V2.replace("Tallinn", "Tallinn (Reval)"));
+    expect(result.card).toMatchObject({ id: "est-capital", key: "est-capital", tags: ["capitals"] });
+  });
+
+  it("puts the ID back when the edit drops it", async () => {
+    const { readCardSource, commitCardEdit, sync } = await freshEdit("v2.md", V2);
+    const card = (await sync.loadCachedCards())[0];
+    const source = await readCardSource(card);
+
+    const result = await commitCardEdit(
+      card,
+      source,
+      "Q: What is the capital of Estonia?\nA: Tallinn, formerly Reval",
+      { keepScheduling: true }
+    );
+
+    expect(repo.files.get("v2.md")!.text).toContain(
+      "\nID: est-capital\nQ: What is the capital of Estonia?\nA: Tallinn, formerly Reval\n"
+    );
+    expect(result.card?.id).toBe("est-capital");
+  });
+
+  it("lets the other metadata lines be edited", async () => {
+    const { readCardSource, commitCardEdit, sync } = await freshEdit("v2.md", V2);
+    const card = (await sync.loadCachedCards())[0];
+    const source = await readCardSource(card);
+
+    const result = await commitCardEdit(
+      card,
+      source,
+      source.text.replace("Tags: capitals", "Tags: capitals, baltic\nStatus: suspended"),
+      { keepScheduling: true }
+    );
+
+    expect(result.card).toMatchObject({
+      id: "est-capital",
+      tags: ["capitals", "baltic"],
+      status: "suspended",
+    });
+  });
+
+  it("keeps a cloze block's ID, and every deletion's key", async () => {
+    const { readCardSource, commitCardEdit, sync } = await freshEdit("v2.md", V2);
+    const card = (await sync.loadCachedCards()).find((c) => c.key === "k3n9wq2p:2")!;
+    const source = await readCardSource(card);
+
+    const result = await commitCardEdit(
+      card,
+      source,
+      "C: The capital of [Norway] is [Oslo], on the Oslofjord.",
+      { keepScheduling: true }
+    );
+
+    expect(result.cards.map((c) => c.key)).toEqual(["k3n9wq2p:1", "k3n9wq2p:2"]);
+    expect(result.card?.key).toBe("k3n9wq2p:2");
+  });
+
+  it("takes the metadata with it when the card is deleted", async () => {
+    const { readCardSource, commitCardEdit, sync } = await freshEdit("v2.md", V2);
+    const card = (await sync.loadCachedCards())[0];
+    const source = await readCardSource(card);
+
+    await commitCardEdit(card, source, "", { keepScheduling: true });
+
+    const text = repo.files.get("v2.md")!.text;
+    expect(text).not.toContain("est-capital");
+    expect(text).not.toContain("Tags:");
+    // What is left still parses: no stray metadata above the next card.
+    const left = await sync.loadCachedCards();
+    expect(left.map((c) => c.id)).toEqual(["k3n9wq2p", "k3n9wq2p"]);
+  });
+});
+
+describe("keeping a card's ID through an edit", () => {
+  it("adds the original ID above a replacement that has none", async () => {
+    const { keepId } = await import("./card-edit");
+    expect(keepId("ID: ab\nTags: t\nQ: a\nA: b", "Tags: t\nQ: a\nA: c")).toBe(
+      "ID: ab\nTags: t\nQ: a\nA: c"
+    );
+  });
+
+  it("respects an ID the edit changed", async () => {
+    const { keepId } = await import("./card-edit");
+    expect(keepId("ID: ab\nQ: a\nA: b", "ID: cd\nQ: a\nA: b")).toBe("ID: cd\nQ: a\nA: b");
+  });
+
+  it("leaves a deletion a deletion", async () => {
+    const { keepId } = await import("./card-edit");
+    expect(keepId("ID: ab\nQ: a\nA: b", "  \n")).toBe("  \n");
+  });
+
+  it("adds nothing to a card that never had an ID", async () => {
+    const { keepId } = await import("./card-edit");
+    expect(keepId("Q: a\nA: b", "Q: a\nA: c")).toBe("Q: a\nA: c");
+  });
+
+  it("does not mistake an ID line in the answer for the card's own", async () => {
+    const { keepId } = await import("./card-edit");
+    expect(keepId("Q: a\nA: b\nID: ab", "Q: a\nA: c")).toBe("Q: a\nA: c");
+  });
+});
+
+/**
  * Quick capture: a card written rather than fixed. No range to splice into and
  * no history to carry, but the same refusal to commit a file the parser cannot
  * read — a half-typed card pushed to the repo breaks every device that syncs.

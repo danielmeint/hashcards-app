@@ -9,7 +9,7 @@ import {
   repoKey,
   writeFile,
 } from "./github";
-import { parseFile } from "./parser";
+import { parseFile, topMetadata } from "./parser";
 import {
   getAllPerformances,
   inRepo,
@@ -74,6 +74,23 @@ export function spliceLines(
     replacement.trim() === "" ? [] : replacement.replace(/\n+$/, "").split("\n");
   lines.splice(start - 1, end - start + 1, ...inserted);
   return lines.join("\n");
+}
+
+/**
+ * `replacement`, with the edited card's `ID:` line put back if the edit lost it.
+ *
+ * A card's range covers its metadata lines, so the editor shows them and they
+ * can be changed like any other line — tags added, a draft accepted. The ID is
+ * the exception: it is what the card's history hangs on, and a box where it is
+ * one easy line to select away with the rest should not be able to strand that
+ * history. Clearing the box still takes the ID with it, as deleting the card
+ * should; and an ID the edit changed is a deliberate change, so it stands.
+ */
+export function keepId(original: string, replacement: string): string {
+  if (replacement.trim() === "") return replacement;
+  const id = topMetadata(original).get("ID");
+  if (id === undefined || topMetadata(replacement).has("ID")) return replacement;
+  return `ID: ${id}\n${replacement}`;
 }
 
 export type EditResult = {
@@ -151,6 +168,7 @@ async function runEdit(
   replacement: string,
   options: { keepScheduling: boolean }
 ): Promise<EditResult> {
+  replacement = keepId(source.text, replacement);
   const before = cardsInRange(await loadCachedCards(), card.filePath, card.range);
   const updated = spliceLines(source.file, card.range, replacement);
   const deck = deckNameFor(card.filePath);

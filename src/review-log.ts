@@ -2,10 +2,15 @@ import { Card, Review } from "./types";
 import { GitHubConfig, getRepos, readFileIfPresent, repoKey, writeFile } from "./github";
 import { getAllReviews, getMeta, groupOf, markV1Pushed, setMeta, stateKey } from "./db";
 import { keyInLog } from "./card-key";
-import { ReviewEvent, ReviewLogEvent, fallbackTz, serializeFile } from "./core/events";
-import { compareEvents } from "./core/replay";
-import { dayAt } from "./core/schedule";
+import { ReviewEvent } from "./core/events";
 import { settings } from "./settings";
+import {
+  REVIEWS_DIR,
+  monthFilePath,
+  monthFiles,
+  monthOf,
+  parseMonthFilePath,
+} from "./core/month-files";
 import { REVIEW_LOG_DIR, logLine, v1MonthOf, v1PushedKey } from "./v1-log";
 
 /**
@@ -29,8 +34,8 @@ import { REVIEW_LOG_DIR, logLine, v1MonthOf, v1PushedKey } from "./v1-log";
 
 export { REVIEW_LOG_DIR, logLine };
 
-/** Where the data branch keeps review files. */
-export const REVIEWS_DIR = "reviews";
+// Filing events into month files is shared with `hc`, so it lives in core.
+export { REVIEWS_DIR, monthOf, monthFilePath, parseMonthFilePath, monthFiles };
 
 /** A short random name for this device, made once and kept. */
 export function deviceId(): string {
@@ -87,45 +92,6 @@ export function reviewEvent(review: Review): ReviewEvent {
     grade: review.grade,
     ...(review.durationMs !== undefined ? { ms: review.durationMs } : {}),
   };
-}
-
-/**
- * The month an event is filed under: its local month, in the timezone it was
- * recorded in, so the same event lands in the same file whichever device
- * writes it.
- */
-export function monthOf(event: ReviewLogEvent): string {
-  return dayAt(event.at, event.tz ?? fallbackTz(event.at)).slice(0, 7);
-}
-
-export function monthFilePath(month: string, device: string): string {
-  return `${REVIEWS_DIR}/${month}.${device}.jsonl`;
-}
-
-/** A device's file name, or null for anything that is not one. */
-export function parseMonthFilePath(path: string): { month: string; device: string } | null {
-  const m = /^reviews\/(\d{4}-\d{2})\.([^/]+)\.jsonl$/.exec(path);
-  return m ? { month: m[1], device: m[2] } : null;
-}
-
-/** This device's events, grouped into the files they belong in, in order. */
-export function monthFiles(
-  events: readonly ReviewLogEvent[],
-  device: string
-): Map<string, string> {
-  const byMonth = new Map<string, ReviewLogEvent[]>();
-  for (const event of events) {
-    const month = monthOf(event);
-    const list = byMonth.get(month);
-    if (list) list.push(event);
-    else byMonth.set(month, [event]);
-  }
-  const files = new Map<string, string>();
-  for (const month of [...byMonth.keys()].sort()) {
-    const sorted = [...byMonth.get(month)!].sort(compareEvents);
-    files.set(monthFilePath(month, device), serializeFile(sorted));
-  }
-  return files;
 }
 
 // --- v1, for collections that have not been migrated -------------------------

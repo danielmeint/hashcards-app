@@ -368,5 +368,5 @@ into `hc` once M5 exists.
 | M5 `hc` CLI | not started | | needs M1, M2 |
 | M6 Anki import | prototype in progress | `v1-anki-import` | standalone until M5 |
 | M7 Features | not started | | |
-| M8 UI 1.0 | in progress | `v1-ui` | Today and Review first |
+| M8 UI 1.0 | done, in review | `v1-ui` | Today, Review, Caught up, Stats, Settings, sheets restyled; responsive tour in e2e. Inbox waits on M7 |
 | M9 Ship | not started | | |

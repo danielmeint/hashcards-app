@@ -84,6 +84,9 @@ describe("reading history from the hashcards-data branch", () => {
     expect(est).toMatchObject({ id: "est-capital", file: "deck.md", line: 5, deck: "Fixture", due: states.get("est-capital")!.dueDate });
     expect(out.new).toMatchObject({ count: 1, unseen: 2, perDay: 1, introducedToday: 0 });
     expect(out.new.cards[0]).toMatchObject({ key: "fresh-a", summary: "new a" });
+    expect(out.drafts).toBe(1);
+    const human = await hc(["due", "--repo", repo, "--date", "2026-10-30"]);
+    expect(human.stdout).toMatch(/^2026-10-30: 2 reviews due, 1 new \(2 unseen; 0\/1 new started today\); 1 draft waiting in the Inbox$/m);
   });
 
   it("charges new cards started that day against the budget", async () => {

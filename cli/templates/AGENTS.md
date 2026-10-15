@@ -7,11 +7,15 @@ and whatever `hashcards.toml` excludes). Review history lives on the
 
 ## Use `hc`, then lint
 
+`hc` is the hashcards CLI. If it is not on your PATH, run it as
+`npx hashcards …` or with the path you were given (`node …/hc.js`), and write
+that out in each command: a shell variable holding it may not word-split.
+
 ```bash
 hc add --json cards.json          # or: echo '[…]' | hc add --json -
-hc add --deck net/tcp.md --draft -q "Question?" -a "Answer"
-hc add --deck net/tcp.md --draft --cloze "TCP opens with a [three-way] handshake."
-hc lint                           # must exit 0 before you commit
+hc add --deck geo/baltics.md --draft -q "Capital of Estonia?" -a "Tallinn"
+hc add --deck k8s/workloads.md --draft --cloze "A Deployment manages a [ReplicaSet]."
+hc lint                           # must report 0 errors
 ```
 
 `--json` takes one card or an array, in this shape (`schema/card.schema.json`
@@ -19,36 +23,38 @@ in the hashcards repo; `hc add --help` lists every flag):
 
 ```json
 [
-  {"file": "net/tcp.md", "type": "cloze", "status": "draft", "tags": ["tcp"],
-   "text": "A TCP connection opens with [SYN], [SYN-ACK], [ACK]."},
-  {"file": "net/tcp.md", "type": "basic", "status": "draft",
-   "question": "Why does TCP need a *three*-way handshake, not two?",
-   "answer": "Both sides must learn the other's initial sequence number **and** see it acknowledged."}
+  {"file": "k8s/workloads.md", "type": "cloze", "status": "draft", "tags": ["deploy"],
+   "text": "`kubectl rollout [undo] deploy/web` returns to the previous revision."},
+  {"file": "k8s/workloads.md", "type": "basic", "status": "draft", "id": "k8s-deploy-vs-sts",
+   "question": "Deployment vs StatefulSet: what does a StatefulSet add?",
+   "answer": "Stable pod **names** and **per-pod volumes**, created and removed **in order**."}
 ]
 ```
 
-`hc add` validates everything, writes nothing if any card is wrong, appends
-each card after a `---` with a fresh ID, and creates the deck file if needed
-(`--name "Deck name"` sets its title). Add `--dry-run` to preview.
+`id` is optional (see the rules below). `hc add` validates everything, writes
+nothing if any card is wrong, appends each card after a `---` with a fresh ID,
+and creates the deck file if needed (`--name "Deck name"` sets its title).
+Add `--dry-run` to preview.
 
 ## The format, if you edit files by hand
 
 ```markdown
 ---
-name = "Networking: TCP"
-tags = ["networking"]
+name = "Europe: Baltics"
+tags = ["geo"]
 ---
 
-ID: tcp-handshake-steps
-Tags: tcp
+ID: est-capital
+Tags: capitals
 Status: draft
-C: A TCP connection opens with [SYN], [SYN-ACK], [ACK].
+C: The capital of Estonia is [Tallinn].
 
 ---
 
 Status: draft
-Q: Which side sends the first SYN?
-A: The **client** (active open).
+Reverse: yes
+Q: **Latvia**
+A: ![Latvia on the map](map-lva.png)
 ```
 
 - Metadata lines (`ID:`, `Tags:`, `Reverse: yes`, `Status:`) go at the top of
@@ -62,12 +68,13 @@ A: The **client** (active open).
    propose. The owner accepts drafts in the app's Inbox. `hc` run by an agent
    defaults to draft anyway.
 2. **IDs**: leave them out (`hc` stamps a random one) or pick a short slug
-   (`tcp-handshake-steps`: lowercase, digits, `-`). **Never change or reuse an
+   (`est-capital`: lowercase, digits, `-`). **Never change or reuse an
    existing ID**: review history follows it.
 3. **Don't reword or delete existing non-draft cards** unless asked.
-4. Check what exists first (`grep -ri <topic> --include=*.md .`) and skip
-   facts already covered.
+4. Check what exists first and skip facts already covered:
+   `grep -ril '<topic>' --include='*.md' --exclude=AGENTS.md --exclude=README.md .`
 5. Finish with `hc lint`. It must report 0 errors.
+6. Don't commit or push unless you were asked to; say which files you changed.
 
 ## What makes a good card
 

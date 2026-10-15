@@ -3,6 +3,7 @@ import { EXIT } from "../command";
 import type { Command } from "../command";
 import { plural, summary, table } from "../format";
 import { describeSource } from "../history";
+import { formatProblem } from "./lint";
 import { eventsByCard, introducedOn } from "../insights";
 import { activeCards, cardRef, openWorkspace } from "../workspace";
 
@@ -14,7 +15,7 @@ export const due: Command = {
 Reviews due on the date (overdue included) and the new cards that the day's
 budget (hashcards.toml [review] new_per_day, minus new cards already started
 that day according to the review log) still allows. Drafts and suspended cards
-are never due.
+are never due; drafts waiting in the Inbox are counted, one per block.
 
 Options:
   --date <day>   the day to evaluate; default: today (local time)
@@ -36,6 +37,12 @@ Options:
       .sort((a, b) => a.state!.dueDate.localeCompare(b.state!.dueDate));
     const unseen = cards.filter((card) => !states.has(card.key));
     const newCards = unseen.slice(0, budget);
+    // Not due, but the one thing an agent's work leaves waiting for a person.
+    // Counted as blocks, as the Inbox shows them: a cloze with three deletions
+    // is one draft to accept, not three.
+    const drafts = new Set(
+      collection.cards.filter((c) => c.status === "draft").map((c) => `${c.filePath}:${c.range[0]}`)
+    ).size;
 
     if (ctx.json) {
       ctx.emit({
@@ -57,7 +64,11 @@ Options:
           introducedToday: introduced,
           cards: newCards.map((card) => ({ ...cardRef(card), summary: summary(card, 200) })),
         },
-        warnings: [...history.warnings, ...collection.problems.filter((p) => p.severity === "error").map((p) => `${p.file}:${p.line ?? ""} ${p.message}`)],
+        drafts,
+        warnings: [
+          ...history.warnings,
+          ...collection.problems.filter((p) => p.severity === "error").map(formatProblem),
+        ],
       });
       return EXIT.ok;
     }
@@ -65,7 +76,8 @@ Options:
     const limit = Number(ctx.values.limit ?? 10) || 10;
     ctx.say(
       `${today}: ${plural(dueCards.length, "review")} due, ${newCards.length} new ` +
-        `(${unseen.length} unseen; ${introduced}/${perDay} new started today)`
+        `(${unseen.length} unseen; ${introduced}/${perDay} new started today)` +
+        (drafts > 0 ? `; ${plural(drafts, "draft")} waiting in the Inbox` : "")
     );
     ctx.say(`history: ${describeSource(history.source)}`);
     const section = (title: string, rows: string[][], total: number) => {

@@ -35,6 +35,12 @@ Run \`hc <command> --help\` for a command's options.`;
 }
 
 export function nodeIo(): Io {
+  // `hc due | head` closes the pipe early; that is the reader being done, not
+  // an error worth a stack trace.
+  process.stdout.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EPIPE") process.exit(0);
+    throw error;
+  });
   return {
     cwd: process.cwd(),
     env: process.env,

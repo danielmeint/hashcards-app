@@ -271,7 +271,9 @@ Each milestone ends with tests green (`npm test`, `npm run typecheck`,
 - `hc import anki`: read the ankictl deck repo (`anki-decks/decks/**/*.yaml`)
   and a **copy** of the Anki collection (`collection.anki2`, SQLite, via
   `node:sqlite`). Map each note `key` to a card ID, Basic to `Q:`/`A:`, Cloze
-  `{{c1::…}}` to `C:` brackets, tags to `Tags:`, the deck path to a file path.
+  `{{c1::…}}` to `C:` brackets, a cloze note's Extra field to `Extra:`, tags to
+  `Tags:` (lowercase, `/` hierarchy), the deck path to a file path. Reviews of
+  cards deleted from Anki are dropped.
   Turn `revlog` rows into v2 review events with `src:"anki"`. Skip cram and
   manual entries, convert `ease` 1–4 to grades, and `time` to `ms`.
 - Output into a directory, never straight into a repo. Daniel reviews and

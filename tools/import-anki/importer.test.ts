@@ -84,7 +84,7 @@ notetype: Flashcards-as-Code Basic
 tags: [storage]
 notes:
 - key: pv-reclaim
-  tags: [CKA::Type::Syntax-Pattern]
+  tags: [CKA::Type::Syntax-Pattern, Storage, c++]
   front: Reclaim policy that keeps the data?
   back: |-
     **Retain**\\
@@ -139,7 +139,7 @@ tags = ["storage"]
 ---
 
 ID: pv-reclaim
-Tags: CKA::Type::Syntax-Pattern
+Tags: cka/type/syntax-pattern
 Q: Reclaim policy that keeps the data?
 A: **Retain**\\
 (\\~1 min, 2\\~3 retries)
@@ -148,8 +148,7 @@ A: **Retain**\\
 
 ID: pv-binding
 C: [\`storageClassName\`] matches, capacity [≥ request], mode [RWO]
-
-> \`k describe pvc\` \\[events\\]
+Extra: \`k describe pvc\` [events]
 
 ---
 
@@ -160,6 +159,11 @@ A: A
     const cards = await parseFile(md, "cka/storage.md", "storage");
     expect(cards).toHaveLength(5); // 2 basic + 3 deletions
     expect(cards[0].deckName).toBe("CKA: Storage");
+    expect(cards[0].tags).toEqual(["storage", "cka/type/syntax-pattern"]);
+    // The cloze Extra field is the card's Extra section, on every deletion.
+    expect(cards.filter((c) => c.id === "pv-binding").map((c) => c.content.extra)).toEqual(
+      Array(3).fill("`k describe pvc` [events]")
+    );
   });
 
   it("maps cloze ordinals by first appearance", () => {
@@ -206,11 +210,21 @@ A: A
     });
   });
 
+  it("writes no event for a skipped row, deleted cards' included", () => {
+    const written = [...result.files]
+      .filter(([path]) => path.startsWith("reviews/"))
+      .flatMap(([, text]) => text.trim().split("\n"));
+    expect(written).toHaveLength(result.summary.reviews.imported);
+    // Row 999's card is gone from the collection: counted above, written nowhere.
+    expect([...result.files.values()].join("\n")).not.toContain("2026-09-07T10:00:00");
+  });
+
   it("reports slugged keys, dropped hints, Anki-only tags and partial suspension", () => {
     expect(result.summary.idChanges).toEqual([{ key: "Not A Slug", id: "not-a-slug" }]);
     const messages = result.summary.warnings.map((w) => `${w.key}: ${w.message}`).join("\n");
     expect(messages).toMatch(/pv-binding: c2 hint "hint" dropped/);
     expect(messages).toMatch(/pv-reclaim: Anki-only tags not imported: leech/);
+    expect(messages).toMatch(/pv-reclaim: tag "c\+\+" has no valid hashcards form; dropped/);
     expect(messages).toMatch(/pv-binding: 1 of 3 Anki cards suspended/);
     expect(messages).toMatch(/Not A Slug: not in the Anki collection/);
     expect(messages).toMatch(/gone-from-files: Anki note 3/);

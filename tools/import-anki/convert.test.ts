@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Marked } from "marked";
-import { parseFile } from "../../src/parser";
+import { normaliseTag, parseFile, TAG_PATTERN as PARSER_TAG_PATTERN } from "../../src/parser";
 import {
   assignCardIds,
   convertCloze,
@@ -11,7 +11,9 @@ import {
   escapeBrackets,
   flattenCloze,
   slugify,
+  TAG_PATTERN,
   toCardId,
+  toTag,
 } from "./convert.ts";
 
 /** What the app's parser makes of a `C:` block: each deletion's text. */
@@ -138,6 +140,29 @@ describe("card IDs", () => {
   });
 });
 
+describe("tags", () => {
+  it("uses the parser's tag pattern", () => {
+    expect(TAG_PATTERN.source).toBe(PARSER_TAG_PATTERN.source);
+  });
+
+  it.each([
+    ["CKA::Type::Syntax-Pattern", "cka/type/syntax-pattern"],
+    ["CKA::D4-Helm-Kustomize-Extensions", "cka/d4-helm-kustomize-extensions"],
+    ["CKA::Type::JSONPath-Config", "cka/type/jsonpath-config"],
+    ["agent-drafted", "agent-drafted"],
+    ["Two Words", "two-words"],
+    ["::leading::", "leading"],
+  ])("writes %s as %s, which the parser leaves alone", (anki, tag) => {
+    expect(toTag(anki)).toBe(tag);
+    expect(normaliseTag(anki)).toBe(tag);
+    expect(normaliseTag(tag)).toBe(tag);
+  });
+
+  it.each(["c++", "a.b", "über", "", "::"])("has no form for %j", (anki) => {
+    expect(toTag(anki)).toBeNull();
+  });
+});
+
 describe("deck paths and names", () => {
   it("maps the deck hierarchy to a path", () => {
     expect(deckToPath("Cka::Workloads And Scheduling")).toBe("cka/workloads-and-scheduling.md");
@@ -185,6 +210,7 @@ describe("convertMarkdown", () => {
   it("flags a setext heading underline and a line that would start a card", () => {
     expect(convertMarkdown("Title\n---").warnings.join()).toMatch(/setext/);
     expect(convertMarkdown("x\nQ: y").warnings.join()).toMatch(/starts a new card/);
+    expect(convertMarkdown("x\nExtra: y").warnings.join()).toMatch(/"Extra:", which starts a new card or section/);
   });
 
   it("ignores --- inside a fenced block", () => {

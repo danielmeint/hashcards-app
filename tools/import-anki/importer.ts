@@ -15,7 +15,7 @@ import {
   convertRawHtml,
   deckDisplayName,
   deckToPath,
-  escapeBrackets,
+  toTag,
 } from "./convert.ts";
 import type { ReviewEvent, SkipReason } from "./revlog.ts";
 import { ankiDue, checkScheduler, classifyRevlog, localMonth, toEvent } from "./revlog.ts";
@@ -112,12 +112,43 @@ function otherFields(note: DeckNote, used: string[]): string[] {
   return [...new Set([...Object.keys(note.md), ...Object.keys(note.raw)])].filter((f) => !used.includes(f));
 }
 
-/** Extra content under a cloze, set apart as a quote so it reads as a note. */
-function asQuote(text: string): string {
-  return text
-    .split("\n")
-    .map((l) => (l ? `> ${l}` : ">"))
-    .join("\n");
+/**
+ * ankictl's YAML keys for a note's extra field: Flashcards-as-Code Cloze's
+ * `Extra`, and stock Anki Cloze's `Back Extra` (ankictl turns field names
+ * into lowercase snake case). Flashcards-as-Code Basic has no such field.
+ */
+const EXTRA_FIELDS = ["extra", "back_extra"];
+
+/**
+ * Every field a note has besides its card's sides, as one `Extra:` section.
+ *
+ * In Anki these show on the back only, which is exactly what Extra is for.
+ * The extra fields come first; any other field (a custom notetype's) follows,
+ * with a warning: that it belongs after the answer is a guess.
+ */
+function extraSection(note: DeckNote, sides: string[], w: (m: string) => void): string | null {
+  const others = otherFields(note, sides).sort(
+    (a, b) => Number(!EXTRA_FIELDS.includes(a)) - Number(!EXTRA_FIELDS.includes(b))
+  );
+  const parts: string[] = [];
+  for (const name of others) {
+    const text = field(note, name, w);
+    if (!text?.trim()) continue;
+    if (!EXTRA_FIELDS.includes(name)) w(`field "${name}" put in the Extra: section`);
+    parts.push(text.trim());
+  }
+  return parts.length ? parts.join("\n\n") : null;
+}
+
+/** Anki tags normalised, the invalid ones dropped with a warning, repeats removed. */
+function normaliseTags(tags: string[], w: (m: string) => void): string[] {
+  const out: string[] = [];
+  for (const t of tags) {
+    const tag = toTag(t);
+    if (tag === null) w(`tag "${t}" has no valid hashcards form; dropped`);
+    else out.push(tag);
+  }
+  return uniq(out);
 }
 
 function uniq<T>(xs: T[]): T[] {
@@ -185,7 +216,8 @@ export function buildImport(
       throw new Error(`decks "${file.deck}" and "${deckPaths.get(path)}" both map to ${path}`);
     }
     deckPaths.set(path, file.deck);
-    const out: OutDeck = { name: deckDisplayName(file.deck, opts.acronyms), tags: uniq(file.tags), cards: [] };
+    const fileTags = normaliseTags(file.tags, (m) => warn(null, `${file.source}: ${m}`));
+    const out: OutDeck = { name: deckDisplayName(file.deck, opts.acronyms), tags: fileTags, cards: [] };
 
     for (const note of file.notes) {
       const id = idByKey.get(note.key)!;
@@ -201,9 +233,8 @@ export function buildImport(
       if (nid === undefined) w("not in the Anki collection; imported with no history");
       else matched++;
 
-      // Tags: the note's own, minus what the file already applies.
-      const tags = uniq(note.tags).filter((t) => !file.tags.includes(t));
-      for (const t of tags) if (t.includes(",")) w(`tag "${t}" contains a comma, which Tags: cannot hold`);
+      // Tags: the note's own, normalised, minus what the file already applies.
+      const tags = normaliseTags(note.tags, w).filter((t) => !fileTags.includes(t));
       if (nid !== undefined) {
         const known = new Set([...note.tags, ...file.tags, cfg.orphanTag]);
         const ankiOnly = col.notes.get(nid)!.tags.filter((t) => !known.has(t));
@@ -221,14 +252,8 @@ export function buildImport(
       let card: OutCard;
       if (kind === "basic") {
         const question = field(note, "front", w) ?? "";
-        let answer = field(note, "back", w) ?? "";
-        for (const extra of otherFields(note, ["front", "back"])) {
-          const text = field(note, extra, w);
-          if (text) {
-            answer = answer ? `${answer}\n\n${text}` : text;
-            w(`field "${extra}" appended to the answer`);
-          }
-        }
+        const answer = field(note, "back", w) ?? "";
+        const extra = extraSection(note, ["front", "back"], w);
         if (!question.trim()) w("empty front");
         if (!answer.trim()) w("empty back");
         // Stock "Basic (and reversed card)" makes ord 1 the reverse. The
@@ -238,25 +263,21 @@ export function buildImport(
         if (/optional reversed/i.test(note.notetype)) w("optional-reverse notetype: Reverse: not set; check by hand");
         keyForOrd.set(0, id);
         if (reverse) keyForOrd.set(1, `${id}:r`);
-        card = { id, tags, status, reverse, type: "basic", question, answer };
+        card = { id, tags, status, reverse, extra, type: "basic", question, answer };
         hashcardsCards += reverse ? 2 : 1;
       } else {
         const source = field(note, "text", w) ?? "";
         const cloze = convertCloze(source);
         cloze.warnings.forEach(w);
-        let text = cloze.text;
-        for (const extra of otherFields(note, ["text"])) {
-          const body = field(note, extra, w);
-          // Hashcards has no back-extra for clozes. Kept, but now visible
-          // before the reveal as well as after.
-          if (body) text += "\n\n" + asQuote(escapeBrackets(body));
-        }
+        // No bracket escaping: Extra is outside the cloze text, so the
+        // cloze scanner never sees it.
+        const extra = extraSection(note, ["text"], w);
         clozeMaps[note.key] = {};
         for (const [cNum, index] of cloze.cNumToIndex) {
           keyForOrd.set(cNum - 1, `${id}:${index}`);
           clozeMaps[note.key][`c${cNum}`] = `${id}:${index}`;
         }
-        card = { id, tags, status, reverse: false, type: "cloze", text };
+        card = { id, tags, status, reverse: false, extra, type: "cloze", text: cloze.text };
         hashcardsCards += cloze.deletions.length;
       }
       out.cards.push(card);

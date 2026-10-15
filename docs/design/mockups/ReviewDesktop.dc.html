@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Review: answer · desktop</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:inherit;text-decoration:none}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; background: #F7F7F5; color: #16181D; font-family: -apple-system, system-ui, 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px 0 36px">
+
+  <header style="width: 680px; display: flex; align-items: center; gap: 14px">
+    <a href="TodayDesktop.dc.html" aria-label="End session" style="height: 40px; padding: 0 10px; margin-left: -10px; border-radius: 10px; display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500">
+      <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>End <kbd style="font: 600 11px ui-monospace, Menlo, monospace; color: #5F646D; border: 1px solid #DCDCD7; border-radius: 5px; padding: 1px 5px">Esc</kbd>
+    </a>
+    <div style="flex: 1; height: 4px; border-radius: 2px; background: #E4E4E0; overflow: hidden"><div style="width: 54%; height: 100%; background: #2F62E0"></div></div>
+    <span style="font-size: 13px; font-weight: 600; color: #5F646D; font-variant-numeric: tabular-nums">19 / 35</span>
+    <button style="height: 40px; padding: 0 10px; margin-right: -10px; border: 0; background: transparent; border-radius: 10px; display: flex; align-items: center; gap: 6px; color: #16181D; font: 500 14px -apple-system, system-ui, sans-serif">
+      <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg>Undo <kbd style="font: 600 11px ui-monospace, Menlo, monospace; color: #5F646D; border: 1px solid #DCDCD7; border-radius: 5px; padding: 1px 5px">U</kbd>
+    </button>
+  </header>
+
+  <div style="width: 680px; flex: 1; margin: 24px 0 20px; box-sizing: border-box; background: #FFFFFF; border: 1px solid #E6E6E2; border-radius: 22px; box-shadow: 0 1px 2px rgba(22,24,29,0.04), 0 12px 32px rgba(22,24,29,0.06); display: flex; flex-direction: column; padding: 22px 32px 32px; gap: 20px">
+    <div style="display: flex; align-items: center; justify-content: space-between">
+      <span style="font-size: 13px; font-weight: 600; color: #5F646D">Networking</span>
+      <button style="height: 32px; padding: 0 8px; margin-right: -8px; border: 0; background: transparent; border-radius: 8px; display: flex; align-items: center; gap: 6px; color: #5F646D; font: 500 13px -apple-system, system-ui, sans-serif">
+        <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>Edit
+      </button>
+    </div>
+    <p style="margin: 8px 0 0; font-family: 'Source Serif 4', Georgia, serif; font-size: 28px; line-height: 1.4">Compare TCP and UDP.</p>
+    <div style="height: 1px; background: #EFEFEC"></div>
+    <table style="width: 100%; border-collapse: collapse; font-size: 16px">
+      <thead>
+        <tr style="text-align: left; color: #5F646D; font-size: 13px">
+          <th style="padding: 8px 12px 8px 0; font-weight: 600; border-bottom: 1px solid #E6E6E2"></th>
+          <th style="padding: 8px 12px; font-weight: 600; border-bottom: 1px solid #E6E6E2">TCP</th>
+          <th style="padding: 8px 12px; font-weight: 600; border-bottom: 1px solid #E6E6E2">UDP</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td style="padding: 12px 12px 12px 0; color: #5F646D; border-bottom: 1px solid #F0F0ED">Ordered</td><td style="padding: 12px; border-bottom: 1px solid #F0F0ED">Yes</td><td style="padding: 12px; border-bottom: 1px solid #F0F0ED">No</td></tr>
+        <tr><td style="padding: 12px 12px 12px 0; color: #5F646D; border-bottom: 1px solid #F0F0ED">Reliable</td><td style="padding: 12px; border-bottom: 1px solid #F0F0ED">Yes</td><td style="padding: 12px; border-bottom: 1px solid #F0F0ED">No</td></tr>
+        <tr><td style="padding: 12px 12px 12px 0; color: #5F646D">Overhead</td><td style="padding: 12px">Higher</td><td style="padding: 12px">Lower</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="width: 680px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px">
+    <button style="height: 60px; border: 0; border-radius: 14px; background: #FCEBE5; color: #A3320A; display: flex; align-items: center; justify-content: center; gap: 10px; font-family: inherit">
+      <kbd style="font: 600 11px ui-monospace, Menlo, monospace; border: 1px solid currentColor; border-radius: 5px; padding: 1px 5px; opacity: 0.7">1</kbd>
+      <span style="display: flex; flex-direction: column; align-items: flex-start"><span style="font-size: 15px; font-weight: 600">Forgot</span><span style="font-size: 12px; font-weight: 500; opacity: 0.8">&lt;1d</span></span>
+    </button>
+    <button style="height: 60px; border: 0; border-radius: 14px; background: #FBF1DE; color: #845508; display: flex; align-items: center; justify-content: center; gap: 10px; font-family: inherit">
+      <kbd style="font: 600 11px ui-monospace, Menlo, monospace; border: 1px solid currentColor; border-radius: 5px; padding: 1px 5px; opacity: 0.7">2</kbd>
+      <span style="display: flex; flex-direction: column; align-items: flex-start"><span style="font-size: 15px; font-weight: 600">Hard</span><span style="font-size: 12px; font-weight: 500; opacity: 0.8">1d</span></span>
+    </button>
+    <button style="height: 60px; border: 0; border-radius: 14px; background: #E2F2E8; color: #1C6541; display: flex; align-items: center; justify-content: center; gap: 10px; font-family: inherit">
+      <kbd style="font: 600 11px ui-monospace, Menlo, monospace; border: 1px solid currentColor; border-radius: 5px; padding: 1px 5px; opacity: 0.7">3</kbd>
+      <span style="display: flex; flex-direction: column; align-items: flex-start"><span style="font-size: 15px; font-weight: 600">Good</span><span style="font-size: 12px; font-weight: 500; opacity: 0.8">3d</span></span>
+    </button>
+    <button style="height: 60px; border: 0; border-radius: 14px; background: #E7EDFC; color: #1F45AA; display: flex; align-items: center; justify-content: center; gap: 10px; font-family: inherit">
+      <kbd style="font: 600 11px ui-monospace, Menlo, monospace; border: 1px solid currentColor; border-radius: 5px; padding: 1px 5px; opacity: 0.7">4</kbd>
+      <span style="display: flex; flex-direction: column; align-items: flex-start"><span style="font-size: 15px; font-weight: 600">Easy</span><span style="font-size: 12px; font-weight: 500; opacity: 0.8">9d</span></span>
+    </button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

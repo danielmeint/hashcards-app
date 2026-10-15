@@ -7,12 +7,16 @@ import { defineConfig, devices } from "@playwright/test";
  * Runs on the installed Google Chrome rather than a Playwright-downloaded
  * Chromium, so a Playwright upgrade never needs a browser download first.
  */
+// Parallel worktrees each need their own dev server: with a shared port,
+// `reuseExistingServer` would quietly test another branch's code.
+const port = Number(process.env.E2E_PORT ?? 5174);
+
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
   reporter: process.env.CI ? "github" : "list",
   use: {
-    baseURL: "http://localhost:5174",
+    baseURL: `http://localhost:${port}`,
     channel: "chrome",
     trace: "retain-on-failure",
     // A service worker's fetches bypass `page.route`, so with one installed the
@@ -25,8 +29,8 @@ export default defineConfig({
     { name: "phone", use: { ...devices["Pixel 7"], channel: "chrome" } },
   ],
   webServer: {
-    command: "npx vite --port 5174 --strictPort",
-    url: "http://localhost:5174",
+    command: `npx vite --port ${port} --strictPort`,
+    url: `http://localhost:${port}`,
     reuseExistingServer: !process.env.CI,
   },
 });

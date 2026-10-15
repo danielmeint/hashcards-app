@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stats · phone</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:inherit;text-decoration:none}
+</style>
+</helmet>
+<div style="width: 390px; height: 1300px; box-sizing: border-box; background: #F7F7F5; color: #16181D; font-family: -apple-system, system-ui, 'Segoe UI', sans-serif; display: flex; flex-direction: column; gap: 14px; padding: 50px 16px 34px; overflow: hidden">
+
+  <header style="display: flex; align-items: center; gap: 4px; margin-left: -8px">
+    <a href="Main.dc.html" aria-label="Back" style="width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center">
+      <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+    </a>
+    <h1 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.3px">Statistics</h1>
+  </header>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+    <div style="background: #FFFFFF; border: 1px solid #E6E6E2; border-radius: 16px; padding: 14px 16px"><div style="font-size: 28px; font-weight: 700; letter-spacing: -0.6px">246</div><div style="font-size: 13px; color: #5F646D">cards</div></div>
+    <div style="background: #FFFFFF; border: 1px solid #E6E6E2; border-radius: 16px; padding: 14px 16px"><div style="font-size: 28px; font-weight: 700; letter-spacing: -0.6px">139</div><div style="font-size: 13px; color: #5F646D">learned</div></div>
+    <div style="background: #FFFFFF; border: 1px solid #E6E6E2; border-radius: 16px; padding: 14px 16px"><div style="font-size: 28px; font-weight: 700; letter-spacing: -0.6px">35</div><div style="font-size: 13px; color: #5F646D">due today</div></div>
+    <div style="background: #FFFFFF; border: 1px solid #E6E6E2; border-radius: 16px; padding: 14px 16px"><div style="font-size: 28px; font-weight: 700; letter-spacing: -0.6px">3 days</div><div style="font-size: 13px; color: #5F646D">streak</div></div>
+  </div>
+
+  <section style="background: #FFFFFF; border: 1px solid #E6E6E2; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+    <div style="display: flex; justify-content: space-between; align-items: baseline"><h2 style="margin: 0; font-size: 15px; font-weight: 600">Estimated retention</h2><span style="font-size: 13px; color: #5F646D">target 90%</span></div>
+    <div style="font-size: 30px; font-weight: 700; letter-spacing: -0.6px">77.6%</div>
+    <div style="position: relative; height: 8px; border-radius: 4px; background: #ECECE8">
+      <div style="width: 77.6%; height: 100%; border-radius: 4px; background: #2F62E0"></div>
+      <div style="position: absolute; left: 90%; top: -4px; width: 2px; height: 16px; background: #16181D; border-radius: 1px"></div>
+    </div>
+  </section>
+
+  <section style="background: #FFFFFF; border: 1px solid #E6E6E2; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+    <h2 style="margin: 0; font-size: 15px; font-weight: 600">Card maturity</h2>
+    <div style="display: flex; height: 10px; border-radius: 5px; overflow: hidden; gap: 2px">
+      <div style="flex: 107; background: #E4E4E0"></div>
+      <div style="flex: 107; background: #A9BCF0"></div>
+      <div style="flex: 32; background: #2F62E0"></div>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; font-size: 13px">
+      <div style="display: flex; flex-direction: column"><span style="font-weight: 600; font-size: 17px">107</span><span style="color: #5F646D; display: flex; align-items: center; gap: 5px"><span style="width: 8px; height: 8px; border-radius: 2px; background: #D4D4CF"></span>New</span></div>
+      <div style="display: flex; flex-direction: column"><span style="font-weight: 600; font-size: 17px">107</span><span style="color: #5F646D; display: flex; align-items: center; gap: 5px"><span style="width: 8px; height: 8px; border-radius: 2px; background: #A9BCF0"></span>Young</span></div>
+      <div style="display: flex; flex-direction: column"><span style="font-weight: 600; font-size: 17px">32</span><span style="color: #5F646D; display: flex; align-items: center; gap: 5px"><span style="width: 8px; height: 8px; border-radius: 2px; background: #2F62E0"></span>Mature</span></div>
+    </div>
+  </section>
+
+  <section style="background: #FFFFFF; border: 1px solid #E6E6E2; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+    <div style="display: flex; justify-content: space-between; align-items: baseline"><h2 style="margin: 0; font-size: 15px; font-weight: 600">Next 14 days</h2><span style="font-size: 13px; color: #5F646D">55 reviews</span></div>
+    <div style="display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 4px; align-items: end; height: 96px">
+      <sc-for list="{{ forecast }}" as="d" hint-placeholder-count="14">
+        <div style="height: {{ d.h }}; background: {{ d.bg }}; border-radius: 3px 3px 1px 1px"></div>
+      </sc-for>
+    </div>
+    <div style="display: flex; justify-content: space-between; font-size: 11px; color: #5F646D"><span>Today</span><span>22 Oct</span><span>28 Oct</span></div>
+  </section>
+
+  <section style="background: #FFFFFF; border: 1px solid #E6E6E2; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; justify-content: space-between; align-items: baseline"><h2 style="margin: 0; font-size: 15px; font-weight: 600">Grades, last 30 days</h2><span style="font-size: 13px; color: #5F646D">35 reviews</span></div>
+    <div style="display: grid; grid-template-columns: 52px minmax(0, 1fr) 28px; gap: 8px 10px; align-items: center; font-size: 13px">
+      <span style="color: #5F646D">Forgot</span><div style="height: 8px; border-radius: 4px; background: #F2F2EF"><div style="width: 29%; height: 100%; border-radius: 4px; background: #D9622B"></div></div><span style="text-align: right; font-variant-numeric: tabular-nums">6</span>
+      <span style="color: #5F646D">Hard</span><div style="height: 8px; border-radius: 4px; background: #F2F2EF"><div style="width: 19%; height: 100%; border-radius: 4px; background: #C08A1E"></div></div><span style="text-align: right; font-variant-numeric: tabular-nums">4</span>
+      <span style="color: #5F646D">Good</span><div style="height: 8px; border-radius: 4px; background: #F2F2EF"><div style="width: 100%; height: 100%; border-radius: 4px; background: #3E9A68"></div></div><span style="text-align: right; font-variant-numeric: tabular-nums">21</span>
+      <span style="color: #5F646D">Easy</span><div style="height: 8px; border-radius: 4px; background: #F2F2EF"><div style="width: 19%; height: 100%; border-radius: 4px; background: #2F62E0"></div></div><span style="text-align: right; font-variant-numeric: tabular-nums">4</span>
+    </div>
+  </section>
+
+  <section style="background: #FFFFFF; border: 1px solid #E6E6E2; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+    <div style="display: flex; justify-content: space-between; align-items: baseline"><h2 style="margin: 0; font-size: 15px; font-weight: 600">Activity</h2><span style="font-size: 13px; color: #5F646D">last 12 weeks</span></div>
+    <div style="display: grid; grid-template-rows: repeat(7, 18px); grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px">
+      <sc-for list="{{ heat }}" as="c" hint-placeholder-count="84">
+        <div style="background: {{ c.bg }}; border-radius: 4px"></div>
+      </sc-for>
+    </div>
+  </section>
+
+  <section style="background: #FFFFFF; border: 1px solid #E6E6E2; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 6px">
+    <h2 style="margin: 0; font-size: 15px; font-weight: 600">Leeches</h2>
+    <p style="margin: 0; font-size: 14px; color: #5F646D; line-height: 1.45">No card has failed 3 or more times. Cards that do show up here, with a shortcut to rewrite them.</p>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1300}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const due = [15, 9, 1, 1, 1, 5, 11, 6, 4, 1, 0, 0, 0, 0];
+    const max = 15;
+    const forecast = due.map((n, i) => ({
+      h: n === 0 ? '2px' : Math.max(4, Math.round((n / max) * 96)) + 'px',
+      bg: i === 0 ? '#2F62E0' : n === 0 ? '#E4E4E0' : '#A9BCF0'
+    }));
+    const levels = ['#EFEFEB', '#C9D6F7', '#94AEEE', '#5A84E6', '#2F62E0'];
+    const active = { 78: 3, 79: 2, 80: 4 };
+    const heat = [];
+    for (let i = 0; i < 84; i++) {
+      heat.push({ bg: i > 80 ? 'transparent' : levels[active[i] || 0] });
+    }
+    return { forecast, heat };
+  }
+}
+</script>
+</body>
+</html>

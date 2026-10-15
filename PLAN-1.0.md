@@ -363,7 +363,7 @@ into `hc` once M5 exists.
 |---|---|---|---|
 | M1 Format v2 and identity | done, merged into `v1` | `v1-format` | Parser reads metadata and frontmatter `tags`; `src/card-key.ts` (keys), `src/card-ids.ts` (`stampIds`), spec v2 + `schema/card.schema.json`. `hash` unchanged and still the app's key until M3. Cached deck files lack the new fields until their SHA moves: M3 should force a re-parse. |
 | M2 Event log and replay | done, merged into `v1` | `v1-replay` | `src/core/{events,schedule,replay}.ts`. Live path and replay share one step; fuzz seeded by key + review count. v1 lines assume CET/CEST. Live-path equivalence and the real v1 log reproduce exactly. App wiring (keys into fuzz, tz on writes) is M3. |
-| M3 Data branch and sync | in progress | `v1-sync` | |
+| M3 Data branch and sync | done, on `v1-sync` (not merged) | `v1-sync` | Grades are v2 events applied with replay's own step (`applyEvent`, key-seeded fuzz, real `tz`); state is replay cached per group in IndexedDB v8 (`states`, `pulled`, `baselines`). `src/data-branch.ts` pulls changed blobs and pushes one commit per sync via the Git Data API, fast-forward only with retry. `hashcards.toml` read on sync, written on change (`collection-config.ts`, `collection-settings.ts`); Settings UI needs no new controls yet. Unmigrated repos stay v1 read-write (`compat.ts`) with an `hc migrate` hint. M4: reviews already in v1 logs are flagged `v1Pushed` and never re-pushed, so migrate owns them; don't name migrated files `<month>.<live device id>.jsonl`, since a device rebuilds its own files from its local log. |
 | M4 Migration | not started | | needs M3, M5 |
 | M5 `hc` CLI | in progress | `v1-cli` | |
 | M6 Anki import | prototype in progress | `v1-anki-import` | standalone until M5 |

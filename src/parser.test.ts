@@ -497,8 +497,9 @@ describe("frontmatter tags", () => {
   it("accepts an empty array and escaped quotes", async () => {
     const [none] = await parseFile("---\ntags = []\n---\nQ: a\nA: b", "t.md", "t");
     expect(none.tags).toEqual([]);
-    const [quoted] = await parseFile('---\ntags = ["say \\"hi\\""]\n---\nQ: a\nA: b', "t.md", "t");
-    expect(quoted.tags).toEqual(['say "hi"']);
+    // JSON escapes are read before the tag is normalised and checked.
+    const [escaped] = await parseFile('---\ntags = ["\\u0047eo"]\n---\nQ: a\nA: b', "t.md", "t");
+    expect(escaped.tags).toEqual(["geo"]);
   });
 
   it.each(['tags = "geo"', "tags = [geo]", 'tags = ["geo"', 'tags = ["a" "b"]'])(
@@ -571,5 +572,130 @@ describe("every metadata combination", () => {
     } else {
       expect(keys).toEqual([id ?? `h:${cards[0].hash.slice(0, 16)}`]);
     }
+  });
+});
+
+/**
+ * `Extra:` (PLAN-1.0 §2.1): an optional last section, shown after reveal. What
+ * matters most is that it is not the card: adding, rewording or removing it
+ * must leave the hash and the key — and so the card's history — where they were.
+ */
+describe("the Extra section", () => {
+  const variants = (extra: string) => ({
+    basic: `ID: ab\nReverse: yes\nQ: question\nA: answer${extra}`,
+    cloze: `ID: ab\nC: The [first] and the [second].${extra}`,
+  });
+
+  it.each(["basic", "cloze"] as const)("reads it on a %s card, multi-line", async (type) => {
+    const cards = await parseFile(
+      variants("\nExtra: a note\n\n- with a list\n---\nQ: next\nA: card")[type],
+      "t.md",
+      "t"
+    );
+    const own = cards.filter((c) => c.id === "ab");
+    expect(own.length).toBe(2);
+    for (const card of own) expect(card.content.extra).toBe("a note\n\n- with a list");
+    // The section ends at the separator, like an answer.
+    expect(cards.at(-1)!.content).not.toHaveProperty("extra");
+  });
+
+  it("can start on the line after Extra:", async () => {
+    const [card] = await parseFile("Q: a\nA: b\nExtra:\n\nsee the docs", "t.md", "t");
+    expect(card.content.extra).toBe("see the docs");
+  });
+
+  it("is left out of a card without one", async () => {
+    const [card] = await parseFile("Q: a\nA: b", "t.md", "t");
+    expect(card.content).not.toHaveProperty("extra");
+  });
+
+  it("keeps the answer and cloze text it follows unchanged", async () => {
+    const [basic] = await parseFile("Q: a\nA: b\nExtra: c", "t.md", "t");
+    expect(basic.content).toEqual({ type: "basic", question: "a", answer: "b", extra: "c" });
+    const [cloze] = await parseFile("C: [a] b\nExtra: c", "t.md", "t");
+    expect(cloze.content).toMatchObject({ text: "a b", start: 0, end: 0, extra: "c" });
+  });
+
+  it.each(["basic", "cloze"] as const)(
+    "leaves a %s card's hash, family hash and key alone when added, changed or removed",
+    async (type) => {
+      const identity = async (extra: string) =>
+        (await parseFile(variants(extra)[type], "t.md", "t")).map((c) => [
+          c.hash,
+          c.familyHash,
+          c.key,
+        ]);
+      const without = await identity("");
+      expect(await identity("\nExtra: one")).toEqual(without);
+      expect(await identity("\nExtra: two\nlines")).toEqual(without);
+    }
+  );
+
+  it("counts toward the card's line range", async () => {
+    const [card] = await parseFile("Q: a\nA: b\nExtra: c\nd\n\n---\nQ: e\nA: f", "t.md", "t");
+    expect(card.range).toEqual([1, 4]);
+  });
+
+  it.each([
+    ["before A:", "Q: a\nExtra: c\nA: b", /Extra: before the card's A: line.*t\.md:2/],
+    ["with no card", "Extra: c\nQ: a\nA: b", /Extra: without a card before it/],
+    ["as metadata", "ID: ab\nExtra: c\nQ: a\nA: b", /Extra: without a card before it/],
+    ["twice", "Q: a\nA: b\nExtra: c\nExtra: d", /only have one Extra: section.*t\.md:4/],
+    ["empty", "Q: a\nA: b\nExtra:\n\n---\nQ: c\nA: d", /Extra: with nothing after it.*t\.md:3/],
+    ["empty at the end", "C: [a] b\nExtra:   ", /Extra: with nothing after it/],
+  ])("errors on Extra: %s", async (_, text, error) => {
+    await expect(parseFile(text, "t.md", "t")).rejects.toThrow(error);
+  });
+
+  it("is only a section start at the beginning of a line", async () => {
+    const [card] = await parseFile("Q: a\nA: b\n  Extra: still the answer", "t.md", "t");
+    expect(card.content).toEqual({ type: "basic", question: "a", answer: "b\n  Extra: still the answer" });
+  });
+});
+
+describe("tag normalisation", () => {
+  it.each([
+    ["CKA::Type::Syntax Pattern", "cka/type/syntax-pattern"],
+    ["  Capitals  ", "capitals"],
+    ["two  words\there", "two-words-here"],
+    ["/cka/workloads/", "cka/workloads"],
+    ["snake_case-and-kebab", "snake_case-and-kebab"],
+    ["2026", "2026"],
+  ])("reads %j as %j", async (written, tag) => {
+    const [card] = await parseFile(`Tags: ${written}\nQ: a\nA: b`, "t.md", "t");
+    expect(card.tags).toEqual([tag]);
+  });
+
+  it("normalises frontmatter tags the same way", async () => {
+    const [card] = await parseFile(
+      '---\ntags = ["CKA::Workloads", "Geo Europe"]\n---\nQ: a\nA: b',
+      "t.md",
+      "t"
+    );
+    expect(card.tags).toEqual(["cka/workloads", "geo-europe"]);
+  });
+
+  it("removes repeats that only differ in spelling, across frontmatter and card", async () => {
+    const [card] = await parseFile(
+      '---\ntags = ["CKA::Workloads"]\n---\nTags: cka/workloads, Lists, lists, , cka::workloads\nQ: a\nA: b',
+      "t.md",
+      "t"
+    );
+    expect(card.tags).toEqual(["cka/workloads", "lists"]);
+  });
+
+  it.each(["a.b", "-lead", "a//b", "a/-b", "ä", "c++", "a: b", 'say "hi"', "a / b"])(
+    "rejects %j in a Tags: line, naming the line",
+    async (tag) => {
+      await expect(parseFile(`Q: x\nA: y\n---\nTags: ok, ${tag}\nQ: a\nA: b`, "t.md", "t")).rejects.toThrow(
+        /Invalid tag .*Location: t\.md:4/
+      );
+    }
+  );
+
+  it("rejects an invalid frontmatter tag, naming its line", async () => {
+    await expect(
+      parseFile('---\nname = "D"\ntags = ["fine", "not.fine"]\n---\nQ: a\nA: b', "t.md", "t")
+    ).rejects.toThrow(/Invalid tag 'not\.fine'.*Location: t\.md:3/);
   });
 });

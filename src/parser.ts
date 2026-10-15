@@ -8,7 +8,10 @@ type DeckMetadata = {
   tags: string[];
 };
 
-function extractFrontmatter(text: string): {
+function extractFrontmatter(
+  text: string,
+  filePath: string
+): {
   metadata: DeckMetadata;
   content: string;
   /** Lines removed from the top, so line numbers can be made absolute again. */
@@ -34,7 +37,7 @@ function extractFrontmatter(text: string): {
   const frontmatterLines = lines.slice(1, closingIdx);
   let name: string | null = null;
   let tags: string[] = [];
-  for (const line of frontmatterLines) {
+  for (const [i, line] of frontmatterLines.entries()) {
     const match = line.match(/^\s*name\s*=\s*"([^"]*)"\s*$/);
     if (match) {
       name = match[1];
@@ -47,7 +50,7 @@ function extractFrontmatter(text: string): {
           `Frontmatter tags must be a TOML array of strings on one line, like tags = ["geo", "europe"]. Found: ${line.trim()}`
         );
       }
-      tags = uniqueTags(parsed);
+      tags = normaliseTags(parsed, `Location: ${filePath}:${i + 2}`);
     }
   }
 
@@ -85,8 +88,50 @@ function parseStringArray(src: string): string[] | null {
   return items;
 }
 
+/**
+ * What a tag must look like once normalised: lowercase words of letters,
+ * digits, `_` and `-`, joined by `/` for hierarchy. Narrow on purpose: tags
+ * become filters, URL fragments and CLI arguments, and every character outside
+ * this set is one some consumer would have to quote or escape.
+ */
+export const TAG_PATTERN = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/;
+
+/**
+ * A tag as written, in its one canonical spelling — or null for a blank one.
+ *
+ * Normalised rather than rejected because the same tag arrives spelled many
+ * ways (`CKA::Type::Syntax Pattern` from Anki, `cka/type/syntax-pattern` from
+ * a person), and two spellings of one tag would split one filter into two.
+ * Only what normalising cannot rescue is an error.
+ */
+export function normaliseTag(raw: string): string | null {
+  const tag = raw
+    .trim()
+    .toLowerCase()
+    .replace(/::/g, "/")
+    .replace(/\s+/g, "-")
+    .replace(/^\/+|\/+$/g, "");
+  return tag === "" ? null : tag;
+}
+
+/** `raw` normalised, blanks dropped, repeats removed; throws on an invalid one. */
+function normaliseTags(raw: string[], location: string): string[] {
+  const tags: string[] = [];
+  for (const written of raw) {
+    const tag = normaliseTag(written);
+    if (tag === null) continue;
+    if (!TAG_PATTERN.test(tag)) {
+      throw new Error(
+        `Invalid tag '${written.trim()}' (read as '${tag}'): use lowercase letters, digits, '_' and '-', with '/' between levels, like 'cka/type/syntax-pattern'. ${location}`
+      );
+    }
+    tags.push(tag);
+  }
+  return uniqueTags(tags);
+}
+
 function uniqueTags(tags: string[]): string[] {
-  return [...new Set(tags.map((t) => t.trim()).filter((t) => t !== ""))];
+  return [...new Set(tags)];
 }
 
 /**
@@ -133,6 +178,7 @@ enum LineType {
   StartQuestion,
   StartAnswer,
   StartCloze,
+  StartExtra,
   Separator,
   Metadata,
   Text,
@@ -143,6 +189,7 @@ type Line =
   | { type: LineType.StartQuestion; text: string }
   | { type: LineType.StartAnswer; text: string }
   | { type: LineType.StartCloze; text: string }
+  | { type: LineType.StartExtra; text: string }
   | { type: LineType.Separator }
   | { type: LineType.Metadata; key: MetadataKey; value: string }
   | { type: LineType.Text; text: string }
@@ -160,6 +207,8 @@ function readLine(line: string, atBlockTop: boolean): Line {
     return { type: LineType.StartAnswer, text: line.slice(2).trim() };
   } else if (line.startsWith("C:")) {
     return { type: LineType.StartCloze, text: line.slice(2).trim() };
+  } else if (line.startsWith("Extra:")) {
+    return { type: LineType.StartExtra, text: line.slice(6).trim() };
   } else if (line.trim() === "---") {
     return { type: LineType.Separator };
   }
@@ -179,11 +228,17 @@ function readLine(line: string, atBlockTop: boolean): Line {
  */
 type Opening = { startLine: number; meta: BlockMeta | null; implicit: boolean };
 
+/**
+ * A card's `Extra:` section while it is being read: its text so far and the
+ * line it started on, for an error to point at. Null until one starts.
+ */
+type ExtraSection = { text: string; line: number } | null;
+
 type State =
   | { type: "start"; meta: BlockMeta | null }
   | ({ type: "readingQuestion"; question: string } & Opening)
-  | ({ type: "readingAnswer"; question: string; answer: string } & Opening)
-  | ({ type: "readingCloze"; text: string } & Opening)
+  | ({ type: "readingAnswer"; question: string; answer: string; extra: ExtraSection } & Opening)
+  | ({ type: "readingCloze"; text: string; extra: ExtraSection } & Opening)
   | { type: "end" };
 
 /**
@@ -192,7 +247,12 @@ type State =
  * the editor must take its ID with it, or the ID would attach itself to
  * whatever card came next.
  */
-export type RawCard = { startLine: number; endLine: number } & Opening &
+export type RawCard = {
+  startLine: number;
+  endLine: number;
+  /** The `Extra:` section, trimmed, or null for a card without one. */
+  extra: string | null;
+} & Opening &
   (
     | { type: "basic"; question: string; answer: string }
     | { type: "clozeGroup"; text: string }
@@ -211,7 +271,7 @@ export type ScannedFile = {
  * half of `parseFile`, and all `stampIds` needs to find where IDs go.
  */
 export function scanFile(text: string, filePath: string): ScannedFile {
-  const { metadata, content, lineOffset } = extractFrontmatter(text);
+  const { metadata, content, lineOffset } = extractFrontmatter(text, filePath);
 
   const cards: RawCard[] = [];
   const lines = content.split("\n");
@@ -293,9 +353,12 @@ export async function parseFile(
 
     if (raw.type === "basic") {
       const hash = await hashBasicCard(raw.question, raw.answer);
+      // Extra stays out of every hash and key: it is a note about the card,
+      // not the card, so rewriting it must not cost the card its history.
+      const extra = raw.extra === null ? {} : { extra: raw.extra };
       add({
         ...shared,
-        content: { type: "basic", question: raw.question, answer: raw.answer },
+        content: { type: "basic", question: raw.question, answer: raw.answer, ...extra },
         hash,
         familyHash: null,
         key: id ? formatKey({ kind: "basic", id }) : formatKey({ kind: "hash", hash }),
@@ -306,7 +369,7 @@ export async function parseFile(
         const reverseHash = await hashBasicCard(raw.answer, raw.question);
         add({
           ...shared,
-          content: { type: "basic", question: raw.answer, answer: raw.question },
+          content: { type: "basic", question: raw.answer, answer: raw.question, ...extra },
           hash: reverseHash,
           familyHash: null,
           key: id
@@ -320,6 +383,8 @@ export async function parseFile(
         add({
           ...shared,
           ...deletion,
+          content:
+            raw.extra === null ? deletion.content : { ...deletion.content, extra: raw.extra },
           key: id
             ? formatKey({ kind: "cloze", id, n: i + 1 })
             : formatKey({ kind: "hash", hash: deletion.hash }),
@@ -361,7 +426,7 @@ function readMetadata(
       next.id = { value: line.value, line: lineNum };
       break;
     case "Tags":
-      next.tags = uniqueTags(line.value.split(","));
+      next.tags = normaliseTags(line.value.split(","), at(lineNum));
       break;
     case "Reverse":
       if (line.value !== "yes" && line.value !== "no") {
@@ -379,6 +444,27 @@ function readMetadata(
       break;
   }
   return next;
+}
+
+/** An `Extra:` line, refused if the card already has its one Extra section. */
+function startExtra(
+  current: ExtraSection,
+  text: string,
+  lineNum: number,
+  at: (lineNum: number) => string
+): ExtraSection {
+  if (current) {
+    throw new Error(`A card can only have one Extra: section. ${at(lineNum)}`);
+  }
+  return { text, line: lineNum };
+}
+
+/** The finished section's text, refusing an `Extra:` that says nothing. */
+function finishExtra(extra: ExtraSection, at: (lineNum: number) => string): string | null {
+  if (!extra) return null;
+  const text = extra.text.trim();
+  if (text === "") throw new Error(`Found Extra: with nothing after it. ${at(extra.line)}`);
+  return text;
 }
 
 function parseLine(
@@ -411,13 +497,15 @@ function parseLine(
           return { type: "readingQuestion", question: line.text, ...fromTop };
         case LineType.StartAnswer:
           throw new Error(`Found answer tag without a question. ${at(lineNum)}`);
+        case LineType.StartExtra:
+          throw new Error(`Found Extra: without a card before it. ${at(lineNum)}`);
         case LineType.StartCloze:
           if (state.meta?.reverse != null) {
             throw new Error(
               `Reverse is for Q:/A: cards; a cloze card cannot be reversed. ${at(state.meta.reverse)}`
             );
           }
-          return { type: "readingCloze", text: line.text, ...fromTop };
+          return { type: "readingCloze", text: line.text, extra: null, ...fromTop };
         case LineType.Metadata:
           return { type: "start", meta: readMetadata(state.meta, line, lineNum, at) };
         case LineType.Separator:
@@ -450,10 +538,13 @@ function parseLine(
             type: "readingAnswer",
             question: state.question,
             answer: line.text,
+            extra: null,
             ...opening(state),
           };
         case LineType.StartCloze:
           throw new Error(`Found cloze tag while reading a question. ${at(lineNum)}`);
+        case LineType.StartExtra:
+          throw new Error(`Found Extra: before the card's A: line. ${at(lineNum)}`);
         case LineType.Separator:
           throw new Error(`Found flashcard separator while reading a question. ${at(lineNum)}`);
         case LineType.Metadata:
@@ -473,6 +564,7 @@ function parseLine(
           type: "basic",
           question: state.question.trim(),
           answer: state.answer.trim(),
+          extra: finishExtra(state.extra, at),
           ...opening(state),
           endLine,
         });
@@ -482,16 +574,20 @@ function parseLine(
           return { type: "readingQuestion", question: line.text, ...implicit };
         case LineType.StartAnswer:
           throw new Error(`Found answer tag while reading an answer. ${at(lineNum)}`);
+        case LineType.StartExtra:
+          return { ...state, extra: startExtra(state.extra, line.text, lineNum, at) };
         case LineType.StartCloze:
           emit();
-          return { type: "readingCloze", text: line.text, ...implicit };
+          return { type: "readingCloze", text: line.text, extra: null, ...implicit };
         case LineType.Separator:
           emit();
           return { type: "start", meta: null };
         case LineType.Metadata:
           throw new Error("unreachable: metadata is only read at a block's top");
         case LineType.Text:
-          return { ...state, answer: state.answer + "\n" + line.text };
+          return state.extra
+            ? { ...state, extra: { ...state.extra, text: state.extra.text + "\n" + line.text } }
+            : { ...state, answer: state.answer + "\n" + line.text };
         case LineType.Eof:
           emit();
           return { type: "end" };
@@ -501,23 +597,33 @@ function parseLine(
 
     case "readingCloze": {
       const emit = () =>
-        cards.push({ type: "clozeGroup", text: state.text, ...opening(state), endLine });
+        cards.push({
+          type: "clozeGroup",
+          text: state.text,
+          extra: finishExtra(state.extra, at),
+          ...opening(state),
+          endLine,
+        });
       switch (line.type) {
         case LineType.StartQuestion:
           emit();
           return { type: "readingQuestion", question: line.text, ...implicit };
         case LineType.StartAnswer:
           throw new Error(`Found answer tag while reading a cloze card. ${at(lineNum)}`);
+        case LineType.StartExtra:
+          return { ...state, extra: startExtra(state.extra, line.text, lineNum, at) };
         case LineType.StartCloze:
           emit();
-          return { type: "readingCloze", text: line.text, ...implicit };
+          return { type: "readingCloze", text: line.text, extra: null, ...implicit };
         case LineType.Separator:
           emit();
           return { type: "start", meta: null };
         case LineType.Metadata:
           throw new Error("unreachable: metadata is only read at a block's top");
         case LineType.Text:
-          return { ...state, text: state.text + "\n" + line.text };
+          return state.extra
+            ? { ...state, extra: { ...state.extra, text: state.extra.text + "\n" + line.text } }
+            : { ...state, text: state.text + "\n" + line.text };
         case LineType.Eof:
           emit();
           return { type: "end" };

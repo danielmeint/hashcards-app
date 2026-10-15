@@ -658,6 +658,67 @@ C: The capital of [Norway] is [Oslo].
   });
 });
 
+describe("editing a card with an Extra section", () => {
+  const EXTRA = `ID: est-capital
+Q: What is the capital of Estonia?
+A: Tallinn
+Extra: Called *Reval* until 1918.
+
+---
+
+ID: k3n9wq2p
+C: The capital of [Norway] is [Oslo].
+Extra: On the Oslofjord.
+`;
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("puts the Extra section in the box, as part of the card", async () => {
+    const { readCardSource, sync } = await freshEdit("extra.md", EXTRA);
+    const [basic, cloze] = await sync.loadCachedCards();
+    expect((await readCardSource(basic)).text).toBe(
+      "ID: est-capital\nQ: What is the capital of Estonia?\nA: Tallinn\nExtra: Called *Reval* until 1918."
+    );
+    expect((await readCardSource(cloze)).text).toContain("\nExtra: On the Oslofjord.");
+  });
+
+  it("keeps the Extra section through an edit of the answer", async () => {
+    const { readCardSource, commitCardEdit, sync } = await freshEdit("extra.md", EXTRA);
+    const card = (await sync.loadCachedCards())[0];
+    const source = await readCardSource(card);
+
+    const result = await commitCardEdit(
+      card,
+      source,
+      source.text.replace("A: Tallinn", "A: **Tallinn**"),
+      { keepScheduling: true }
+    );
+
+    expect(repo.files.get("extra.md")!.text).toBe(EXTRA.replace("A: Tallinn", "A: **Tallinn**"));
+    expect(result.card?.content).toMatchObject({ extra: "Called *Reval* until 1918." });
+  });
+
+  it("changes neither hash nor key when only the Extra section is edited", async () => {
+    const { readCardSource, commitCardEdit, sync } = await freshEdit("extra.md", EXTRA);
+    const card = (await sync.loadCachedCards()).find((c) => c.key === "k3n9wq2p:2")!;
+    const source = await readCardSource(card);
+
+    const result = await commitCardEdit(
+      card,
+      source,
+      source.text.replace("On the Oslofjord.", "On the Oslofjord, at its head."),
+      { keepScheduling: true }
+    );
+
+    expect(result.card).toMatchObject({ key: card.key, hash: card.hash });
+    expect(result.card?.content.extra).toBe("On the Oslofjord, at its head.");
+    // Nothing to carry: the history is already under the right hash.
+    expect(result.migrated).toBe(0);
+  });
+});
+
 describe("keeping a card's ID through an edit", () => {
   it("adds the original ID above a replacement that has none", async () => {
     const { keepId } = await import("./card-edit");

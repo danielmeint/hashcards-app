@@ -7,6 +7,7 @@ import {
   getReviewsSince,
   loadSession,
   clearSession,
+  stateKey,
 } from "../db";
 import { todayStr } from "../fsrs";
 import {
@@ -334,9 +335,9 @@ export async function renderDeckList(
             // Completed cards travel too: undo needs to resolve any card in
             // the session.
             const session = model.session!;
-            const hashes = new Set([...session.queue, ...session.completed]);
+            const keys = new Set([...session.queue, ...session.completed]);
             onDrill(
-              model.cards.filter((c) => hashes.has(c.hash)),
+              model.cards.filter((c) => keys.has(stateKey(c))),
               session
             );
           }}
@@ -435,9 +436,9 @@ async function load(): Promise<Model> {
   // An interrupted drill is offered back rather than resumed automatically —
   // reopening the app is not always an intent to carry on where you left off.
   const session = await loadSession();
-  const byHash = new Map(cards.map((c) => [c.hash, c]));
+  const byKey = new Map(cards.map((c) => [stateKey(c), c]));
   const resumable = session
-    ? session.queue.filter((hash) => byHash.has(hash))
+    ? session.queue.filter((key) => byKey.has(key))
     : [];
   // A session whose cards have all left the repo can never be resumed.
   if (session && resumable.length === 0) await clearSession();

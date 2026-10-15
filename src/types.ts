@@ -38,10 +38,10 @@ export type Card = {
   range: [number, number];
   content: CardContent;
   /**
-   * The v1 content hash. Still what the database, sync and drills key on until
-   * the review log moves to `key` (PLAN-1.0 M3); after that it only derives
-   * `h:` keys and maps v1 history across. Metadata lines never enter it, so
-   * stamping an ID onto a card leaves it unchanged.
+   * The v1 content hash. Since M3 the app keys on `key`; the hash only derives
+   * `h:` keys, maps v1 history across, and is what a collection that has not
+   * been migrated yet still records. Metadata lines never enter it, so stamping
+   * an ID onto a card leaves it unchanged.
    */
   hash: string;
   familyHash: string | null;
@@ -53,7 +53,7 @@ export type Card = {
   tags: string[];
   /**
    * `draft` cards are proposals waiting in the Inbox, `suspended` ones are kept
-   * but not scheduled. Exposed only, for now: nothing filters on it yet.
+   * but not scheduled: neither is ever due, nor introduced as new.
    */
   status: CardStatus;
 };
@@ -84,7 +84,26 @@ export type ReviewedPerformance = {
 
 export type Performance = NewPerformance | ReviewedPerformance;
 
+/**
+ * One grade, as this device recorded it. Each one is a v2 review event
+ * (`reviewEvent` in `review-log.ts`) in the log of collection `log`, and the
+ * extra fields are what a not-yet-migrated collection's v1 files still need.
+ */
 export type Review = {
+  /**
+   * The card, as the app keys it locally: `owner/repo/<key>`
+   * (`stateKey` in `db.ts`).
+   */
+  key: string;
+  /**
+   * `owner/repo` of the collection whose data branch this review is pushed to:
+   * the card's own collection, or for a subscribed card the first one you can
+   * write to. Empty when there is none, and the review stays on this device.
+   */
+  log: string;
+  /** Local UTC offset in minutes when it was taken, east positive. */
+  tz: number;
+  /** The v1 content hash of the card at the time, for v1 files. */
   cardHash: string;
   reviewedAt: string;
   grade: Grade;
@@ -98,11 +117,17 @@ export type Review = {
    * it. Absent on reviews from before it was measured.
    */
   durationMs?: number;
+  /**
+   * Already in a v1 log file (`hashcards-reviews/`). Migration (M4) carries
+   * those into the data branch itself, so this device must not push them there
+   * a second time — replay would count the grade twice.
+   */
+  v1Pushed?: boolean;
 };
 
 /**
  * A drill in progress, persisted alongside each grade so an interrupted session
- * can be picked up where it left off. Cards are stored as hashes and rehydrated
+ * can be picked up where it left off. Cards are stored by key and rehydrated
  * from the cached card set; a card that has since vanished from the repo is
  * dropped on resume.
  *

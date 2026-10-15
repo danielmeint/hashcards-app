@@ -84,9 +84,14 @@ export function syncNotice({
     };
   }
 
-  return lastSyncedAt
-    ? { text: `Synced ${formatSyncAge(lastSyncedAt, now)}`, level: "info", action: null }
-    : null;
+  const synced = lastSyncedAt ? `Synced ${formatSyncAge(lastSyncedAt, now)}` : null;
+  // A hint rides along with the ordinary line rather than replacing it: it is
+  // not a reason to worry, only something to do sometime.
+  const hint = status.phase === "idle" ? status.notice : undefined;
+  if (hint) {
+    return { text: synced ? `${synced} · ${hint}` : hint, level: "info", action: null };
+  }
+  return synced ? { text: synced, level: "info", action: null } : null;
 }
 
 /** Never pushed at all counts as maximally stale. */

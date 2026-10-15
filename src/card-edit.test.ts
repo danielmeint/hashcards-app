@@ -3,7 +3,6 @@ import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { GitHubConfig } from "./github";
-import { Grade } from "./types";
 
 const CONFIG: GitHubConfig = { owner: "someone", repo: "cards", branch: "main" };
 
@@ -23,6 +22,8 @@ class FakeRepo {
   hold: { match: string; release: Promise<void> } | null = null;
 
   handler = async (url: string, init?: RequestInit): Promise<Response> => {
+    // No review data branch: nothing has been reviewed in this repo yet.
+    if (url.includes("/git/ref/")) return new Response(null, { status: 404 });
     if (url.includes("/git/trees/")) {
       const tree = [...this.files].map(([path, f]) => ({
         path,
@@ -185,32 +186,10 @@ C: The capital of [France] is [Paris]
     );
   });
 
-  it("carries the card's scheduling and its history onto the new hash", async () => {
+  it("carries the card's scheduling onto the key its new text gives it", async () => {
     const { readCardSource, commitCardEdit, db, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    await db.importState({ [card.hash]: performance });
-    await db.persistReview(
-      card.hash,
-      performance,
-      {
-        cardHash: card.hash,
-        reviewedAt: "2026-01-01T00:00:00.000Z",
-        grade: Grade.Forgot,
-        stability: 3,
-        difficulty: 5,
-        intervalRaw: 3,
-        intervalDays: 3,
-        dueDate: "2026-02-01",
-      },
-      {
-        queue: [],
-        requeued: [],
-        completed: [card.hash],
-        gradedNew: [],
-        totalCards: 1,
-        startedAt: "2026-01-01T00:00:00.000Z",
-      }
-    );
+    await db.importState({ [db.stateKey(card)]: performance });
     const source = await readCardSource(card);
 
     const result = await commitCardEdit(
@@ -222,19 +201,38 @@ C: The capital of [France] is [Paris]
 
     expect(result.migrated).toBe(1);
     const fresh = result.cards[0];
-    expect(fresh.hash).not.toBe(card.hash);
-    // Seven reviews of work, still attached to the card it belongs to...
-    expect((await db.getAllPerformances()).get(fresh.hash)?.reviewCount).toBe(7);
-    // ...including the failures, so a rewritten leech is still tracked as one
-    // rather than quietly leaving the list because its hash changed.
-    const reviews = await db.getAllReviews();
-    expect(reviews.map((r) => r.cardHash)).toEqual([fresh.hash]);
+    // No ID, so the key is the content's, and the edit moved it.
+    expect(db.stateKey(fresh)).not.toBe(db.stateKey(card));
+    // Seven reviews of work, still attached to the card it belongs to — by a
+    // baseline event under the new key, which every device replays the same.
+    expect((await db.getAllPerformances()).get(db.stateKey(fresh))?.reviewCount).toBe(7);
+    const [baseline] = await db.getLocalBaselines();
+    expect(baseline).toMatchObject({
+      log: "someone/cards",
+      event: { kind: "baseline", card: fresh.key, s: 3, d: 5, reps: 7, src: "edit" },
+    });
+  });
+
+  it("needs nothing to carry when the card has an ID", async () => {
+    const withId = "ID: s3-durability\nQ: What is the default S3 durability?\nA: Eleven nines\n";
+    const { readCardSource, commitCardEdit, db, sync } = await freshEdit("b.md", withId);
+    const [card] = await sync.loadCachedCards();
+    await db.importState({ [db.stateKey(card)]: performance });
+    const source = await readCardSource(card);
+
+    const result = await commitCardEdit(card, source, "ID: s3-durability\nQ: How durable is S3?\nA: 99.999999999%", {
+      keepScheduling: true,
+    });
+
+    expect(db.stateKey(result.cards[0])).toBe(db.stateKey(card));
+    expect(result.migrated).toBe(1);
+    expect(await db.getLocalBaselines()).toEqual([]);
   });
 
   it("starts the card over when the user asks it to", async () => {
     const { readCardSource, commitCardEdit, db, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    await db.importState({ [card.hash]: performance });
+    await db.importState({ [db.stateKey(card)]: performance });
     const source = await readCardSource(card);
 
     const result = await commitCardEdit(
@@ -245,13 +243,13 @@ C: The capital of [France] is [Paris]
     );
 
     expect(result.migrated).toBe(0);
-    expect((await db.getAllPerformances()).has(result.cards[0].hash)).toBe(false);
+    expect((await db.getAllPerformances()).has(db.stateKey(result.cards[0]))).toBe(false);
   });
 
   it("handles a card being split into two, which is the usual leech fix", async () => {
     const { readCardSource, commitCardEdit, db, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    await db.importState({ [card.hash]: performance });
+    await db.importState({ [db.stateKey(card)]: performance });
     const source = await readCardSource(card);
 
     // "A card that fails repeatedly is usually two questions in one" — so the
@@ -269,8 +267,8 @@ C: The capital of [France] is [Paris]
     // it, and no way to tell which half inherited the work.
     expect(result.migrated).toBe(1);
     const performances = await db.getAllPerformances();
-    expect(performances.has(result.cards[0].hash)).toBe(true);
-    expect(performances.has(result.cards[1].hash)).toBe(false);
+    expect(performances.has(db.stateKey(result.cards[0]))).toBe(true);
+    expect(performances.has(db.stateKey(result.cards[1]))).toBe(false);
     // The cloze card below it is still there, three lines further down.
     const all = await sync.loadCachedCards();
     expect(all.filter((c) => c.content.type === "cloze")).toHaveLength(2);

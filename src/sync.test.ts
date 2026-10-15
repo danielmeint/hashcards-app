@@ -2,7 +2,8 @@
 import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { GitHubConfig } from "./github";
+import { GitHubConfig, RepoConfig } from "./github";
+import { Card, Grade, Review } from "./types";
 
 /**
  * Sync used to list the tree and then fetch every file in the repo on every
@@ -57,8 +58,157 @@ class FakeRepo {
     this.state = { content: btoa(JSON.stringify(data)), sha: "state-0" };
   }
 
+  // --- The Git Data API, for the `hashcards-data` branch ---------------------
+
+  /** Branch → commit. `main` is not in here: its tree is `files` above. */
+  refs = new Map<string, string>();
+  commits = new Map<string, { tree: string; parents: string[]; message: string }>();
+  /** Tree SHA → path → blob SHA. */
+  trees = new Map<string, Map<string, string>>();
+  blobs = new Map<string, string>();
+  /** Every ref update and creation, refused ones included. */
+  refWrites: { branch: string; sha: string; ok: boolean }[] = [];
+  /** Runs before each ref update is judged, to stand in for another device. */
+  onRefWrite: (() => void) | null = null;
+  /** Every request the data branch was asked, by method and path. */
+  dataRequests: string[] = [];
+  private n = 0;
+
+  private nextSha(kind: string): string {
+    return `${kind}-${++this.n}`;
+  }
+
+  /** The files on a branch, by path, as text. */
+  branchFiles(branch = "hashcards-data"): Map<string, string> {
+    const head = this.refs.get(branch);
+    if (!head) return new Map();
+    const tree = this.trees.get(this.commits.get(head)!.tree)!;
+    return new Map([...tree].map(([path, sha]) => [path, this.blobs.get(sha)!]));
+  }
+
+  /** Commits on a branch, newest first. */
+  history(branch = "hashcards-data"): string[] {
+    const out: string[] = [];
+    let at = this.refs.get(branch);
+    while (at) {
+      out.push(at);
+      at = this.commits.get(at)!.parents[0];
+    }
+    return out;
+  }
+
+  /** Commit files to a branch the way another device (or `hc`) would. */
+  commitFiles(files: Record<string, string | null>, branch = "hashcards-data"): string {
+    const head = this.refs.get(branch);
+    const tree = new Map(head ? this.trees.get(this.commits.get(head)!.tree)! : []);
+    for (const [path, text] of Object.entries(files)) {
+      if (text === null) tree.delete(path);
+      else {
+        const sha = this.nextSha("blob");
+        this.blobs.set(sha, text);
+        tree.set(path, sha);
+      }
+    }
+    const treeSha = this.nextSha("tree");
+    this.trees.set(treeSha, tree);
+    const commit = this.nextSha("commit");
+    this.commits.set(commit, { tree: treeSha, parents: head ? [head] : [], message: "elsewhere" });
+    this.refs.set(branch, commit);
+    return commit;
+  }
+
+  private descends(commit: string, ancestor: string): boolean {
+    let at: string | undefined = commit;
+    while (at) {
+      if (at === ancestor) return true;
+      at = this.commits.get(at)?.parents[0];
+    }
+    return false;
+  }
+
+  private dataApi(url: string, init?: RequestInit): Response | null {
+    const json = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), { status });
+    const path = new URL(url).pathname.replace(/^\/repos\/[^/]+\/[^/]+/, "");
+    const method = init?.method ?? "GET";
+    const body = init?.body ? JSON.parse(String(init.body)) : null;
+
+    const ref = path.match(/^\/git\/ref\/heads\/(.+)$/);
+    if (ref && method === "GET") {
+      this.dataRequests.push(`GET ref`);
+      const sha = this.refs.get(decodeURIComponent(ref[1]));
+      return sha ? json({ object: { sha } }) : json({ message: "Not Found" }, 404);
+    }
+    const tree = path.match(/^\/git\/trees\/([^/]+)$/);
+    if (tree && method === "GET") {
+      const id = tree[1];
+      const treeSha = this.commits.get(id)?.tree ?? (this.trees.has(id) ? id : null);
+      if (!treeSha) return null; // `main`, answered by the listing below
+      this.dataRequests.push(`GET tree`);
+      const entries = [...this.trees.get(treeSha)!].map(([p, sha]) => ({ path: p, sha, type: "blob" }));
+      return json({ sha: treeSha, tree: entries, truncated: false });
+    }
+    if (path === "/git/trees" && method === "POST") {
+      this.dataRequests.push(`POST tree`);
+      const base = body.base_tree ? this.trees.get(body.base_tree) : new Map<string, string>();
+      if (!base) return json({ message: "base_tree not found" }, 422);
+      const next = new Map(base);
+      for (const entry of body.tree as { path: string; content?: string; sha?: string | null }[]) {
+        if (entry.content !== undefined) {
+          const sha = this.nextSha("blob");
+          this.blobs.set(sha, entry.content);
+          next.set(entry.path, sha);
+        } else if (entry.sha === null) {
+          next.delete(entry.path);
+        } else next.set(entry.path, entry.sha!);
+      }
+      const sha = this.nextSha("tree");
+      this.trees.set(sha, next);
+      return json({ sha, tree: [...next].map(([p, s]) => ({ path: p, sha: s, type: "blob" })) }, 201);
+    }
+    if (path === "/git/commits" && method === "POST") {
+      this.dataRequests.push(`POST commit`);
+      const sha = this.nextSha("commit");
+      this.commits.set(sha, { tree: body.tree, parents: body.parents, message: body.message });
+      return json({ sha }, 201);
+    }
+    const update = path.match(/^\/git\/refs\/heads\/(.+)$/);
+    if (update && method === "PATCH") {
+      this.dataRequests.push(`PATCH ref`);
+      this.onRefWrite?.();
+      const branch = decodeURIComponent(update[1]);
+      const head = this.refs.get(branch);
+      if (!head) return json({ message: "Reference does not exist" }, 422);
+      // GitHub's check on a non-forced update: the new commit must descend
+      // from where the branch is now.
+      const ok = body.force || this.descends(body.sha, head);
+      this.refWrites.push({ branch, sha: body.sha, ok });
+      if (!ok) return json({ message: "Update is not a fast forward" }, 422);
+      this.refs.set(branch, body.sha);
+      return json({ object: { sha: body.sha } });
+    }
+    if (path === "/git/refs" && method === "POST") {
+      this.dataRequests.push(`POST ref`);
+      this.onRefWrite?.();
+      const branch = String(body.ref).replace(/^refs\/heads\//, "");
+      const exists = this.refs.has(branch);
+      this.refWrites.push({ branch, sha: body.sha, ok: !exists });
+      if (exists) return json({ message: "Reference already exists" }, 422);
+      this.refs.set(branch, body.sha);
+      return json({ object: { sha: body.sha } }, 201);
+    }
+    const blob = path.match(/^\/git\/blobs\/(.+)$/);
+    if (blob && this.blobs.has(blob[1])) {
+      this.dataRequests.push(`GET blob`);
+      return new Response(this.blobs.get(blob[1])!, { status: 200 });
+    }
+    return null;
+  }
+
   handler = (url: string, init?: RequestInit): Response => {
     const headers = new Headers(init?.headers as HeadersInit);
+    const data = this.dataApi(url, init);
+    if (data) return data;
 
     if (url.includes("/git/trees/")) {
       const sent = headers.get("If-None-Match");
@@ -476,582 +626,727 @@ describe("card sync", () => {
   });
 });
 
+// --- Review data: the data branch, replay, compatibility -----------------------
+
 /**
- * Choosing a repository in a list is not consent to commit to it. Before this,
- * picking one in Settings ran a full sync — so a mis-tap in the picker wrote
- * the entire local review history into whatever repo was under the finger,
- * which is how this app's own source repo acquired an 87-card state file.
+ * One device: its own IndexedDB and localStorage, sharing a fake GitHub with
+ * every other. `use` makes it the one the app's modules see, the way switching
+ * phones would — which is how these tests get two devices to talk to each
+ * other through nothing but the repository.
  */
-describe("state sync", () => {
+class Device {
+  static active: Device | null = null;
+  readonly idb = new IDBFactory();
+  storage: Record<string, string>;
+
+  constructor(name: string, repos: RepoConfig[] = [{ ...CONFIG }]) {
+    this.storage = { device_id: name, repos: JSON.stringify(repos) };
+  }
+
+  async use() {
+    const active = Device.active;
+    if (active && active !== this) {
+      active.storage = Object.fromEntries(
+        Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)!).map(
+          (k) => [k, localStorage.getItem(k)!]
+        )
+      );
+    }
+    localStorage.clear();
+    for (const [k, v] of Object.entries(this.storage)) localStorage.setItem(k, v);
+    globalThis.indexedDB = this.idb;
+    vi.resetModules();
+    Device.active = this;
+    const { saveCredential } = await import("./auth");
+    await saveCredential({ kind: "pat", token: "token" });
+    return {
+      sync: await import("./sync"),
+      db: await import("./db"),
+      session: await import("./views/drill/session"),
+      github: await import("./github"),
+      state: await import("./sync-state"),
+    };
+  }
+}
+
+type App = Awaited<ReturnType<Device["use"]>>;
+
+const question = (c: Card) => (c.content.type === "basic" ? c.content.question : c.content.text);
+
+/** Grade the cards with these questions, in this order, in one drill. */
+async function drill(app: App, grades: [string, Grade][]) {
+  const cards = await app.sync.loadCachedCards();
+  const wanted = grades.map(([q]) => cards.find((c) => question(c) === q)!);
+  const session = await app.session.createSession(wanted, { resume: {
+    queue: wanted.map(app.db.stateKey),
+    completed: [],
+    gradedNew: [],
+    totalCards: wanted.length,
+    startedAt: new Date(0).toISOString(),
+  } });
+  for (const [q, grade] of grades) {
+    expect(question(session.current!)).toBe(q);
+    session.reveal();
+    session.grade(grade);
+  }
+  await session.summary();
+  return session;
+}
+
+/** Cards with IDs, as a v2 collection has them. */
+const DECK = "ID: alpha\nQ: Alpha?\nA: a\n\n---\n\nID: beta\nQ: Beta?\nA: b\n";
+
+const reviewFiles = (repo: FakeRepo) =>
+  [...repo.branchFiles()].filter(([path]) => path.startsWith("reviews/"));
+
+const lines = (text: string) => text.trim().split("\n").map((l) => JSON.parse(l));
+
+/** Every card's state, as plain data, for comparing two devices. */
+async function states(app: App) {
+  return Object.fromEntries(
+    [...(await app.db.getAllPerformances())].map(([k, s]) => [
+      k,
+      { due: s.dueDate, s: s.stability, d: s.difficulty, reps: s.reviewCount },
+    ])
+  );
+}
+
+describe("the data branch", () => {
   let repo: FakeRepo;
 
-  const performance = (dueDate: string) => ({
-    type: "reviewed" as const,
-    lastReviewedAt: "2026-01-01T00:00:00.000Z",
+  beforeEach(() => {
+    localStorage.clear();
+    Device.active = null;
+    repo = new FakeRepo();
+    repo.set("a.md", DECK, "sha-a");
+    install(repo);
+  });
+
+  it("creates the orphan branch on the first push, with the review as a v2 event", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["Alpha?", Grade.Good]]);
+
+    expect(await app.sync.syncAll(CONFIG)).toBe(true);
+
+    const [commit] = repo.history();
+    expect(repo.commits.get(commit)!.parents).toEqual([]);
+    const files = reviewFiles(repo);
+    expect(files).toHaveLength(1);
+    expect(files[0][0]).toMatch(/^reviews\/\d{4}-\d{2}\.phone1\.jsonl$/);
+    const [event] = lines(files[0][1]);
+    expect(event).toMatchObject({ v: 2, card: "alpha", grade: 3 });
+    expect(event.tz).toBe(-new Date(event.at).getTimezoneOffset());
+    expect(event.ms).toBeGreaterThanOrEqual(0);
+    // The snapshot rides along in the same commit.
+    expect(JSON.parse(repo.branchFiles().get("snapshot.json")!).cards.alpha.reps).toBe(1);
+    // And nothing of it on `main`.
+    expect(repo.fileWrites).toEqual([]);
+    expect(repo.stateWrites).toEqual([]);
+  });
+
+  it("commits nothing, and reads no tree, when nothing is new", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["Alpha?", Grade.Good]]);
+    await app.sync.syncAll(CONFIG);
+    const commits = repo.history().length;
+    repo.dataRequests = [];
+
+    await app.sync.syncAll(CONFIG);
+
+    expect(repo.history()).toHaveLength(commits);
+    expect(repo.dataRequests).toEqual(["GET ref"]);
+  });
+
+  it("writes every changed file in one commit", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["Alpha?", Grade.Good], ["Beta?", Grade.Easy]]);
+    // A second month, as a baseline carried by an edit would make.
+    await app.db.addBaselines([
+      {
+        log: "someone/cards",
+        event: { v: 2, kind: "baseline", card: "alpha", at: "2025-03-01T10:00:00.000Z", tz: 60, s: 5, d: 5, reps: 2 },
+      },
+    ]);
+
+    await app.sync.syncAll(CONFIG);
+
+    expect(repo.history()).toHaveLength(1);
+    expect(reviewFiles(repo).map(([p]) => p)).toContain("reviews/2025-03.phone1.jsonl");
+    expect(reviewFiles(repo)).toHaveLength(2);
+  });
+
+  it("brings two devices to the same state", async () => {
+    const phone = new Device("phone1");
+    const laptop = new Device("laptop1");
+
+    let app = await phone.use();
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["Alpha?", Grade.Good]]);
+    await app.sync.syncAll(CONFIG);
+
+    app = await laptop.use();
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["Beta?", Grade.Hard], ["Alpha?", Grade.Easy]]);
+    await app.sync.syncAll(CONFIG);
+    const onLaptop = await states(app);
+
+    app = await phone.use();
+    await app.sync.syncAll(CONFIG);
+    const onPhone = await states(app);
+
+    expect(Object.keys(onPhone).sort()).toEqual(["someone/cards/alpha", "someone/cards/beta"]);
+    expect(onPhone).toEqual(onLaptop);
+    expect(onPhone["someone/cards/alpha"].reps).toBe(2);
+    // Two devices, two files, never the same one.
+    expect(reviewFiles(repo).map(([p]) => p.split(".")[1]).sort()).toEqual(["laptop1", "phone1"]);
+  });
+
+  it("builds on the new tip when another device commits first", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["Alpha?", Grade.Good]]);
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["Beta?", Grade.Good]]);
+
+    // The laptop pushes in the window between our read of the tip and our
+    // move of it, which is what the fast-forward check is there to catch.
+    const at = new Date().toISOString();
+    repo.onRefWrite = () => {
+      repo.onRefWrite = null;
+      repo.commitFiles({
+        "reviews/2026-01.laptop1.jsonl": JSON.stringify({ v: 2, card: "alpha", at, tz: 60, grade: 1 }) + "\n",
+      });
+    };
+
+    expect(await app.sync.syncAll(CONFIG)).toBe(true);
+
+    expect(repo.refWrites.map((w) => w.ok)).toEqual([true, false, true]);
+    expect(reviewFiles(repo).map(([p]) => p).sort()).toEqual([
+      "reviews/2026-01.laptop1.jsonl",
+      expect.stringMatching(/phone1/),
+    ]);
+    // And the laptop's lapse is part of the state here, not merely preserved there.
+    expect((await app.db.getAllPerformances()).get("someone/cards/alpha")!.reviewCount).toBe(2);
+  });
+
+  it("settles two devices creating the branch at once", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["Alpha?", Grade.Good]]);
+    repo.onRefWrite = () => {
+      repo.onRefWrite = null;
+      repo.commitFiles({ "reviews/2026-01.laptop1.jsonl": "" });
+    };
+
+    expect(await app.sync.syncAll(CONFIG)).toBe(true);
+
+    expect(repo.refWrites.map((w) => w.ok)).toEqual([false, true]);
+    expect(repo.branchFiles().has("reviews/2026-01.laptop1.jsonl")).toBe(true);
+    expect(reviewFiles(repo)).toHaveLength(2);
+  });
+
+  it("stops retrying a race that never clears, and says so", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["Alpha?", Grade.Good]]);
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["Beta?", Grade.Good]]);
+    let n = 0;
+    repo.onRefWrite = () => {
+      repo.commitFiles({ [`reviews/2026-01.busy.jsonl`]: `${++n}\n` });
+    };
+
+    expect(await app.sync.syncAll(CONFIG)).toBe(false);
+
+    expect(repo.refWrites.filter((w) => !w.ok)).toHaveLength(3);
+    const status = app.state.getSyncStatus();
+    expect(status.phase === "error" && status.needsSignIn).toBe(false);
+  });
+
+  it("keeps reviews graded offline, and pushes them when back", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    const online = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+
+    await drill(app, [["Alpha?", Grade.Good]]);
+    expect(await app.sync.syncAll(CONFIG)).toBe(false);
+    expect((await app.db.getAllPerformances()).get("someone/cards/alpha")!.reviewCount).toBe(1);
+
+    globalThis.fetch = online;
+    expect(await app.sync.syncAll(CONFIG)).toBe(true);
+    expect(lines(reviewFiles(repo)[0][1])).toMatchObject([{ card: "alpha", grade: 3 }]);
+  });
+
+  it("never pushes a grade undone before the push", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    const session = await drill(app, [["Alpha?", Grade.Good]]);
+    await session.undo();
+
+    await app.sync.syncAll(CONFIG);
+
+    expect(repo.refs.size).toBe(0);
+    expect(await app.db.getAllPerformances()).toEqual(new Map());
+  });
+
+  it("rewrites the month file for a grade undone after the push", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    const session = await drill(app, [["Alpha?", Grade.Good], ["Beta?", Grade.Good]]);
+    await app.sync.syncAll(CONFIG);
+    expect(lines(reviewFiles(repo)[0][1])).toHaveLength(2);
+
+    await session.undo();
+    await app.sync.syncAll(CONFIG);
+    expect(lines(reviewFiles(repo)[0][1]).map((e) => e.card)).toEqual(["alpha"]);
+
+    // The month's last grade going takes the file with it.
+    await session.undo();
+    await app.sync.syncAll(CONFIG);
+    expect(reviewFiles(repo)).toEqual([]);
+    expect(repo.history()).toHaveLength(3);
+  });
+
+  it("forgets another device's grade that it undid after pushing", async () => {
+    const laptop = await new Device("laptop1").use();
+    await laptop.sync.syncAll(CONFIG);
+    await drill(laptop, [["Alpha?", Grade.Good]]);
+    await laptop.sync.syncAll(CONFIG);
+
+    const phone = new Device("phone1");
+    let app = await phone.use();
+    await app.sync.syncAll(CONFIG);
+    expect((await app.db.getAllPerformances()).has("someone/cards/alpha")).toBe(true);
+
+    // What the laptop's next push does after that undo: its file goes.
+    repo.commitFiles({ [reviewFiles(repo)[0][0]]: null });
+    app = await phone.use();
+    await app.sync.syncAll(CONFIG);
+
+    expect((await app.db.getAllPerformances()).has("someone/cards/alpha")).toBe(false);
+  });
+
+  it("does not push to a repo it has only adopted", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.adoptRepo(CONFIG);
+    const inStepAt = app.state.getLastPushedAt();
+    await drill(app, [["Alpha?", Grade.Good]]);
+
+    expect(await app.sync.adoptRepo(CONFIG)).toBe(true);
+
+    expect(repo.refs.size).toBe(0);
+    // A pull is a sync; but that review is still only on this device, and the
+    // warning that says so keys off this not moving.
+    expect(app.state.getLastPushedAt()).toBe(inStepAt);
+  });
+
+  it("creates no data branch in a repo that holds no cards", async () => {
+    repo.files.clear();
+    const app = await new Device("phone1").use();
+    await app.db.updateDeckFiles(
+      [{ repo: "someone/other", path: "x.md", sha: "x", cards: [] }],
+      []
+    );
+
+    expect(await app.sync.syncAll(CONFIG)).toBe(true);
+
+    expect(repo.refWrites).toEqual([]);
+  });
+});
+
+describe("drafts and suspended cards", () => {
+  it("are never due and never introduced as new", async () => {
+    const file =
+      "ID: live\nQ: Live?\nA: a\n\n---\n\nID: idea\nStatus: draft\nQ: Idea?\nA: b\n\n---\n\n" +
+      "ID: parked\nStatus: suspended\nQ: Parked?\nA: c\n\n---\n\nID: parked-new\nStatus: suspended\nQ: Parked new?\nA: d\n";
+    const repo = new FakeRepo();
+    repo.set("a.md", file, "sha-a");
+    install(repo);
+    localStorage.clear();
+    Device.active = null;
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    const cards = await app.sync.loadCachedCards();
+    // Suspended after it had been learned, and overdue since.
+    await app.db.importState({
+      "someone/cards/parked": {
+        type: "reviewed",
+        lastReviewedAt: "2026-01-01T00:00:00.000Z",
+        stability: 2,
+        difficulty: 5,
+        intervalRaw: 2,
+        intervalDays: 2,
+        dueDate: "2026-01-03",
+        reviewCount: 1,
+      },
+    });
+    const { selectDueCards, countDue } = await import("./new-card-budget");
+    const performances = await app.db.getAllPerformances();
+
+    expect(selectDueCards(cards, performances, "2026-10-15").map(question)).toEqual(["Live?"]);
+    expect(countDue(cards, performances, "2026-10-15")).toMatchObject({ reviewDue: 0, newCount: 1 });
+  });
+});
+
+describe("a collection the app only reads", () => {
+  let mine: FakeRepo;
+  let theirs: FakeRepo;
+  const repos: RepoConfig[] = [
+    { owner: "me", repo: "cards", branch: "main" },
+    { owner: "someone", repo: "shared", branch: "main", readOnly: true },
+  ];
+
+  beforeEach(() => {
+    localStorage.clear();
+    Device.active = null;
+    mine = new FakeRepo();
+    theirs = new FakeRepo();
+    mine.set("a.md", DECK, "sha-a");
+    theirs.set("b.md", "ID: gamma\nQ: Gamma?\nA: g\n", "sha-b");
+    installMany({ "me/cards": mine, "someone/shared": theirs });
+  });
+
+  it("fetches its cards", async () => {
+    const app = await new Device("phone1", repos).use();
+
+    await app.sync.syncEverything();
+
+    const fromRepos = (await app.sync.loadCachedCards()).map((c) => c.repo).sort();
+    expect(fromRepos).toEqual(["me/cards", "me/cards", "someone/shared"]);
+  });
+
+  it("logs your reviews of its cards in your own data branch, under its name", async () => {
+    const app = await new Device("phone1", repos).use();
+    await app.sync.syncEverything();
+    await drill(app, [["Gamma?", Grade.Good], ["Alpha?", Grade.Good]]);
+
+    await app.sync.syncEverything();
+
+    const events = lines(reviewFiles(mine)[0][1]);
+    expect(events.map((e) => e.card).sort()).toEqual(["alpha", "someone/shared/gamma"]);
+    // Their repository is read for cards and nothing else: not written, and
+    // not even asked about a data branch.
+    expect(theirs.dataRequests).toEqual([]);
+    expect(theirs.fileWrites).toEqual([]);
+    expect(theirs.writeAttempts).toEqual([]);
+  });
+
+  it("carries that scheduling to your other devices", async () => {
+    let app = await new Device("phone1", repos).use();
+    await app.sync.syncEverything();
+    await drill(app, [["Gamma?", Grade.Easy]]);
+    await app.sync.syncEverything();
+    const there = await states(app);
+
+    app = await new Device("laptop1", repos).use();
+    await app.sync.syncEverything();
+
+    expect(await states(app)).toEqual(there);
+    expect(Object.keys(there)).toEqual(["someone/shared/gamma"]);
+  });
+});
+
+/**
+ * A collection from before 1.0: no data branch, its scheduling in
+ * `hashcards-state.json` on `main`, its history in v1 files beside it, and
+ * cards without IDs. Until `hc migrate` has been run on it, it keeps working
+ * exactly as it did, in both directions.
+ */
+describe("a collection that has not been migrated", () => {
+  let repo: FakeRepo;
+  let hash: string;
+  const V1 = card("one");
+
+  const entry = (at: string, reps: number) => ({
+    lastReviewedAt: at,
     stability: 3,
     difficulty: 5,
     intervalRaw: 3,
     intervalDays: 3,
-    dueDate,
-    reviewCount: 2,
+    dueDate: "2026-02-01",
+    reviewCount: reps,
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     localStorage.clear();
+    Device.active = null;
     repo = new FakeRepo();
+    repo.set("a.md", V1, "sha-a");
+    hash = await hashOf(V1);
+    repo.setState({ version: 1, cards: { [hash]: entry("2026-01-01T09:00:00.000Z", 4) } });
+    // Another device reviewed it since the state file was last written.
+    repo.set(
+      "hashcards-reviews/2026-01.tablet.jsonl",
+      JSON.stringify({ card: hash, at: "2026-01-05T09:00:00.000Z", grade: 1, s: 1, d: 7 }) + "\n",
+      "sha-log"
+    );
     install(repo);
   });
 
-  it("pushes review state to a repo the cards came from", async () => {
-    repo.set("a.md", card("one"), "sha-a");
-    const { syncAll } = await freshSync();
-    const { importState } = await import("./db");
-    const mine = await hashOf(card("one"));
-    await importState({ [mine]: performance("2026-02-01") });
+  it("reads the state file and the v1 logs into the schedule", async () => {
+    const app = await new Device("phone1").use();
 
-    expect(await syncAll(CONFIG)).toBe(true);
+    expect(await app.sync.syncAll(CONFIG)).toBe(true);
 
+    const state = (await app.db.getAllPerformances()).get(`someone/cards/h:${hash.slice(0, 16)}`)!;
+    // The state file's four reviews, then the tablet's lapse on top.
+    expect(state.reviewCount).toBe(5);
+    expect(state.lastReviewedAt).toBe("2026-01-05T09:00:00.000Z");
+  });
+
+  it("keeps writing v1 files, and no v2 data, after a review here", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["one", Grade.Good]]);
+
+    expect(await app.sync.syncAll(CONFIG)).toBe(true);
+
+    const written = repo.stateWrites[repo.stateWrites.length - 1] as { cards: Record<string, { reviewCount: number }> };
+    expect(written.cards[hash].reviewCount).toBe(6);
+    const log = repo.fileWrites.find((w) => w.path.startsWith("hashcards-reviews/"))!;
+    expect(log.path).toMatch(/\.phone1\.jsonl$/);
+    expect(lines(log.content)[0]).toMatchObject({ card: hash, grade: 3 });
+    expect(repo.refs.size).toBe(0);
+    expect(repo.refWrites).toEqual([]);
+    expect(repo.fileWrites.map((w) => w.path)).not.toContain("hashcards.toml");
+  });
+
+  it("writes nothing when it has learned nothing new", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+
+    await app.sync.syncAll(CONFIG);
+
+    // Replay recomputes due dates (current retention, deterministic fuzz), but
+    // a card this device has nothing newer about keeps its entry verbatim.
     expect(repo.stateWrites).toHaveLength(1);
-    expect(repo.stateWrites[0]).toMatchObject({
-      cards: { [mine]: { dueDate: "2026-02-01" } },
+    expect((repo.stateWrites[0] as { cards: Record<string, unknown> }).cards[hash]).toMatchObject({
+      lastReviewedAt: "2026-01-05T09:00:00.000Z",
     });
   });
 
-  it("writes no state file into a repo that holds no cards", async () => {
-    // A repository with no card files — the app's own source repo, say.
-    const { syncAll } = await freshSync();
-    const { importState } = await import("./db");
-    await importState({ "hash-1": performance("2026-02-01") });
+  it("says what to run, without stopping anything", async () => {
+    const app = await new Device("phone1").use();
 
-    expect(await syncAll(CONFIG)).toBe(true);
+    await app.sync.syncAll(CONFIG);
 
-    // Committing here would say something untrue about that repository, and
-    // it is a commit the user never asked for.
-    expect(repo.stateWrites).toEqual([]);
+    const status = app.state.getSyncStatus();
+    expect(status.phase).toBe("idle");
+    expect(status.phase === "idle" && status.notice).toContain("hc migrate");
   });
 
-  it("does not claim state is safe after a sync that pushed nothing", async () => {
-    repo.set("a.md", card("one"), "sha-a");
-    const { adoptRepo } = await freshSync();
-    const { importState } = await import("./db");
-    const { getLastPushedAt, getLastSyncedAt } = await import("./sync-state");
-    await importState({ "hash-1": performance("2026-02-01") });
-
-    expect(await adoptRepo(CONFIG)).toBe(true);
-
-    // A pull is a sync, and the deck list may say so. But those reviews are
-    // still only on this device, and the warning that says so keys off this.
-    expect(getLastSyncedAt()).not.toBeNull();
-    expect(getLastPushedAt()).toBeNull();
-  });
-
-  it("reports a missing credential as needing sign-in, not as a retryable failure", async () => {
-    repo.set("a.md", card("one"), "sha-a");
-    const { syncAll } = await freshSync();
-    const { signOut } = await import("./auth");
-    const { getSyncStatus } = await import("./sync-state");
-    await signOut();
-
-    expect(await syncAll(CONFIG)).toBe(false);
-
-    const status = getSyncStatus();
-    expect(status.phase).toBe("error");
-    expect(status.phase === "error" && status.needsSignIn).toBe(true);
-  });
-
-  it("re-merges and pushes again when another device commits first", async () => {
-    repo.set("a.md", card("one"), "sha-a");
-    repo.setState({ version: 1, cards: { shared: performance("2026-02-01") } });
-    const { syncAll } = await freshSync();
-    const { importState, getAllPerformances } = await import("./db");
-    const mine = await hashOf(card("one"));
-    await importState({ [mine]: performance("2026-02-01") });
-
-    // The phone commits in the window between our read and our write, which is
-    // exactly what the SHA we are about to send is there to catch.
+  it("re-reads and retries when another device writes the state file first", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["one", Grade.Good]]);
+    const other = await hashOf(card("elsewhere"));
     repo.onStateRead = () => {
       repo.onStateRead = null;
       repo.state = {
-        content: btoa(
-          JSON.stringify({
-            version: 1,
-            cards: {
-              shared: performance("2026-02-01"),
-              "on-the-phone": performance("2026-04-01"),
-            },
-          })
-        ),
-        sha: "state-from-the-phone",
+        content: btoa(JSON.stringify({ version: 1, cards: { ...JSON.parse(atob(repo.state!.content)).cards, [other]: entry("2026-03-01T00:00:00.000Z", 1) } })),
+        sha: "state-from-the-tablet",
       };
     };
 
-    expect(await syncAll(CONFIG)).toBe(true);
+    expect(await app.sync.syncAll(CONFIG)).toBe(true);
 
-    // The refused push, then one built on what the phone actually left behind.
-    expect(repo.writeAttempts).toHaveLength(2);
-    expect(repo.stateWrites).toHaveLength(1);
-    expect(
-      Object.keys((repo.stateWrites[0] as { cards: object }).cards).sort()
-    ).toEqual([mine, "on-the-phone", "shared"].sort());
-    // And the phone's card is scheduled here too, not merely preserved there.
-    expect([...(await getAllPerformances()).keys()]).toContain("on-the-phone");
-  });
-
-  it("re-merges when the state file appears between the read and the write", async () => {
-    // No state file at all, so nothing to send a SHA for — and then the phone
-    // creates one. GitHub reports that as a 422 about a missing `sha`, not a
-    // 409, but it is the same lost race.
-    repo.set("a.md", card("one"), "sha-a");
-    const { syncAll } = await freshSync();
-    const { importState } = await import("./db");
-    const mine = await hashOf(card("one"));
-    await importState({ [mine]: performance("2026-02-01") });
-
-    repo.onStateRead = () => {
-      repo.onStateRead = null;
-      repo.state = {
-        content: btoa(
-          JSON.stringify({
-            version: 1,
-            cards: { "on-the-phone": performance("2026-04-01") },
-          })
-        ),
-        sha: "created-by-the-phone",
-      };
-    };
-
-    expect(await syncAll(CONFIG)).toBe(true);
-
-    expect(repo.stateWrites).toHaveLength(1);
-    expect(
-      Object.keys((repo.stateWrites[0] as { cards: object }).cards).sort()
-    ).toEqual([mine, "on-the-phone"].sort());
+    const last = repo.stateWrites[repo.stateWrites.length - 1] as { cards: object };
+    expect(Object.keys(last.cards).sort()).toEqual([hash, other].sort());
   });
 
   it("does not retry a 422 that has nothing to do with a lost race", async () => {
-    repo.set("a.md", card("one"), "sha-a");
-    const { syncAll } = await freshSync();
-    const { importState } = await import("./db");
-    await importState({ "hash-1": performance("2026-02-01") });
-
-    // 422 is GitHub's general validation status. Re-merging cannot make a
-    // branch exist, so retrying one is two more requests and the same answer.
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["one", Grade.Good]]);
     let attempts = 0;
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (init?.method === "PUT" && url.includes("hashcards-state.json")) {
         attempts++;
-        return new Response(
-          JSON.stringify({ message: "Branch cards-v2 not found" }),
-          { status: 422 }
-        );
+        return new Response(JSON.stringify({ message: "Branch cards-v2 not found" }), { status: 422 });
       }
       return repo.handler(url, init);
     }) as unknown as typeof fetch;
 
-    expect(await syncAll(CONFIG)).toBe(false);
-
+    expect(await app.sync.syncAll(CONFIG)).toBe(false);
     expect(attempts).toBe(1);
-    const { getSyncStatus } = await import("./sync-state");
-    const status = getSyncStatus();
-    expect(status.phase === "error" && status.message).toContain("Branch");
   });
 
-  it("stops re-merging a conflict that never clears", async () => {
-    repo.set("a.md", card("one"), "sha-a");
-    repo.setState({ version: 1, cards: {} });
-    const { syncAll } = await freshSync();
-    const { importState } = await import("./db");
-    const { getSyncStatus } = await import("./sync-state");
-    await importState({ [await hashOf(card("one"))]: performance("2026-02-01") });
-
-    // Something is moving the file every single time. Retrying is no longer
-    // racing one other device, and it will still be true on the next attempt.
-    let n = 0;
-    repo.onStateRead = () => {
-      repo.state = { content: btoa("{}"), sha: `moved-again-${++n}` };
-    };
-
-    expect(await syncAll(CONFIG)).toBe(false);
-
-    expect(repo.writeAttempts).toHaveLength(3);
-    expect(repo.stateWrites).toEqual([]);
-    // Reported as a failure the user can retry, not swallowed as a success.
-    const status = getSyncStatus();
-    expect(status.phase).toBe("error");
-    expect(status.phase === "error" && status.needsSignIn).toBe(false);
-  });
-
-  it("adopts a repo by pulling its scheduling, not by committing to it", async () => {
-    repo.set("a.md", card("one"), "sha-a");
-    repo.setState({
-      version: 1,
-      cards: { "from-another-device": performance("2026-03-01") },
+  it("switches to the data branch once one appears", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    // `hc migrate`, run elsewhere: the history moves to the data branch, keyed.
+    const key = `h:${hash.slice(0, 16)}`;
+    repo.commitFiles({
+      "reviews/2025-12.migrated.jsonl":
+        JSON.stringify({ v: 2, kind: "baseline", card: key, at: "2026-01-01T09:00:00.000Z", s: 3, d: 5, reps: 4 }) + "\n",
+      "reviews/2026-01.tablet.jsonl":
+        JSON.stringify({ v: 2, card: key, at: "2026-01-05T09:00:00.000Z", tz: 60, grade: 1, src: "v1" }) + "\n",
     });
-    const { adoptRepo } = await freshSync();
-    const { importState, getAllPerformances } = await import("./db");
-    await importState({ "hash-local": performance("2026-02-01") });
+    await drill(app, [["one", Grade.Good]]);
 
-    expect(await adoptRepo(CONFIG)).toBe(true);
+    await app.sync.syncAll(CONFIG);
 
-    // Cards arrive and remote scheduling is merged in...
-    expect(repo.fetchedPaths).toEqual(["a.md"]);
-    expect([...(await getAllPerformances()).keys()].sort()).toEqual([
-      "from-another-device",
-      "hash-local",
+    expect((await app.db.getAllPerformances()).get(`someone/cards/${key}`)!.reviewCount).toBe(6);
+    expect(lines(repo.branchFiles().get(reviewFiles(repo).find(([p]) => p.includes("phone1"))![0])!)).toMatchObject([
+      { card: key, grade: 3 },
     ]);
-    // ...but nothing is written back until the user has drilled cards that
-    // came out of this repo.
-    expect(repo.stateWrites).toEqual([]);
+    expect(app.state.getSyncStatus()).toEqual({ phase: "idle" });
   });
 });
 
-/**
- * `exportState` returns every performance on the device, and `fullSync` used to
- * write all of them into whichever repo was configured. Point the app at a
- * second collection and both files end up holding every hash from both — not
- * data loss, since hashes are content-derived and last-write-wins stays correct
- * per card, but each file accumulates scheduling for cards it does not have and
- * leaks that those cards exist somewhere else.
- */
-describe("two collections", () => {
-  const performance = (dueDate: string) => ({
-    type: "reviewed" as const,
-    lastReviewedAt: "2026-01-01T00:00:00.000Z",
-    stability: 3,
-    difficulty: 5,
-    intervalRaw: 3,
-    intervalDays: 3,
-    dueDate,
-    reviewCount: 2,
-  });
+describe("hashcards.toml", () => {
+  let repo: FakeRepo;
+  const TOML = `# The collection's settings
+[review]
+new_per_day = 5
+desired_retention = 0.8   # stretch it
+fuzz = false
 
-  const OTHER: GitHubConfig = { owner: "someone", repo: "other", branch: "main" };
-
-  let mine: FakeRepo;
-  let theirs: FakeRepo;
+[decks]
+exclude = ["archive/**"]
+`;
 
   beforeEach(() => {
     localStorage.clear();
-    mine = new FakeRepo();
-    theirs = new FakeRepo();
-    mine.set("a.md", card("one"), "sha-a");
-    theirs.set("b.md", card("two"), "sha-b");
-    installMany({ "someone/cards": mine, "someone/other": theirs });
+    Device.active = null;
+    repo = new FakeRepo();
+    repo.set("a.md", DECK, "sha-a");
+    repo.set("archive/old.md", "Q: Old?\nA: o\n", "sha-old");
+    repo.set("hashcards.toml", TOML, "sha-toml");
+    install(repo);
   });
 
-  const cardsIn = (writes: unknown[]) =>
-    Object.keys((writes[writes.length - 1] as { cards: object }).cards).sort();
+  it("is where the review settings and the decks come from", async () => {
+    const app = await new Device("phone1").use();
 
-  it("keeps each repo's state file to its own cards", async () => {
-    const { syncAll } = await freshSync();
-    const { importState } = await import("./db");
-    const { parseFile } = await import("./parser");
-    const [one] = await parseFile(card("one"), "a.md", "a");
-    const [two] = await parseFile(card("two"), "b.md", "b");
+    await app.sync.syncAll(CONFIG);
 
-    await importState({ [one.hash]: performance("2026-02-01") });
-    await syncAll(CONFIG);
-
-    // Point the app at a second collection and review something in it.
-    await importState({ [two.hash]: performance("2026-03-01") });
-    await syncAll(OTHER);
-
-    expect(cardsIn(mine.stateWrites)).toEqual([one.hash]);
-    expect(cardsIn(theirs.stateWrites)).toEqual([two.hash]);
+    expect(app.github.getDesiredRetention()).toBe(0.8);
+    expect(app.github.getIntervalFuzz()).toBe(false);
+    const { getNewCardsPerDay } = await import("./new-card-budget");
+    expect(getNewCardsPerDay()).toBe(5);
+    expect((await app.sync.loadCachedCards()).map((c) => c.filePath)).toEqual(["a.md", "a.md"]);
   });
 
-  it("does not write the first repo's file again just because the second synced", async () => {
-    const { syncAll } = await freshSync();
-    const { importState } = await import("./db");
-    const { parseFile } = await import("./parser");
-    const [one] = await parseFile(card("one"), "a.md", "a");
+  it("gets a changed setting written back as one commit, keeping the rest of the file", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
 
-    await importState({ [one.hash]: performance("2026-02-01") });
-    await syncAll(CONFIG);
-    const before = mine.stateWrites.length;
+    app.github.setDesiredRetention(0.85);
+    await app.sync.syncAll(CONFIG);
 
-    await syncAll(OTHER);
-
-    expect(mine.stateWrites).toHaveLength(before);
+    const writes = repo.fileWrites.filter((w) => w.path === "hashcards.toml");
+    expect(writes).toHaveLength(1);
+    expect(writes[0].content).toBe(TOML.replace("desired_retention = 0.8   # stretch it", "desired_retention = 0.85 # stretch it"));
+    // Written once, then read back like any other change.
+    await app.sync.syncAll(CONFIG);
+    expect(repo.fileWrites.filter((w) => w.path === "hashcards.toml")).toHaveLength(1);
+    expect(app.github.getDesiredRetention()).toBe(0.85);
   });
 
-  /**
-   * The half that is not optional. A card temporarily out of the repo — a file
-   * being reorganised, a rename half-done, an edit made on another device and
-   * not yet pulled — must stay in the file. Drop it and its history is gone,
-   * and it comes back as a card nobody has ever seen.
-   */
-  it("keeps scheduling for a card that has left the repo for now", async () => {
-    const { syncAll } = await freshSync();
-    const { importState } = await import("./db");
-    const { parseFile } = await import("./parser");
-    const [one] = await parseFile(card("one"), "a.md", "a");
+  it("moves every due date when retention changes", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["Alpha?", Grade.Good]]);
+    const before = (await app.db.getAllPerformances()).get("someone/cards/alpha")!.intervalDays;
 
-    await importState({ [one.hash]: performance("2026-02-01") });
-    await syncAll(CONFIG);
-    expect(cardsIn(mine.stateWrites)).toEqual([one.hash]);
+    repo.set("hashcards.toml", TOML.replace("0.8", "0.95"), "sha-toml-2");
+    repo.retag('W/"tree-2"');
+    await app.sync.syncAll(CONFIG);
 
-    // The file goes away, and another takes its place — reviewed, so the next
-    // sync genuinely has something new to write and the assertion is about
-    // what it wrote rather than about it declining to write at all.
-    mine.files.delete("a.md");
-    mine.set("c.md", card("three"), "sha-c");
-    mine.retag('W/"tree-2"');
-    const [three] = await parseFile(card("three"), "c.md", "c");
-    await importState({ [three.hash]: performance("2026-04-01") });
-    await syncAll(CONFIG);
-
-    expect(mine.stateWrites).toHaveLength(2);
-    expect(cardsIn(mine.stateWrites)).toEqual([one.hash, three.hash].sort());
-  });
-
-  /**
-   * A card written here rather than fetched. Quick capture puts it straight in
-   * the deck store, and the push that follows a drill is `syncStateOnly` —
-   * which never lists the tree, so nothing has recorded where the card came
-   * from. Scoping on the recorded origin alone would drop its scheduling out of
-   * the file until some later full sync happened to run.
-   */
-  it("pushes scheduling for a card this device wrote, before any card sync", async () => {
-    const { syncAll, syncStateOnly } = await freshSync();
-    const { importState, updateDeckFiles } = await import("./db");
-    const { parseFile } = await import("./parser");
-    const [one] = await parseFile(card("one"), "a.md", "a");
-
-    await importState({ [one.hash]: performance("2026-02-01") });
-    await syncAll(CONFIG);
-
-    // Written locally and committed, exactly as `createCard` leaves things.
-    const [written] = await parseFile(card("written here"), "z.md", "z");
-    mine.set("z.md", card("written here"), "sha-z");
-    await updateDeckFiles(
-      [
-        {
-          repo: "someone/cards",
-          path: "z.md",
-          sha: "sha-z",
-          cards: [{ ...written, repo: "someone/cards" }],
-        },
-      ],
-      []
-    );
-    const { loadCards } = await import("./sync");
-    await loadCards();
-    await importState({ [written.hash]: performance("2026-05-01") });
-
-    await syncStateOnly(CONFIG);
-
-    expect(cardsIn(mine.stateWrites)).toEqual([one.hash, written.hash].sort());
-  });
-
-  it("does not carry an orphan into a collection it was never in", async () => {
-    const { syncAll } = await freshSync();
-    const { importState } = await import("./db");
-    const { parseFile } = await import("./parser");
-    const [one] = await parseFile(card("one"), "a.md", "a");
-    const [two] = await parseFile(card("two"), "b.md", "b");
-
-    await importState({ [one.hash]: performance("2026-02-01") });
-    await syncAll(CONFIG);
-
-    mine.files.delete("a.md");
-    mine.retag('W/"tree-2"');
-    await importState({ [two.hash]: performance("2026-03-01") });
-    await syncAll(OTHER);
-
-    expect(cardsIn(theirs.stateWrites)).toEqual([two.hash]);
+    expect((await app.db.getAllPerformances()).get("someone/cards/alpha")!.intervalDays).toBeLessThan(before);
   });
 });
 
 /**
- * Everything already on a device predates the question "which collection is
- * this card in", so there is no answer for it in the data — but there is one
- * outside it: until now the app could hold only one repository at a time, so
- * whatever is configured is where it all came from. Without this seeding, the
- * first sync after the upgrade writes a state file with every temporarily
- * absent card missing, and each of them comes back as a card nobody has seen.
+ * An install from before card keys: performances and reviews keyed by content
+ * hash, cards cached without IDs or keys. Opening the database carries all of
+ * it across once.
  */
-describe("scheduling that predates the origins store", () => {
-  let repo: FakeRepo;
-
-  const performance = (dueDate: string) => ({
-    type: "reviewed" as const,
-    lastReviewedAt: "2026-01-01T00:00:00.000Z",
-    stability: 3,
-    difficulty: 5,
-    intervalRaw: 3,
-    intervalDays: 3,
-    dueDate,
-    reviewCount: 2,
-  });
-
-  /**
-   * A database as the previous version left it: the old stores, real
-   * scheduling in them, and no `origins`. Opening it through `db.ts` is what
-   * runs the upgrade, so this has to be closed before the app touches it.
-   */
-  async function databaseFromBefore(hashes: string[]): Promise<void> {
+describe("a database from before keys", () => {
+  async function databaseAtV7(hash: string, oldCard: unknown, month: string, line: string) {
     globalThis.indexedDB = new IDBFactory();
     vi.resetModules();
     const { openDB } = await import("idb");
-    const old = await openDB("hashcards", 4, {
+    const old = await openDB("hashcards", 7, {
       upgrade(db) {
         db.createObjectStore("performances", { keyPath: "hash" });
         db.createObjectStore("reviews", { autoIncrement: true });
         db.createObjectStore("session");
-        db.createObjectStore("decks", { keyPath: "path" });
         db.createObjectStore("meta");
         db.createObjectStore("credentials");
+        db.createObjectStore("origins");
+        db.createObjectStore("deckFiles", { keyPath: ["repo", "path"] });
+        db.createObjectStore("media", { keyPath: ["repo", "path"] });
       },
     });
-    const tx = old.transaction("performances", "readwrite");
-    for (const hash of hashes) {
-      tx.store.put({ hash, ...performance("2026-02-01") });
-    }
-    await tx.done;
+    await old.put("deckFiles", { repo: "someone/cards", path: "a.md", sha: "sha-a", cards: [oldCard] });
+    await old.put("performances", {
+      hash,
+      lastReviewedAt: "2026-09-02T09:00:00.000Z",
+      stability: 3,
+      difficulty: 5,
+      intervalRaw: 3,
+      intervalDays: 3,
+      dueDate: "2026-09-05",
+      reviewCount: 2,
+    });
+    await old.add("reviews", {
+      cardHash: hash,
+      reviewedAt: "2026-09-02T09:00:00.000Z",
+      grade: 3,
+      stability: 3,
+      difficulty: 5,
+      intervalRaw: 3,
+      intervalDays: 3,
+      dueDate: "2026-09-05",
+    });
+    await old.put("meta", line + "\n", `review_log:someone/cards:${month}`);
+    await old.put("meta", 'W/"t"', "tree_etag:someone/cards");
+    await old.put("session", { queue: [hash], completed: [], gradedNew: [], totalCards: 1, startedAt: "x" }, "current");
     old.close();
   }
 
-  beforeEach(() => {
+  it("moves hashes onto keys, once", async () => {
     localStorage.clear();
-    repo = new FakeRepo();
-    repo.set("a.md", card("one"), "sha-a");
-    install(repo);
-  });
+    localStorage.setItem("repos", JSON.stringify([CONFIG]));
+    const hash = await hashOf(card("one"));
+    const key = `someone/cards/h:${hash.slice(0, 16)}`;
+    const oldCard = {
+      deckName: "a",
+      repo: "someone/cards",
+      filePath: "a.md",
+      range: [1, 2],
+      content: { type: "basic", question: "one", answer: "because" },
+      hash,
+      familyHash: null,
+    };
+    const { logLine, v1MonthOf } = await import("./v1-log");
+    const review = { cardHash: hash, reviewedAt: "2026-09-02T09:00:00.000Z", grade: 3, stability: 3, difficulty: 5 } as Review;
+    await databaseAtV7(hash, oldCard, v1MonthOf(review), logLine(review));
 
-  it("claims an orphan for the repo that was configured when it arrived", async () => {
-    // The upgrade reads the configured repo out of localStorage, so it has to
-    // be there before the database is opened.
-    localStorage.setItem("github_owner", "someone");
-    localStorage.setItem("github_repo", "cards");
-    await databaseFromBefore(["from-before"]);
+    const db = await import("./db");
 
-    const { saveCredential } = await import("./auth");
-    await saveCredential({ kind: "pat", token: "token" });
-    const { syncAll } = await import("./sync");
-    await syncAll(CONFIG);
-
-    const written = repo.stateWrites[0] as { cards: Record<string, unknown> };
-    expect(Object.keys(written.cards)).toContain("from-before");
-  });
-
-  it("guesses nothing when there is no repo configured to guess from", async () => {
-    await databaseFromBefore(["from-before"]);
-
-    const { getAllOrigins } = await import("./db");
-
-    expect([...(await getAllOrigins()).keys()]).toEqual([]);
-  });
-
-  /**
-   * The seeding runs on every open, not only on the upgrade — there is no
-   * "did I already do this" flag other than the store itself. So the guard is
-   * what stops the second launch, with a different repo configured, from
-   * re-claiming every card in the database for whatever is selected now.
-   */
-  it("leaves real answers alone on the launches after the first", async () => {
-    localStorage.setItem("github_owner", "someone");
-    localStorage.setItem("github_repo", "cards");
-    await databaseFromBefore(["from-before"]);
-
-    const first = await import("./db");
-    await first.recordOrigins(["from-before"], "someone/elsewhere");
-
-    // A second launch: same database, fresh modules, a different repo picked.
-    vi.resetModules();
-    localStorage.setItem("github_repo", "cards-two");
-    const second = await import("./db");
-
-    expect((await second.getAllOrigins()).get("from-before")).toBe(
-      "someone/elsewhere"
-    );
-  });
-});
-
-/**
- * A subscription is someone else's repository. Its cards are read and drilled
- * here; nothing is ever committed back to it, and the scheduling for its cards
- * lives in your own collection's state file — which is the only place it can.
- */
-describe("a collection the app only reads", () => {
-  const performance = (dueDate: string) => ({
-    type: "reviewed" as const,
-    lastReviewedAt: "2026-01-01T00:00:00.000Z",
-    stability: 3,
-    difficulty: 5,
-    intervalRaw: 3,
-    intervalDays: 3,
-    dueDate,
-    reviewCount: 2,
-  });
-
-  let mine: FakeRepo;
-  let theirs: FakeRepo;
-
-  beforeEach(() => {
-    localStorage.clear();
-    mine = new FakeRepo();
-    theirs = new FakeRepo();
-    mine.set("a.md", card("one"), "sha-a");
-    theirs.set("b.md", card("two"), "sha-b");
-    installMany({ "me/cards": mine, "someone/shared": theirs });
-    localStorage.setItem(
-      "repos",
-      JSON.stringify([
-        { owner: "me", repo: "cards", branch: "main" },
-        { owner: "someone", repo: "shared", branch: "main", readOnly: true },
-      ])
-    );
-  });
-
-  it("fetches its cards", async () => {
-    const { syncEverything, loadCachedCards } = await freshSync();
-
-    await syncEverything();
-
-    const repos = (await loadCachedCards()).map((c) => c.repo).sort();
-    expect(repos).toEqual(["me/cards", "someone/shared"]);
-  });
-
-  it("never commits to it, however much scheduling its cards have", async () => {
-    const { syncEverything } = await freshSync();
-    const { importState } = await import("./db");
-    const { parseFile } = await import("./parser");
-    const [one] = await parseFile(card("one"), "a.md", "a");
-    const [two] = await parseFile(card("two"), "b.md", "b");
-
-    await importState({
-      [one.hash]: performance("2026-02-01"),
-      [two.hash]: performance("2026-03-01"),
-    });
-    await syncEverything();
-
-    expect(theirs.writeAttempts).toEqual([]);
-    expect(mine.stateWrites).toHaveLength(1);
-  });
-
-  /**
-   * And the scheduling for a subscribed card does not silently fall into your
-   * own file either — it belongs to their collection, which has nowhere to put
-   * it, so it stays on this device. Two devices of yours will each build it up
-   * separately; that is the honest cost of not owning the repo.
-   */
-  it("keeps a subscribed card's scheduling out of your own state file", async () => {
-    const { syncEverything } = await freshSync();
-    const { importState } = await import("./db");
-    const { parseFile } = await import("./parser");
-    const [one] = await parseFile(card("one"), "a.md", "a");
-    const [two] = await parseFile(card("two"), "b.md", "b");
-
-    await importState({
-      [one.hash]: performance("2026-02-01"),
-      [two.hash]: performance("2026-03-01"),
-    });
-    await syncEverything();
-
-    const written = mine.stateWrites[0] as { cards: Record<string, unknown> };
-    expect(Object.keys(written.cards)).toEqual([one.hash]);
+    expect([...(await db.getAllPerformances()).keys()]).toEqual([key]);
+    const [migrated] = await db.getAllReviews();
+    expect(migrated).toMatchObject({ key, log: "someone/cards", v1Pushed: true });
+    expect(typeof migrated.tz).toBe("number");
+    expect(await db.getLocalBaselines()).toMatchObject([
+      { log: "someone/cards", event: { kind: "baseline", card: `h:${hash.slice(0, 16)}`, reps: 2, src: "v1" } },
+    ]);
+    expect((await db.loadSession())!.queue).toEqual([key]);
+    // Cached without keys: given them now, and fetched again on the next sync.
+    const [file] = await db.getAllDeckFiles();
+    expect(file.sha).toBe("");
+    expect(file.cards[0]).toMatchObject({ key: `h:${hash.slice(0, 16)}`, id: null, tags: [], status: "active" });
+    expect(await db.getMeta("tree_etag:someone/cards")).toBeUndefined();
   });
 });
 
@@ -1139,154 +1434,3 @@ describe("a deck store from before collections", () => {
   });
 });
 
-/**
- * The state file says where each card is; fitting FSRS to a person needs where
- * each card has been. That history used to stay in the IndexedDB of whichever
- * device recorded it.
- */
-describe("review history", () => {
-  let repo: FakeRepo;
-
-  beforeEach(() => {
-    localStorage.clear();
-    localStorage.setItem("device_id", "phone1");
-    repo = new FakeRepo();
-    install(repo);
-  });
-
-  /** Record reviews as a drill would have left them in the local log. */
-  async function seedReviews(reviews: { hash: string; at: string; grade?: number }[]) {
-    await new Promise<void>((resolve, reject) => {
-      const open = indexedDB.open("hashcards");
-      open.onsuccess = () => {
-        const tx = open.result.transaction("reviews", "readwrite");
-        for (const r of reviews) {
-          tx.objectStore("reviews").add({
-            cardHash: r.hash,
-            reviewedAt: r.at,
-            grade: r.grade ?? 3,
-            stability: 2.3,
-            difficulty: 5,
-            intervalRaw: 2.3,
-            intervalDays: 2,
-            dueDate: "2026-01-01",
-          });
-        }
-        tx.oncomplete = () => {
-          open.result.close();
-          resolve();
-        };
-        tx.onerror = () => reject(tx.error);
-      };
-    });
-  }
-
-  it("writes this device's reviews into one file per month, oldest first", async () => {
-    repo.set("a.md", card("one"), "sha-a");
-    const hash = await hashOf(card("one"));
-    const { syncAll } = await freshSync();
-    await syncAll({ ...CONFIG });
-    await seedReviews([
-      { hash, at: "2026-10-02T09:00:00.000Z" },
-      { hash, at: "2026-09-20T09:00:00.000Z", grade: 1 },
-      { hash, at: "2026-10-01T09:00:00.000Z" },
-    ]);
-
-    await syncAll({ ...CONFIG });
-
-    const writes = Object.fromEntries(repo.fileWrites.map((w) => [w.path, w.content]));
-    expect(Object.keys(writes).sort()).toEqual([
-      "hashcards-reviews/2026-09.phone1.jsonl",
-      "hashcards-reviews/2026-10.phone1.jsonl",
-    ]);
-    const october = writes["hashcards-reviews/2026-10.phone1.jsonl"]
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(october.map((r) => r.at)).toEqual([
-      "2026-10-01T09:00:00.000Z",
-      "2026-10-02T09:00:00.000Z",
-    ]);
-    expect(october[0]).toMatchObject({ card: hash, grade: 3 });
-  });
-
-  it("asks nothing of GitHub when no review is new", async () => {
-    repo.set("a.md", card("one"), "sha-a");
-    const hash = await hashOf(card("one"));
-    const { syncAll } = await freshSync();
-    await syncAll({ ...CONFIG });
-    await seedReviews([{ hash, at: "2026-10-02T09:00:00.000Z" }]);
-    await syncAll({ ...CONFIG });
-    repo.logRequests = 0;
-
-    await syncAll({ ...CONFIG });
-
-    expect(repo.logRequests).toBe(0);
-  });
-
-  it("rewrites only the month that gained a review", async () => {
-    repo.set("a.md", card("one"), "sha-a");
-    const hash = await hashOf(card("one"));
-    const { syncAll } = await freshSync();
-    await syncAll({ ...CONFIG });
-    await seedReviews([
-      { hash, at: "2026-09-20T09:00:00.000Z" },
-      { hash, at: "2026-10-02T09:00:00.000Z" },
-    ]);
-    await syncAll({ ...CONFIG });
-    repo.fileWrites = [];
-
-    await seedReviews([{ hash, at: "2026-10-05T09:00:00.000Z" }]);
-    await syncAll({ ...CONFIG });
-
-    expect(repo.fileWrites.map((w) => w.path)).toEqual([
-      "hashcards-reviews/2026-10.phone1.jsonl",
-    ]);
-    expect(repo.fileWrites[0].content.trim().split("\n")).toHaveLength(2);
-  });
-
-  it("files a month by the local day, not the UTC one", async () => {
-    // 23:30 UTC on 31 October is already November in Berlin.
-    process.env.TZ = "Europe/Berlin";
-    repo.set("a.md", card("one"), "sha-a");
-    const hash = await hashOf(card("one"));
-    const { syncAll } = await freshSync();
-    await syncAll({ ...CONFIG });
-    await seedReviews([{ hash, at: "2026-10-31T23:30:00.000Z" }]);
-
-    await syncAll({ ...CONFIG });
-
-    expect(repo.fileWrites.map((w) => w.path)).toEqual([
-      "hashcards-reviews/2026-11.phone1.jsonl",
-    ]);
-  });
-
-  it("keeps reviews of a subscribed collection's cards on this device", async () => {
-    const mine = new FakeRepo();
-    const theirs = new FakeRepo();
-    mine.set("a.md", card("one"), "sha-a");
-    theirs.set("b.md", card("two"), "sha-b");
-    installMany({ "me/cards": mine, "someone/shared": theirs });
-    localStorage.setItem(
-      "repos",
-      JSON.stringify([
-        { owner: "me", repo: "cards", branch: "main" },
-        { owner: "someone", repo: "shared", branch: "main", readOnly: true },
-      ])
-    );
-    const { syncEverything } = await freshSync();
-    await syncEverything();
-    await seedReviews([
-      { hash: await hashOf(card("one")), at: "2026-10-02T09:00:00.000Z" },
-      { hash: await hashOf(card("two")), at: "2026-10-02T09:05:00.000Z" },
-    ]);
-
-    await syncEverything();
-
-    expect(theirs.fileWrites).toEqual([]);
-    expect(theirs.logRequests).toBe(0);
-    // And theirs does not leak into yours.
-    expect(mine.fileWrites).toHaveLength(1);
-    expect(mine.fileWrites[0].content.trim().split("\n")).toHaveLength(1);
-  });
-});

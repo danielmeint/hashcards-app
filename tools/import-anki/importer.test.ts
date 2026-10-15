@@ -7,6 +7,7 @@ import { parseFile } from "../../src/parser";
 import { assertNotLiveCollection, openCollectionCopy, readCollection } from "./collection.ts";
 import { loadAnkictlConfig, loadDeckFiles, parseDeckFile } from "./decks.ts";
 import { buildImport, type ImportResult } from "./importer.ts";
+import { pb } from "./protobuf-writer.ts";
 
 /**
  * A tiny collection with Anki's real quirks: WAL mode, and `COLLATE unicase`
@@ -23,7 +24,8 @@ function makeCollection(path: string): void {
     CREATE TABLE notetypes (id integer NOT NULL PRIMARY KEY, name text NOT NULL COLLATE nocase);
     CREATE TABLE fields (ntid integer NOT NULL, ord integer NOT NULL, name text NOT NULL COLLATE nocase,
       PRIMARY KEY (ntid, ord)) WITHOUT ROWID;
-    CREATE TABLE decks (id integer PRIMARY KEY NOT NULL, name text NOT NULL COLLATE nocase);
+    CREATE TABLE decks (id integer PRIMARY KEY NOT NULL, name text NOT NULL COLLATE nocase, kind blob NOT NULL);
+    CREATE TABLE deck_config (id integer PRIMARY KEY NOT NULL, name text NOT NULL COLLATE nocase, config blob NOT NULL);
     CREATE TABLE notes (id integer PRIMARY KEY, mid integer NOT NULL, tags text NOT NULL, flds text NOT NULL);
     CREATE TABLE cards (id integer PRIMARY KEY, nid integer NOT NULL, did integer NOT NULL, ord integer NOT NULL,
       type integer NOT NULL, queue integer NOT NULL, due integer NOT NULL, ivl integer NOT NULL,
@@ -41,8 +43,16 @@ function makeCollection(path: string): void {
     INSERT INTO notetypes VALUES (10, 'Flashcards-as-Code Basic'), (20, 'Flashcards-as-Code Cloze'), (30, 'Basic');
     INSERT INTO fields VALUES (10, 0, 'Front'), (10, 1, 'Back'), (10, 2, 'Key'),
       (20, 0, 'Text'), (20, 1, 'Extra'), (20, 2, 'key'), (30, 0, 'Front'), (30, 1, 'Back');
-    INSERT INTO decks VALUES (1, 'Default'), (100, 'Cka' || char(31) || 'Storage');
   `);
+  // Default: never optimised. CKA: FSRS-6 parameters, and the Storage deck
+  // overrides its retention. A filtered deck has no preset.
+  const deck = db.prepare("INSERT INTO decks VALUES (?, ?, ?)");
+  deck.run(1, "Default", pb.blob(pb.bytes(1, pb.uint(1, 1))));
+  deck.run(100, "Cka\x1fStorage", pb.blob(pb.bytes(1, [...pb.uint(1, 2), ...pb.float(10, 0.85)])));
+  deck.run(200, "Cram", pb.blob(pb.bytes(2, pb.uint(1, 1))));
+  const preset = db.prepare("INSERT INTO deck_config VALUES (?, ?, ?)");
+  preset.run(1, "Default", pb.blob(pb.packedFloats(1, [1, 10]), pb.float(37, 0.9)));
+  preset.run(2, "CKA", pb.blob(pb.packedFloats(6, FSRS6), pb.float(37, 0.92)));
   const sep = "\x1f";
   const note = db.prepare("INSERT INTO notes VALUES (?, ?, ?, ?)");
   note.run(1, 10, " storage leech ", ["Q", "A", "pv-reclaim"].join(sep));
@@ -78,6 +88,11 @@ function makeCollection(path: string): void {
   db.exec("UPDATE sqlite_master SET sql = replace(sql, 'COLLATE nocase', 'COLLATE unicase')");
   db.close();
 }
+
+const FSRS6 = [
+  0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666, 0.796, 1.4835,
+  0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542,
+];
 
 const DECK = `deck: Cka::Storage
 notetype: Flashcards-as-Code Basic
@@ -251,6 +266,15 @@ A: A
         decay: 0.154,
         lastReview: "2026-09-30T11:40:21.000Z",
       },
+    });
+    expect(ref.deckConfigs).toEqual({
+      "1": { name: "Default", fsrs: { version: null, params: [], desiredRetention: 0.9 } },
+      "2": { name: "CKA", fsrs: { version: 6, params: FSRS6, desiredRetention: 0.92 } },
+    });
+    expect(ref.decks).toEqual({
+      "Cka::Storage": { config: 2, desiredRetention: 0.85 },
+      Cram: { config: null },
+      Default: { config: 1 },
     });
     expect(ref.cards["pv-binding:3"]).toMatchObject({ state: "new", due: null, newPosition: 7, fsrs: null });
     expect(ref.cards["pv-binding:1"]).toMatchObject({ suspended: true });

@@ -17,6 +17,7 @@ import {
   deckToPath,
   toTag,
 } from "./convert.ts";
+import type { FsrsSettings } from "./deck-config.ts";
 import type { ReviewEvent, SkipReason } from "./revlog.ts";
 import { ankiDue, checkScheduler, classifyRevlog, localMonth, toEvent } from "./revlog.ts";
 
@@ -348,10 +349,13 @@ export function buildImport(
       {
         about:
           "Anki's scheduling state per hashcards card key at import time, for M6's parity check. " +
-          "Due dates are local dates in `timeZone`, with Anki's day rollover applied.",
+          "Due dates are local dates in `timeZone`, with Anki's day rollover applied. " +
+          "`deckConfigs` holds each options preset's FSRS parameters (version null and no params: " +
+          "never optimised, so Anki's built-in defaults for its FSRS version), `decks` which preset each deck uses.",
         timeZone: opts.timeZone,
         rolloverHour: col.rollover,
         fsrsEnabled: col.fsrs,
+        ...fsrsPresets(col),
         cards: reference,
       },
       null,
@@ -373,6 +377,36 @@ export function buildImport(
     warnings,
   };
   return { files, summary };
+}
+
+/**
+ * The FSRS settings each card was scheduled with: every options preset's
+ * parameters, and which preset each deck uses. Replay needs these to
+ * reproduce Anki's due dates; the per-card `fsrs.desiredRetention` alone does
+ * not say which parameters were in force.
+ */
+function fsrsPresets(col: CollectionData): {
+  deckConfigs: Record<string, { name: string; fsrs: FsrsSettings }>;
+  decks: Record<string, { config: number | null; desiredRetention?: number }>;
+} {
+  const deckConfigs: Record<string, { name: string; fsrs: FsrsSettings }> = {};
+  for (const [id, config] of [...col.deckConfigs].sort(([a], [b]) => a - b)) {
+    deckConfigs[String(id)] = config;
+  }
+  const decks: Record<string, { config: number | null; desiredRetention?: number }> = {};
+  for (const [id, name] of [...col.decks].sort(([, a], [, b]) => a.localeCompare(b))) {
+    const kind = col.deckKinds.get(id);
+    decks[name] =
+      kind?.kind === "normal"
+        ? {
+            config: kind.configId,
+            // A deck can override its preset's retention (Anki 25.x).
+            ...(kind.desiredRetention !== null ? { desiredRetention: kind.desiredRetention } : {}),
+          }
+        : // Filtered: its cards schedule by their home deck's preset.
+          { config: null };
+  }
+  return { deckConfigs, decks };
 }
 
 const STATES = ["new", "learning", "review", "relearning"] as const;

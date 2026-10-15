@@ -94,6 +94,25 @@ relearning), suspended and buried flags, interval, reps and lapses, and the
 **due date**. With FSRS on, it also has `cards.data`: stability,
 difficulty, desired retention, decay and last review time.
 
+It also has Anki's **FSRS parameters**, since replaying a card needs the
+parameters it was scheduled with:
+
+```json
+"deckConfigs": { "1": { "name": "Default", "fsrs": { "version": 6, "params": [0.212, …], "desiredRetention": 0.9 } } },
+"decks": { "Cka::Storage": { "config": 1 }, "Cram": { "config": null } }
+```
+
+- `deckConfigs` is every deck options preset, decoded from the protobuf in
+  `deck_config.config` (`protobuf.ts`, `deck-config.ts`). `version` is the
+  newest of `fsrs_params_6`, `_5`, `_4` that has parameters, which is the one
+  Anki uses. `version: null` with no `params` means the preset was never
+  optimised, so Anki schedules with the built-in defaults of its FSRS version,
+  which the collection does not record. Floats are written as the shortest
+  decimal of the stored float32 (`0.9`, not `0.8999999761581421`).
+- `decks` is each deck's preset, from `decks.kind`, plus `desiredRetention`
+  where the deck overrides its preset's. Filtered decks have `config: null`;
+  their cards schedule by their home deck's.
+
 How `due` is read depends on the queue:
 
 - **Review and interday-learning cards** store a day number, counted from
@@ -170,7 +189,8 @@ the collation swap cannot change a result.
 
 ## Folding into `hc import anki` (M5)
 
-- `convert.ts`, `revlog.ts`, `decks.ts`, `collection.ts` and `importer.ts`
+- `convert.ts`, `revlog.ts`, `decks.ts`, `collection.ts`, `protobuf.ts`,
+  `deck-config.ts` and `importer.ts`
   move into `src/core/import/anki/` (or `cli/`) unchanged. They are
   platform-neutral apart from `node:sqlite` and `node:fs` in `collection.ts`
   and `decks.ts`, which are CLI-only anyway.
@@ -191,13 +211,17 @@ the collation swap cannot change a result.
 npx vitest run tools/import-anki
 ```
 
-There are three test files:
+There are five test files:
 
 - `convert.test.ts`: cloze conversion, checked against the app's own parser;
   IDs and slugs; tags, checked against the parser's normalisation; deck paths and names; and the Markdown dialect, checked
   against marked.
 - `revlog.test.ts`: the type and ease mapping, the time cap, `tz` across both
   2026 DST switches, local months, and Anki due dates.
+- `protobuf.test.ts` and `deck-config.test.ts`: the wire-format reader and
+  the FSRS preset and deck-kind decoders, on synthetic blobs built with
+  `protobuf-writer.ts`.
 - `importer.test.ts`: the whole pipeline over a synthetic collection built
   with `node:sqlite`. The collection is in WAL mode with a `unicase` schema,
-  and has one revlog row for every skip reason. The generated deck file is parsed with `src/parser.ts`.
+  and has one revlog row for every skip reason, and protobuf deck and preset
+  blobs. The generated deck file is parsed with `src/parser.ts`.

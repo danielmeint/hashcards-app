@@ -85,7 +85,7 @@
   "additionalProperties": false,
   "$defs": {
     "side": {
-      "description": "Card text. Not blank, and no line after the first may start with Q:, A:, C: or Extra:, or be a --- separator: those would end the section early.",
+      "description": "Card text. Not blank, and no line after the first may start with Q:, A:, C: or Extra:, or be a --- separator: those would end the card early, or start its Extra section.",
       "type": "string",
       "allOf": [
         { "pattern": "\\S" },

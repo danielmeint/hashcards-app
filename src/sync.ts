@@ -41,6 +41,9 @@ import {
 import { CONFLICT_RETRIES, migrationHint, pullV1, pushV1, v1Files } from "./compat";
 import { pullDataBranch, pushDataBranch } from "./data-branch";
 import { refreshStates } from "./review-state";
+import { settings } from "./settings";
+import { applyPending, pendingOps } from "./inbox-queue";
+import { conflictNotice, runInboxFlush } from "./inbox-commit";
 
 let cachedCards: Card[] | null = null;
 
@@ -114,6 +117,25 @@ function start(config: RepoConfig, scope: SyncScope): Promise<boolean> {
   return inFlight;
 }
 
+/**
+ * Write the collection settings changed on the Settings screen into
+ * `hashcards.toml` now, rather than on the next sync. Called on leaving
+ * Settings. Under the same rule as a sync's push: only to your own
+ * collection, and only once it has given you cards. A failure is not
+ * reported: the change is still marked owed, and the next sync writes it.
+ */
+export async function pushSettings(): Promise<void> {
+  const config = getConfig();
+  if (!config || config.readOnly || !navigator.onLine) return;
+  if (settings.collectionDirty.get().length === 0) return;
+  if (!(await loadCachedCards()).some((c) => c.repo === repoKey(config))) return;
+  try {
+    await exclusive(() => pushCollectionSettings(config));
+  } catch (e) {
+    console.warn("Could not save settings to hashcards.toml; the next sync will:", e);
+  }
+}
+
 /** The chain every repository operation hangs off, so no two overlap. */
 let queue: Promise<unknown> = Promise.resolve();
 
@@ -160,6 +182,15 @@ async function runSync(
   setSyncStatus({ phase: "syncing", detail: null });
   try {
     const repos = scope.all ?? [config];
+    const notices: string[] = [];
+
+    // Inbox decisions made offline, or left behind by a closed app, go first:
+    // they are the user's own, and the listing below then finds them landed.
+    if (scope.push) {
+      const notice = await flushInboxQuietly(repos.filter((r) => !r.readOnly), report);
+      if (notice) notices.push(notice);
+    }
+
     if (scope.cards) {
       for (const repo of repos) await syncCards(repo, report);
     }
@@ -174,7 +205,6 @@ async function runSync(
     // `inStep` is the conjunction: one collection declining to push is still
     // reviews that have not left the device, and the deck list has to say so.
     let inStep = true;
-    const notices: string[] = [];
     for (const repo of repos) {
       if (repo.readOnly) continue;
       const result = await syncReviews(repo, scope.push, report);
@@ -199,6 +229,27 @@ async function runSync(
       needsSignIn: e instanceof AuthError,
     });
     return false;
+  }
+}
+
+/**
+ * Commit the Inbox's queue as part of a sync. A failure here is not the
+ * sync's: the queue stays, the reviews still go, and the notice says why the
+ * drafts did not. Only a refused credential stops everything, as it would
+ * anyway one request later.
+ */
+async function flushInboxQuietly(
+  repos: RepoConfig[],
+  report: (progress: SyncProgress) => void
+): Promise<string | undefined> {
+  if ((await pendingOps()).length === 0) return undefined;
+  report({ phase: "Saving Inbox" });
+  try {
+    return conflictNotice((await runInboxFlush(repos)).conflicts);
+  } catch (e) {
+    if (e instanceof AuthError) throw e;
+    console.warn("Could not commit Inbox changes:", e);
+    return `Inbox changes not saved yet: ${(e as Error).message}`;
   }
 }
 
@@ -443,7 +494,12 @@ export async function loadCards(): Promise<Card[]> {
   // collection it came from; a card carrying its own stale answer can be, and
   // was — the first migration into the keyed store stamped the file and left
   // every card inside it saying nothing.
-  cachedCards = files.flatMap((f) => inRepo(f.cards, f.repo));
+  // With the Inbox's queued decisions laid over them: a kept draft is a new
+  // card from the moment it is kept, not from the moment it is committed.
+  cachedCards = applyPending(
+    files.flatMap((f) => inRepo(f.cards, f.repo)),
+    await pendingOps()
+  );
   return cachedCards;
 }
 

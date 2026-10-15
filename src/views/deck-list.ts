@@ -24,6 +24,8 @@ import {
   onSyncStatus,
 } from "../sync-state";
 import { SyncNotice, syncNotice } from "../sync-notice";
+import { pendingOps } from "../inbox-queue";
+import { findDrafts } from "../draft-edits";
 import { icon } from "./icons";
 
 /**
@@ -79,6 +81,11 @@ type Model = {
   comingUp: { date: string; count: number }[];
   lastPushedAt: string | null;
   unsynced: number;
+  /** Draft blocks waiting in the Inbox, in collections you can write to. */
+  drafts: number;
+  /** Inbox decisions not yet committed, and when the oldest was made. */
+  pendingEdits: number;
+  oldestEditAt: string | null;
 };
 
 /**
@@ -95,7 +102,8 @@ export async function renderDeckList(
   container: HTMLElement,
   onDrill: (cards: Card[], resume?: DrillSession) => void,
   onSettings: () => void,
-  onStats: () => void
+  onStats: () => void,
+  onInbox: () => void = () => {}
 ): Promise<() => void> {
   unsubscribe?.();
   unsubscribe = null;
@@ -163,6 +171,8 @@ export async function renderDeckList(
       lastSyncedAt: getLastSyncedAt(),
       lastPushedAt: model.lastPushedAt,
       unsyncedReviews: model.unsynced,
+      pendingEdits: model.pendingEdits,
+      oldestEditAt: model.oldestEditAt,
       online: navigator.onLine,
     });
   }
@@ -276,6 +286,7 @@ export async function renderDeckList(
       ${banner(line)}
       ${model.resumable.length > 0 ? resumeBanner() : nothing}
       ${totalDue > 0 ? dueHero(totalDue) : caughtUp()}
+      ${model.drafts > 0 ? inboxRow() : nothing}
       <div class="deck-groups deck-cards">
         ${model.groups.map((group, i) => {
           // The collection's name only when it changes, and only when there is
@@ -455,6 +466,25 @@ export async function renderDeckList(
     </section>`;
   }
 
+  /**
+   * Drafts waiting for a decision. Only when there are some: an empty Inbox
+   * is not something to be reminded of on every visit.
+   */
+  function inboxRow(): TemplateResult {
+    const n = model.drafts;
+    return html`<div class="list inbox-entry">
+      <button id="inbox-btn" class="row inbox-row" @click=${onInbox}>
+        <span class="row-icon">${icon("inbox", 20)}</span>
+        <span class="row-text">
+          <span class="row-title">Inbox</span>
+          <span class="row-sub">Drafts to keep or discard</span>
+        </span>
+        <span class="pill pill-new" id="inbox-count">${`${n} draft${n === 1 ? "" : "s"}`}</span>
+        ${icon("chevron", 18)}
+      </button>
+    </div>`;
+  }
+
   function resumeBanner(): TemplateResult {
     const left = model.resumable.length;
     return html`<div class="resume-banner">
@@ -597,6 +627,11 @@ async function load(): Promise<Model> {
   const today = todayStr();
   const lastPushedAt = getLastPushedAt();
   const unsynced = (await getReviewsSince(lastPushedAt ?? "")).length;
+  const queued = await pendingOps();
+  const pending = {
+    pendingEdits: queued.length,
+    oldestEditAt: queued[0]?.at ?? null,
+  };
 
   if (cards.length === 0) {
     return {
@@ -616,6 +651,8 @@ async function load(): Promise<Model> {
       comingUp: [],
       lastPushedAt,
       unsynced,
+      drafts: 0,
+      ...pending,
     };
   }
 
@@ -635,6 +672,9 @@ async function load(): Promise<Model> {
   // can each hold an `Algebra.md`, and they are not the same deck.
   const byFile = new Map<string, Card[]>();
   for (const card of cards) {
+    // A draft is the Inbox's, not a deck's: not a card yet, so not counted in
+    // one — and a file of nothing but drafts is no deck yet at all.
+    if (card.status === "draft") continue;
     const key = `${card.repo}\u0000${card.filePath}`;
     const deckCards = byFile.get(key);
     if (deckCards) deckCards.push(card);
@@ -716,5 +756,10 @@ async function load(): Promise<Model> {
     comingUp,
     lastPushedAt,
     unsynced,
+    drafts: findDrafts(cards, (repo) => {
+      const config = getRepos().find((r) => repoKey(r) === repo);
+      return config !== undefined && !config.readOnly;
+    }).length,
+    ...pending,
   };
 }

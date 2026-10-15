@@ -89,11 +89,33 @@ function track(drag: Drag, t: number, x: number): void {
   }
 }
 
-/** What a release in this direction would do, for the drag indicator. */
-function swipeAction(
-  session: Session,
-  right: boolean
-): { label: string; positive: boolean } {
+/** What releasing a swipe would do: the stamp it shows, and which colour. */
+export type SwipeAction = { label: string; positive: boolean };
+
+/**
+ * What a swipe means on one screen. The drill and the Inbox share the gesture
+ * — the arbitration with the browser, the flick, the haptic tick — and differ
+ * only in this.
+ */
+export type SwipeHandlers = {
+  /** Whether a swipe may start now. */
+  enabled(): boolean;
+  /** What releasing towards this side would do, for the drag indicator. */
+  action(right: boolean): SwipeAction;
+  /** Release past the commit distance, or a flick, towards this side. */
+  commit(right: boolean): void;
+};
+
+/** What the swipe saw, for a click handler deciding whether a click was a tap. */
+export type SwipeState = {
+  /** A completed swipe also produces a click; that click is not a tap. */
+  ateClick(): boolean;
+  /** The pointer behind the latest press. */
+  lastPointer(): string;
+};
+
+/** What a release in this direction would do in a drill. */
+function swipeAction(session: Session, right: boolean): SwipeAction {
   if (!session.revealed) return { label: "Reveal", positive: true };
   return right
     ? { label: "Good", positive: true }
@@ -125,18 +147,15 @@ export function attachCardGestures(
   swipeHint: HTMLElement,
   session: Session
 ): void {
-  const currentCard = () =>
-    cardContainer.querySelector(".card") as HTMLElement | null;
-
-  let drag: Drag | null = null;
-  /** A completed swipe also produces a click; that click is not a tap. */
-  let swipeAteClick = false;
-  /** The pointer behind the latest press: only a finger's tap may grade. */
-  let lastPointer = "mouse";
+  const swipe = attachSwipe(cardContainer, swipeHint, {
+    enabled: () => !session.finished,
+    action: (right) => swipeAction(session, right),
+    commit: (right) => commitSwipe(session, right),
+  });
   let revealedAt = 0;
 
   cardContainer.addEventListener("click", (e) => {
-    if (swipeAteClick || session.finished) return;
+    if (swipe.ateClick() || session.finished) return;
     // Links, media controls and the like keep their own behaviour, and the
     // click that ends a text selection is someone reading, not someone
     // answering.
@@ -152,15 +171,36 @@ export function attachCardGestures(
     // anywhere on the card rather than a reach for the button row. A mouse
     // click does not grade, since on a desktop clicking is how text gets
     // selected and links followed, and the keyboard is the fast path there.
-    if (lastPointer === "mouse") return;
+    if (swipe.lastPointer() === "mouse") return;
     if (e.timeStamp - revealedAt < GRADE_AFTER_REVEAL_MS) return;
     session.grade(Grade.Good);
   });
+}
+
+/**
+ * The swipe itself: the card follows the finger, a stamp says what letting go
+ * will do, and a release far enough (or fast enough) towards a side commits
+ * it. Bound to the container rather than the card, so it survives the card
+ * being swapped.
+ */
+export function attachSwipe(
+  cardContainer: HTMLElement,
+  swipeHint: HTMLElement,
+  handlers: SwipeHandlers
+): SwipeState {
+  const currentCard = () =>
+    cardContainer.querySelector(".card") as HTMLElement | null;
+
+  let drag: Drag | null = null;
+  /** A completed swipe also produces a click; that click is not a tap. */
+  let swipeAteClick = false;
+  /** The pointer behind the latest press: only a finger's tap may grade. */
+  let lastPointer = "mouse";
 
   cardContainer.addEventListener("pointerdown", (e) => {
     lastPointer = e.pointerType;
     // Mouse drags are text selection, and desktop has the keyboard.
-    if (e.pointerType === "mouse" || session.finished) return;
+    if (e.pointerType === "mouse" || !handlers.enabled()) return;
     drag = {
       id: e.pointerId,
       x0: e.clientX,
@@ -208,7 +248,7 @@ export function attachCardGestures(
       node.style.transform = `translateX(${dx}px) rotate(${tilt}deg)`;
     }
 
-    const action = swipeAction(session, dx > 0);
+    const action = handlers.action(dx > 0);
     swipeHint.textContent = action.label;
     swipeHint.classList.toggle("swipe-hint-positive", action.positive);
     swipeHint.style.opacity = String(progress);
@@ -246,7 +286,7 @@ export function attachCardGestures(
     // The distance tick is the "this will count" signal; a flick commits
     // without ever reaching it, so it gets its tick as it lands.
     if (!armed) haptic(8);
-    commitSwipe(session, dx > 0);
+    handlers.commit(dx > 0);
   };
 
   cardContainer.addEventListener("pointerup", (e) => endDrag(e, true));
@@ -257,6 +297,8 @@ export function attachCardGestures(
   // vertical panning only while the card has somewhere to scroll to, and a card
   // that fits on screen concedes nothing.
   cardContainer.addEventListener("pointercancel", (e) => endDrag(e, false));
+
+  return { ateClick: () => swipeAteClick, lastPointer: () => lastPointer };
 }
 
 /** Keyboard shortcuts, on the document. Returns a teardown. */

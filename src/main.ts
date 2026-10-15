@@ -7,6 +7,8 @@ import { renderSettings } from "./views/settings";
 import { renderDeckList } from "./views/deck-list";
 import { renderDrill } from "./views/drill";
 import { renderStats } from "./views/stats";
+import { renderInbox } from "./views/inbox";
+import { pushSettings } from "./sync";
 import { getDemoData } from "./demo";
 import { warmTypesetting } from "./typeset";
 import { applyTheme, watchSystemTheme } from "./theme";
@@ -30,7 +32,7 @@ function freshHost(): HTMLElement {
   return host;
 }
 
-type View = "settings" | "decks" | "drill" | "stats";
+type View = "settings" | "decks" | "drill" | "stats" | "inbox";
 
 /**
  * Views that outlive their own render — the deck list listens for background
@@ -54,6 +56,10 @@ async function navigate(
 
   switch (view) {
     case "settings":
+      // Leaving Settings is when its collection settings go to the repo,
+      // rather than whenever the next sync happens to run: another device
+      // opened now should already see them.
+      disposeView = () => void pushSettings();
       await renderSettings(host, () => navigate("decks"), settingsNotice);
       settingsNotice = undefined;
       break;
@@ -63,7 +69,8 @@ async function navigate(
         host,
         (cards, session) => navigate("drill", cards, session),
         () => navigate("settings"),
-        () => navigate("stats")
+        () => navigate("stats"),
+        () => navigate("inbox")
       );
       break;
 
@@ -77,6 +84,10 @@ async function navigate(
 
     case "stats":
       await renderStats(host, () => navigate("decks"));
+      break;
+
+    case "inbox":
+      disposeView = await renderInbox(host, () => navigate("decks"));
       break;
   }
 }

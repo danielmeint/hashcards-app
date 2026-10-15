@@ -18,6 +18,9 @@ const PATHS = {
   back: svg`<path d="m15 18-6-6 6-6"/>`,
   chevron: svg`<path d="m9 18 6-6-6-6"/>`,
   check: svg`<path d="M20 6 9 17l-5-5"/>`,
+  inbox: svg`<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z"/>`,
+  trash: svg`<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>`,
+  skip: svg`<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>`,
 } as const;
 
 export type IconName = keyof typeof PATHS;

@@ -19,7 +19,15 @@ export class FakeGitHub {
 
   // The `hashcards-data` branch, through the Git Data API. `main` is `files`.
   refs = new Map<string, string>();
-  commits = new Map<string, { tree: string; parents: string[] }>();
+  commits = new Map<string, { tree: string; parents: string[]; message?: string }>();
+  /**
+   * Messages of the commits made to `main` through the Git Data API (the
+   * Inbox's batches), oldest first. `main` is `files`; its ref is a commit
+   * made up from them whenever they have changed since it was last asked for.
+   */
+  mainCommits: string[] = [];
+  private mainHead: string | null = null;
+  private mainStale = true;
   trees = new Map<string, Map<string, string>>();
   blobs = new Map<string, string>();
   /** Every ref move, refused ones included. */
@@ -44,6 +52,35 @@ export class FakeGitHub {
 
   set(path: string, content: string | Buffer): void {
     this.files.set(path, { sha: `sha-${++this.shas}`, content });
+    this.mainStale = true;
+  }
+
+  /** `main`'s tip, as a commit whose tree is `files`. */
+  private mainRef(): string {
+    if (this.mainStale || !this.mainHead) {
+      const tree = `tree-${++this.shas}`;
+      this.trees.set(tree, new Map([...this.files].map(([p, f]) => [p, f.sha])));
+      const sha = `commit-${++this.shas}`;
+      this.commits.set(sha, { tree, parents: this.mainHead ? [this.mainHead] : [] });
+      this.mainHead = sha;
+      this.mainStale = false;
+    }
+    return this.mainHead;
+  }
+
+  /** Move `main` to a commit made through the Git Data API: `files` become its tree. */
+  private moveMain(sha: string): void {
+    const commit = this.commits.get(sha)!;
+    const byBlob = new Map([...this.files.values()].map((f) => [f.sha, f.content]));
+    this.files = new Map(
+      [...this.trees.get(commit.tree)!].map(([p, blob]) => [
+        p,
+        { sha: blob, content: this.blobs.get(blob) ?? byBlob.get(blob)! },
+      ])
+    );
+    this.mainHead = sha;
+    this.mainStale = false;
+    this.mainCommits.push(commit.message ?? "");
   }
 
   /** Give the app a signed-in PAT user configured for this repo. */
@@ -86,7 +123,8 @@ export class FakeGitHub {
     const path = url.pathname.slice(base.length);
     const ref = path.match(/^\/git\/ref\/heads\/(.+)$/);
     if (ref && req.method() === "GET") {
-      const sha = this.refs.get(decodeURIComponent(ref[1]));
+      const name = decodeURIComponent(ref[1]);
+      const sha = name === this.config.branch ? this.mainRef() : this.refs.get(name);
       return sha ? json({ object: { sha } }) : json({ message: "Not Found" }, 404);
     }
     const treeRead = path.match(/^\/git\/trees\/([^/]+)$/);
@@ -111,19 +149,22 @@ export class FakeGitHub {
       return json({ sha, tree: [...next].map(([p, s]) => ({ path: p, sha: s, type: "blob" })) }, 201);
     }
     if (path === "/git/commits" && req.method() === "POST") {
-      const body = req.postDataJSON() as { tree: string; parents: string[] };
+      const body = req.postDataJSON() as { tree: string; parents: string[]; message: string };
       const sha = `commit-${++this.shas}`;
-      this.commits.set(sha, { tree: body.tree, parents: body.parents });
+      this.commits.set(sha, { tree: body.tree, parents: body.parents, message: body.message });
       return json({ sha }, 201);
     }
     const refWrite = path.match(/^\/git\/refs\/heads\/(.+)$/);
     if (refWrite && req.method() === "PATCH") {
       const { sha } = req.postDataJSON() as { sha: string };
-      const head = this.refs.get(decodeURIComponent(refWrite[1]));
+      const name = decodeURIComponent(refWrite[1]);
+      const onMain = name === this.config.branch;
+      const head = onMain ? this.mainRef() : this.refs.get(name);
       const ok = head !== undefined && this.descends(sha, head);
       this.refWrites.push({ sha, ok });
       if (!ok) return json({ message: "Update is not a fast forward" }, 422);
-      this.refs.set(decodeURIComponent(refWrite[1]), sha);
+      if (onMain) this.moveMain(sha);
+      else this.refs.set(name, sha);
       return json({ object: { sha } });
     }
     if (path === "/git/refs" && req.method() === "POST") {

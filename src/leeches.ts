@@ -1,4 +1,4 @@
-import { Card, Grade, Review } from "./types";
+import { Card, Grade } from "./types";
 import { stateKey } from "./card-key";
 
 /**
@@ -11,6 +11,12 @@ import { stateKey } from "./card-key";
  * fact: two questions in one, an ambiguous answer, a cloze with nothing around
  * it to cue the recall.
  */
+
+/**
+ * One grade, wherever it was given: this device's `Review` is one, and so is
+ * every other device's review event once replayed (`reviewHistory`).
+ */
+export type Graded = { key: string; reviewedAt: string; grade: Grade };
 
 export type Leech = {
   card: Card;
@@ -45,12 +51,12 @@ export function isRecovering(leech: Leech): boolean {
  */
 export function findLeeches(
   cards: Card[],
-  reviews: Review[],
+  reviews: Graded[],
   threshold: number = LEECH_THRESHOLD
 ): Leech[] {
   const byKey = new Map(cards.map((c) => [stateKey(c), c]));
 
-  const grouped = new Map<string, Review[]>();
+  const grouped = new Map<string, Graded[]>();
   for (const review of reviews) {
     if (!byKey.has(review.key)) continue;
     const list = grouped.get(review.key);

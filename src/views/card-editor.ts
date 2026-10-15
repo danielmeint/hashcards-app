@@ -47,7 +47,24 @@ type Phase =
       error: string | null;
     };
 
-export function openCardEditor(card: Card): Promise<EditResult | null> {
+/**
+ * For a caller whose edits do not go straight to GitHub — the Inbox, which
+ * queues them with its other decisions and commits them together. The sheet
+ * is the same; where the text comes from and what Save does are not.
+ */
+export type EditorOptions = {
+  /** The card's lines and the file around them. GitHub's, by default. */
+  load?: () => Promise<CardSource>;
+  /** What Save does with the text. Commits it, by default. */
+  save?: (source: CardSource, text: string) => Promise<EditResult>;
+  /** The Save button's label, for a save that is not a commit. */
+  saveLabel?: string;
+};
+
+export function openCardEditor(
+  card: Card,
+  options: EditorOptions = {}
+): Promise<EditResult | null> {
   return new Promise((resolve) => {
     const host = document.createElement("div");
     let phase: Phase = { kind: "loading" };
@@ -90,6 +107,10 @@ export function openCardEditor(card: Card): Promise<EditResult | null> {
       phase = { ...state, saving: true, error: null };
       paint();
       try {
+        if (options.save) {
+          finish(await options.save(state.source, state.text));
+          return;
+        }
         const result = await commitCardEdit(card, state.source, state.text, {
           keepScheduling: state.keep,
         });
@@ -115,7 +136,7 @@ export function openCardEditor(card: Card): Promise<EditResult | null> {
     function saveLabel(): string {
       if (saving()) return "Saving…";
       if (!editing()) return "Save";
-      return removing() ? "Delete card" : "Save to GitHub";
+      return removing() ? "Delete card" : options.saveLabel ?? "Save to GitHub";
     }
 
     function body() {
@@ -224,7 +245,7 @@ export function openCardEditor(card: Card): Promise<EditResult | null> {
     void (async () => {
       try {
         const [source, performances] = await Promise.all([
-          readCardSource(card),
+          options.load ? options.load() : readCardSource(card),
           getAllPerformances(),
         ]);
         const perf = performances.get(stateKey(card));

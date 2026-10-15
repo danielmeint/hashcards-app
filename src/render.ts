@@ -169,6 +169,44 @@ export function renderCardBody(card: Card): string {
 }
 
 /**
+ * A whole draft block, for the Inbox: both sides at once, and for a cloze
+ * every deletion marked rather than one card's. Curating a draft is reading
+ * it, not recalling it, so nothing is held back — the caller shows it with
+ * the `revealed` class on.
+ *
+ * `cards` are one block's, in the parser's order: a basic card and possibly
+ * its reverse (the forward one is the one to show), or a cloze's deletions,
+ * which all share the block's text.
+ */
+export function renderDraftBody(cards: Card[]): string {
+  const first = cards[0];
+  if (first.content.type === "basic") return renderCardBody(first);
+  const spans = cards
+    .map((c) => c.content as ClozeCard)
+    .map((c): [number, number] => [c.start, c.end])
+    .sort((a, b) => a[0] - b[0]);
+  return (
+    `<div class="prompt">${richText(renderMarkdown(withAllClozeMarkers(first.content.text, spans), first))}</div>` +
+    renderExtra(first.content.extra, first)
+  );
+}
+
+/** `text` with every deleted span wrapped, spliced by byte as `withClozeMarkers` does one. */
+function withAllClozeMarkers(text: string, spans: [number, number][]): string {
+  const bytes = new TextEncoder().encode(text);
+  const decoder = new TextDecoder();
+  let out = "";
+  let at = 0;
+  for (const [start, end] of spans) {
+    if (start < at) continue; // overlapping deletions: the first one wins
+    out += decoder.decode(bytes.slice(at, start));
+    out += `${CLOZE_OPEN}${decoder.decode(bytes.slice(start, end + 1))}${CLOZE_CLOSE}`;
+    at = end + 1;
+  }
+  return out + decoder.decode(bytes.slice(at));
+}
+
+/**
  * The `Extra:` section, after everything else. It carries the `answer` class
  * so the rules that hide an answer until reveal hide it too, on both card
  * types: a note under a cloze would otherwise give the deletion away.

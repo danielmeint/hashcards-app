@@ -27,3 +27,27 @@ test("a lower desired retention schedules further out", async ({ page, github })
   expect(atDefault).toBe("2d");
   expect(atEighty).toBe("8d");
 });
+
+test("collection settings reach hashcards.toml on leaving Settings", async ({ page, github }) => {
+  github.set("Capitals.md", "Q: Japan\nA: Tokyo\n");
+  await page.goto("/");
+  await expect(page.locator("#drill-all")).toBeVisible();
+
+  await page.locator("#settings-btn").click();
+  // The two kinds of setting, told apart.
+  await expect(page.locator("#collection-settings .group-title")).toHaveText("Collection");
+  await expect(page.locator("#collection-caption")).toContainText("hashcards.toml");
+  await expect(page.locator("#device-settings .group-title")).toHaveText("This device");
+  await expect(page.locator("#device-settings #theme")).toBeVisible();
+  await expect(page.locator("#device-settings #haptic-feedback")).toBeVisible();
+
+  await page.locator('#desired-retention button[data-value="0.85"]').click();
+  await page.locator("#interval-fuzz").click();
+  // Nothing is written while the screen is open…
+  expect(github.files.has("hashcards.toml")).toBe(false);
+  await page.locator("#back-btn").click();
+  // …and on leaving it, without waiting for a sync.
+  await expect
+    .poll(() => String(github.files.get("hashcards.toml")?.content ?? ""))
+    .toBe("[review]\ndesired_retention = 0.85\nfuzz = false\n");
+});

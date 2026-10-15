@@ -27,20 +27,42 @@ export type SyncFacts = {
   lastPushedAt: string | null;
   /** Reviews recorded since then. */
   unsyncedReviews: number;
+  /** Inbox decisions queued and not yet committed (`inbox-queue.ts`). */
+  pendingEdits?: number;
+  /** When the oldest of them was made. */
+  oldestEditAt?: string | null;
   online: boolean;
   now?: number;
 };
 
-const reviews = (n: number) => `${n} review${n === 1 ? "" : "s"}`;
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const reviews = (n: number) => plural(n, "review");
+
+/**
+ * What is waiting on the device, in one phrase: "3 reviews", "2 Inbox
+ * changes", or both. Inbox decisions are owed exactly as reviews are, and
+ * someone who curated drafts on a train should be told so in the same breath.
+ */
+function owed(unsynced: number, edits: number): string {
+  const parts = [
+    ...(unsynced > 0 ? [reviews(unsynced)] : []),
+    ...(edits > 0 ? [plural(edits, "Inbox change")] : []),
+  ];
+  return parts.join(" and ");
+}
 
 export function syncNotice({
   status,
   lastSyncedAt,
   lastPushedAt,
   unsyncedReviews,
+  pendingEdits = 0,
+  oldestEditAt = null,
   online,
   now = Date.now(),
 }: SyncFacts): SyncNotice | null {
+  const waiting = owed(unsyncedReviews, pendingEdits);
+  const some = unsyncedReviews + pendingEdits;
   if (status.phase === "syncing") {
     return {
       text: status.detail ? `Syncing — ${status.detail.toLowerCase()}` : "Syncing…",
@@ -53,10 +75,7 @@ export function syncNotice({
     // Retrying a refused credential fails identically, so don't offer it.
     if (status.needsSignIn) {
       return {
-        text:
-          unsyncedReviews > 0
-            ? `Signed out of GitHub — ${reviews(unsyncedReviews)} not saved.`
-            : "Signed out of GitHub.",
+        text: some > 0 ? `Signed out of GitHub — ${waiting} not saved.` : "Signed out of GitHub.",
         level: "error",
         action: "sign-in",
       };
@@ -66,9 +85,9 @@ export function syncNotice({
 
   // Being offline is not a failure, and saying so is reassurance rather than
   // an alarm — the reviews are on the device and the app knows they are owed.
-  if (!online && unsyncedReviews > 0) {
+  if (!online && some > 0) {
     return {
-      text: `Offline — ${reviews(unsyncedReviews)} will sync when you reconnect.`,
+      text: `Offline — ${waiting} will sync when you reconnect.`,
       level: "info",
       action: null,
     };
@@ -77,8 +96,17 @@ export function syncNotice({
   if (unsyncedReviews > 0 && staleness(lastPushedAt, now) > STALE_AFTER_MS) {
     return {
       text: lastPushedAt
-        ? `${reviews(unsyncedReviews)} haven't reached GitHub — last saved ${formatSyncAge(lastPushedAt, now)}.`
-        : `${reviews(unsyncedReviews)} have never reached GitHub.`,
+        ? `${waiting} haven't reached GitHub — last saved ${formatSyncAge(lastPushedAt, now)}.`
+        : `${waiting} have never reached GitHub.`,
+      level: "warn",
+      action: "retry",
+    };
+  }
+  // Measured from the decision itself: a change queued a minute ago is not
+  // stale just because the last push of reviews was days back.
+  if (pendingEdits > 0 && staleness(oldestEditAt, now) > STALE_AFTER_MS) {
+    return {
+      text: `${plural(pendingEdits, "Inbox change")} ${pendingEdits === 1 ? "hasn't" : "haven't"} reached GitHub.`,
       level: "warn",
       action: "retry",
     };

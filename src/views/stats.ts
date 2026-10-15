@@ -13,22 +13,28 @@ import {
 import { getConfig, getDesiredRetention } from "../github";
 import { icon } from "./icons";
 import { formatSyncAge } from "../sync-state";
+import { reviewHistory } from "../review-state";
 
 export async function renderStats(
   container: HTMLElement,
   onBack: () => void
 ): Promise<void> {
-  const [reviews, performances, cards] = await Promise.all([
+  const [reviews, performances, cards, history] = await Promise.all([
     getAllReviews(),
     getAllPerformances(),
     loadCachedCards(),
+    reviewHistory(),
   ]);
   const today = todayStr();
 
-  const leeches = findLeeches(cards, reviews);
+  // From the whole log, every device's grades: a card that fails on your
+  // phone and on your laptop fails twice, not once on each.
+  const leeches = findLeeches(cards, history);
 
   // --- Aggregate stats ---
-  const totalCards = cards.length;
+  // Drafts are proposals in the Inbox, not cards in the collection yet.
+  // Reverse cards and cloze deletions each count: each is scheduled.
+  const totalCards = cards.filter((c) => c.status !== "draft").length;
   const learnedCards = performances.size;
   const newCards = totalCards - learnedCards;
 
@@ -395,7 +401,7 @@ function renderLeeches(
 ): TemplateResult {
   if (leeches.length === 0) {
     return html`<p class="leech-empty">
-      ${`Nothing has failed ${LEECH_THRESHOLD} or more times. ${caveat()}`}
+      ${`Nothing has failed ${LEECH_THRESHOLD} or more times.`}
     </p>`;
   }
 
@@ -415,7 +421,6 @@ function renderLeeches(
           recovered === 1 ? " has" : "s have"
         } been answered correctly ${RECOVERED_RUN} times running since.`
       : "",
-    caveat(),
   ].filter(Boolean);
 
   const lead =
@@ -436,12 +441,6 @@ function renderLeeches(
 
 const MAX_LEECH_ROWS = 10;
 const RECOVERED_RUN = 3;
-
-function caveat(): string {
-  // Only performances cross devices; the review log is local, so lapse counts
-  // are what this device has seen. Saying so beats quietly undercounting.
-  return "Counted from reviews taken on this device.";
-}
 
 function leechRow(
   leech: Leech,

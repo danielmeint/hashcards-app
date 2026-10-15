@@ -1,0 +1,18 @@
+# Checks every deck on pull requests: parse errors, duplicate IDs, cards
+# without IDs (warnings). Written by `hc init`.
+name: hashcards lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npx --yes hashcards lint

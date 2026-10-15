@@ -54,6 +54,39 @@ Sign-in needs a GitHub App, which a self-hosted copy may not have (see [Sign-in 
 
 </details>
 
+## CLI
+
+`hc` works on a local clone of a card repo: for scripts, CI and agents. It
+reads review history from the `hashcards-data` branch with plain `git` (or, in
+a repo not yet migrated, from `hashcards-state.json` and `hashcards-reviews/`).
+
+```bash
+npm run build:cli               # → dist-cli/hc.js (or run from source: node cli/hc.ts)
+
+hc lint [--fix]                 # parse errors, duplicate IDs; --fix stamps missing IDs
+hc add --deck net/tcp.md --draft -q "Question?" -a "Answer"
+hc add --deck net/tcp.md --cloze "TCP opens with [SYN]."
+hc add --json cards.json        # one card or an array, as schema/card.schema.json
+hc due [--date tomorrow]        # reviews due, new cards within new_per_day
+hc stats                        # totals, maturity, retention, 14-day forecast, reviews/day
+hc leeches [--min-lapses 3]     # cards that keep failing
+hc show <key|id>                # a card, its file:line, state and history
+hc init                         # hashcards.toml, AGENTS.md, a lint workflow for PRs
+```
+
+Every command takes `--repo <dir>` (default: the current directory) and
+`--json`. Exit codes: 0 ok, 1 findings (lint errors, leeches, no such card),
+2 usage or error. `hc <command> --help` has the details.
+
+Which files are decks: `hashcards.toml`'s `[decks]` include/exclude globs if
+it has them, otherwise every `.md` except README/AGENTS-style documentation
+(`README`, `AGENTS`, `CLAUDE`, `CHANGELOG`, `LICENSE`… and all-caps names with
+a `_` or `-`, such as `CARD_GUIDE.md`), and nothing in hidden directories.
+
+`hc init` writes an [`AGENTS.md`](cli/templates/AGENTS.md) telling coding
+agents how to write cards in the repo. When an agent runs `hc add`, cards
+default to `Status: draft`.
+
 ## Development
 
 ```bash

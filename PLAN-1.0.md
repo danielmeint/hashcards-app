@@ -365,7 +365,7 @@ into `hc` once M5 exists.
 | M2 Event log and replay | done, merged into `v1` | `v1-replay` | `src/core/{events,schedule,replay}.ts`. Live path and replay share one step; fuzz seeded by key + review count. v1 lines assume CET/CEST. Live-path equivalence and the real v1 log reproduce exactly. App wiring (keys into fuzz, tz on writes) is M3. |
 | M3 Data branch and sync | not started | | needs M1, M2 |
 | M4 Migration | not started | | needs M3, M5 |
-| M5 `hc` CLI | not started | | needs M1, M2 |
+| M5 `hc` CLI | done | `v1-cli` | `cli/` (`node cli/hc.ts`, or `npm run build:cli` → `dist-cli/hc.js`): lint/add/due/stats/leeches/show/init, `--json` everywhere, exit 0/1/2; migrate, import anki and fit are stubs for M4/M6/M7 (one module each in `cli/commands/`). Reads `hashcards-data` (local or `origin/`) with `git`, else v1 state file + log as baselines and v1 reviews. Has its own `hashcards.toml` reader (`cli/config.ts`); M3 should move one into `src/core/` and both use it. Cold-start agent check passed (5 drafts, lint clean); AGENTS.md fixed from its report. npm name is still `hashcards-app`; `npx hashcards` in the lint workflow needs the M9 rename and publish. |
 | M6 Anki import | prototype in progress | `v1-anki-import` | standalone until M5 |
 | M7 Features | not started | | |
 | M8 UI 1.0 | in progress | `v1-ui` | Today and Review first |

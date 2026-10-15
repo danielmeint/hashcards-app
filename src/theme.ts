@@ -61,7 +61,7 @@ export function applyTheme(): void {
 
   document
     .querySelector('meta[name="theme-color"]')
-    ?.setAttribute("content", dark ? "#16181c" : "#f8f8f8");
+    ?.setAttribute("content", dark ? "#111317" : "#f7f7f5");
 }
 
 /** Follow the OS while the theme is "system". */

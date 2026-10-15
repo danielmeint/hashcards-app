@@ -10,7 +10,8 @@ import {
   findLeeches,
   isRecovering,
 } from "../leeches";
-import { getConfig } from "../github";
+import { getConfig, getDesiredRetention } from "../github";
+import { icon } from "./icons";
 import { formatSyncAge } from "../sync-state";
 
 export async function renderStats(
@@ -105,9 +106,9 @@ export async function renderStats(
     }
   }
 
-  // --- Upcoming forecast (next 14 days) ---
+  // --- Upcoming forecast (today and the 13 days after: a fortnight) ---
   const forecast: { date: string; count: number }[] = [];
-  for (let i = 0; i <= 14; i++) {
+  for (let i = 0; i < 14; i++) {
     const date = addDays(today, i);
     let count = 0;
     for (const [, perf] of performances) {
@@ -130,153 +131,184 @@ export async function renderStats(
     }
   }
 
+  // Bars are scaled to the most common grade, so the largest one fills its track.
+  const maxGrade = Math.max(
+    1,
+    gradeCounts.forgot,
+    gradeCounts.hard,
+    gradeCounts.good,
+    gradeCounts.easy
+  );
+
   const pct = (part: number, whole: number) =>
     `${((part / whole) * 100).toFixed(1)}%`;
 
+  const target = getDesiredRetention();
+  const forecastTotal = forecast.reduce((sum, f) => sum + f.count, 0);
+  const maturity = (
+    [
+      ["new", "New", newCards],
+      ["young", "Young", young],
+      ["mature", "Mature", mature],
+    ] as const
+  ).filter(([kind, , count]) => count > 0 || (kind === "new" && learnedCards === 0));
+  // The first fourteen weeks are only drawn where there is room for them.
+  const oldWeeks = Math.max(0, weeks.length - 12);
+
   function paint(): void {
     render(
-      html`<div class="stats-view">
-        <div class="stats-header">
-          <button id="back-btn" class="btn stats-back-btn" @click=${onBack}>
-            Back
+      html`<div class="page page-wide stats-view">
+        <header class="page-head">
+          <button
+            id="back-btn"
+            class="icon-btn"
+            aria-label="Back"
+            title="Back"
+            @click=${onBack}
+          >
+            ${icon("back")}<span class="icon-btn-label">Today</span>
           </button>
           <h1>Statistics</h1>
-        </div>
+        </header>
 
-        <div class="stats-overview">
+        <div class="tiles stats-overview">
           ${[
-            [totalCards, "Total cards"],
-            [learnedCards, "Learned"],
-            [dueToday, "Due today"],
-            [`${streak}d`, "Streak"],
+            [totalCards, "cards"],
+            [learnedCards, "learned"],
+            [dueToday, "due today"],
+            [`${streak} day${streak === 1 ? "" : "s"}`, "streak"],
           ].map(
-            ([value, label]) => html`<div class="stat-box">
+            ([value, label]) => html`<div class="panel stat-box">
               <div class="stat-value">${value}</div>
               <div class="stat-label">${label}</div>
             </div>`
           )}
         </div>
 
-        <div class="stats-section">
-          <h2>Leeches</h2>
-          ${renderLeeches(leeches, onEdit)}
-        </div>
+        <div class="stats-grid">
+          <section class="panel retention">
+            <div class="panel-head">
+              <h2>Estimated retention</h2>
+              <span>${`target ${Math.round(target * 100)}%`}</span>
+            </div>
+            <div class="big-number">
+              ${retentions.length > 0 ? `${(avgRetention * 100).toFixed(1)}%` : "–"}
+            </div>
+            <div class="meter" role="img" aria-label="Estimated retention against the target">
+              <div class="meter-fill" style="width: ${(avgRetention * 100).toFixed(1)}%"></div>
+              <div class="meter-target" style="left: ${target * 100}%"></div>
+            </div>
+          </section>
 
-        <div class="stats-section">
-          <h2>Estimated Retention</h2>
-          <div class="retention-bar-container">
-            <div
-              class="retention-bar"
-              style="width: ${(avgRetention * 100).toFixed(0)}%"
-            ></div>
-            <span class="retention-label"
-              >${`${(avgRetention * 100).toFixed(1)}%`}</span
-            >
-          </div>
-        </div>
+          <section class="panel maturity">
+            <div class="panel-head"><h2>Card maturity</h2></div>
+            <div class="maturity-bar-container">
+              ${maturity.map(
+                ([kind, , count]) =>
+                  html`<div
+                    class="maturity-bar maturity-${kind}"
+                    style="flex-grow: ${Math.max(1, count)}"
+                  ></div>`
+              )}
+            </div>
+            <div class="maturity-legend">
+              ${(
+                [
+                  ["new", "New", newCards],
+                  ["young", "Young", young],
+                  ["mature", "Mature", mature],
+                ] as const
+              ).map(
+                ([kind, label, count]) => html`<span class="legend-item">
+                  <strong>${count}</strong>
+                  <span class="legend-key"
+                    ><span class="legend-dot maturity-${kind}"></span>${label}</span
+                  >
+                </span>`
+              )}
+            </div>
+          </section>
 
-        <div class="stats-section">
-          <h2>Card Maturity</h2>
-          <div class="maturity-bar-container">
-            ${learnedCards > 0
-              ? html`
+          <section class="panel forecast">
+            <div class="panel-head">
+              <h2>Next 14 days</h2>
+              <span>${`${forecastTotal} review${forecastTotal === 1 ? "" : "s"}`}</span>
+            </div>
+            <div class="forecast-chart" id="forecast">
+              ${forecast.map(
+                ({ date, count }, i) => html`<div
+                  class="forecast-bar-wrapper"
+                  title=${`${date}: ${count}`}
+                >
+                  <div class="forecast-bar-value">${count || ""}</div>
                   <div
-                    class="maturity-bar maturity-new"
-                    style="width: ${pct(newCards, totalCards)}"
+                    class="forecast-bar ${i === 0 ? "is-today" : ""} ${count === 0
+                      ? "is-zero"
+                      : ""}"
+                    style="--h: ${count / maxForecast}"
                   ></div>
-                  <div
-                    class="maturity-bar maturity-young"
-                    style="width: ${pct(young, totalCards)}"
-                  ></div>
-                  <div
-                    class="maturity-bar maturity-mature"
-                    style="width: ${pct(mature, totalCards)}"
-                  ></div>
-                `
-              : html`<div
-                  class="maturity-bar maturity-new"
-                  style="width: 100%"
-                ></div>`}
-          </div>
-          <div class="maturity-legend">
-            ${[
-              ["new", "New", newCards],
-              ["young", "Young", young],
-              ["mature", "Mature", mature],
-            ].map(
-              ([kind, label, count]) => html`<span class="legend-item"
-                ><span class="legend-dot maturity-${kind}-dot"></span>
-                ${`${label} (${count})`}</span
-              >`
-            )}
-          </div>
-        </div>
-
-        <div class="stats-section">
-          <h2>Review Heatmap</h2>
-          <div class="heatmap-container">
-            <div class="heatmap-grid" id="heatmap">
-              ${weeks.map(
-                (week) => html`<div class="heatmap-col">
-                  ${week.map((day) => heatmapCell(day))}
+                  <div class="forecast-bar-label">
+                    ${date === today ? "Today" : weekday(date)}
+                  </div>
                 </div>`
               )}
             </div>
-            <div class="heatmap-legend">
-              <span>Less</span>
-              ${[0, 1, 2, 3, 4].map(
-                (level) => html`<span class="heatmap-cell heat-${level}"></span>`
-              )}
-              <span>More</span>
+            <div class="forecast-axis" aria-hidden="true">
+              <span>Today</span>
+              <span>${shortDate(forecast[7].date)}</span>
+              <span>${shortDate(forecast[13].date)}</span>
             </div>
-          </div>
-        </div>
+          </section>
 
-        <div class="stats-section">
-          <h2>Grades (Last 30 Days)</h2>
-          ${gradeCounts.total > 0
-            ? html`<div class="grade-bars">
-                ${(
-                  [
-                    ["Forgot", "forgot", gradeCounts.forgot],
-                    ["Hard", "hard", gradeCounts.hard],
-                    ["Good", "good", gradeCounts.good],
-                    ["Easy", "easy", gradeCounts.easy],
-                  ] as const
-                ).map(
-                  ([label, kind, count]) => html`<div class="grade-row">
-                    <span class="grade-label">${label}</span>
-                    <div class="grade-bar-track">
-                      <div
-                        class="grade-bar grade-${kind}"
-                        style="width: ${pct(count, gradeCounts.total)}"
-                      ></div>
-                    </div>
-                    <span class="grade-count">${count}</span>
-                  </div>`
-                )}
-              </div>`
-            : html`<div class="stats-empty">
-                No reviews in the last 30 days.
-              </div>`}
-        </div>
+          <section class="panel grades-panel">
+            <div class="panel-head">
+              <h2>Grades, last 30 days</h2>
+              <span>${`${gradeCounts.total} review${gradeCounts.total === 1 ? "" : "s"}`}</span>
+            </div>
+            ${gradeCounts.total > 0
+              ? html`<div class="grade-bars">
+                  ${(
+                    [
+                      ["Forgot", "forgot", gradeCounts.forgot],
+                      ["Hard", "hard", gradeCounts.hard],
+                      ["Good", "good", gradeCounts.good],
+                      ["Easy", "easy", gradeCounts.easy],
+                    ] as const
+                  ).map(
+                    ([label, kind, count]) => html`<div class="grade-row">
+                      <span class="grade-label">${label}</span>
+                      <div class="grade-bar-track">
+                        <div
+                          class="grade-bar grade-${kind}"
+                          style="width: ${pct(count, maxGrade)}"
+                        ></div>
+                      </div>
+                      <span class="grade-count">${count}</span>
+                    </div>`
+                  )}
+                </div>`
+              : html`<p class="stats-empty">No reviews in the last 30 days.</p>`}
+          </section>
 
-        <div class="stats-section">
-          <h2>Upcoming Reviews</h2>
-          <div class="forecast-chart" id="forecast">
-            ${forecast.map(
-              ({ date, count }) => html`<div class="forecast-bar-wrapper">
-                <div class="forecast-bar-value">${count || ""}</div>
-                <div
-                  class="forecast-bar"
-                  style="height: ${(count / maxForecast) * 100}%"
-                ></div>
-                <div class="forecast-bar-label">
-                  ${date === today ? "Today" : date.slice(5)}
-                </div>
-              </div>`
-            )}
-          </div>
+          <section class="panel activity">
+            <div class="panel-head">
+              <h2>Activity</h2>
+              <span
+                ><span class="narrow-only">last 12 weeks</span
+                ><span class="wide-only">last 26 weeks</span></span
+              >
+            </div>
+            <div class="heatmap-grid" id="heatmap">
+              ${weeks.flatMap((week, w) =>
+                week.map((day) => heatmapCell(day, w < oldWeeks))
+              )}
+            </div>
+          </section>
+
+          <section class="panel leeches">
+            <div class="panel-head"><h2>Leeches</h2></div>
+            ${renderLeeches(leeches, onEdit)}
+          </section>
         </div>
       </div>`,
       container
@@ -287,7 +319,7 @@ export async function renderStats(
    * Intensity is a class rather than an inline colour, so the palette can
    * follow the theme.
    */
-  function heatmapCell(day: string): TemplateResult {
+  function heatmapCell(day: string, old: boolean): TemplateResult {
     const count = reviewsByDay.get(day) || 0;
     const level =
       day < startDate || day > today
@@ -302,7 +334,7 @@ export async function renderStats(
         ? 3
         : 4;
     return html`<div
-      class="heatmap-cell heat-${level}"
+      class="heatmap-cell heat-${level} ${old ? "heat-old" : ""}"
       title=${`${day}: ${count} review${count === 1 ? "" : "s"}`}
     ></div>`;
   }
@@ -327,6 +359,21 @@ function daysBetween(a: string, b: string): number {
   const da = new Date(a + "T00:00:00Z");
   const db = new Date(b + "T00:00:00Z");
   return Math.round((db.getTime() - da.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function weekday(date: string): string {
+  return new Date(date + "T00:00:00Z").toLocaleDateString("en-GB", {
+    weekday: "short",
+    timeZone: "UTC",
+  });
+}
+
+function shortDate(date: string): string {
+  return new Date(date + "T00:00:00Z").toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  });
 }
 
 function addDays(dateStr: string, days: number): string {
@@ -380,7 +427,7 @@ function renderLeeches(
     <p class="leech-intro">
       ${`${lead} A card that fails repeatedly is usually a badly written card rather than a hard fact — two questions in one, an ambiguous answer, nothing around a cloze to cue it.`}
     </p>
-    <div class="leech-list">
+    <div class="list leech-list">
       ${shown.map((leech) => leechRow(leech, config !== null, onEdit))}
     </div>
     <p class="leech-note">${notes.join(" ")}</p>
@@ -406,14 +453,14 @@ function leechRow(
     `${leech.lapses} of ${leech.reviews} reviews failed (${rate}%)` +
     ` · last ${formatSyncAge(leech.lastLapseAt)}` +
     (leech.streak > 0 ? ` · ${leech.streak} right since` : "");
-  return html`<div class="leech-card">
-    <div class="leech-info">
+  return html`<div class="row leech-card">
+    <div class="row-text leech-info">
       <span class="leech-text">${cardSummary(leech.card)}</span>
       <span class="leech-meta">${meta}</span>
     </div>
     ${editable
       ? html`<button
-          class="btn leech-edit"
+          class="btn btn-small leech-edit"
           type="button"
           @click=${() => void onEdit(leech)}
         >

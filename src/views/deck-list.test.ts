@@ -132,7 +132,8 @@ describe("deck list", () => {
     await cache([card(1, "Alpha")]);
 
     await renderDeckList(container, () => {}, () => {}, () => {});
-    const counts = () => container.querySelector(".deck-counts")!.textContent!;
+    // The row says what the deck offers: its size, then what is due or new.
+    const counts = () => container.querySelector(".deck-row")!.textContent!;
     expect(counts()).toContain("1 new");
 
     // What a completed state sync leaves behind: scheduling pulled from another
@@ -153,8 +154,8 @@ describe("deck list", () => {
     setSyncStatus({ phase: "idle" });
 
     await vi.waitFor(() => {
-      expect(counts()).toContain("1 review");
-      expect(counts()).toContain("0 new");
+      expect(counts()).toContain("1 due");
+      expect(counts()).not.toContain("new");
     });
   });
 
@@ -193,7 +194,7 @@ describe("deck identity", () => {
   });
 
   const counts = (container: HTMLElement) =>
-    [...container.querySelectorAll(".deck-counts")].map((el) => el.textContent!);
+    [...container.querySelectorAll(".deck-row")].map((el) => el.textContent!);
 
   it("keeps same-named files in different directories apart", async () => {
     const { renderDeckList } = await freshDeckList();
@@ -208,7 +209,7 @@ describe("deck identity", () => {
     // Two decks, both displaying the same name.
     expect(deckNames(container)).toEqual(["Networking", "Networking"]);
     expect(counts(container)[0]).toContain("2 cards");
-    expect(counts(container)[1]).toContain("1 cards");
+    expect(counts(container)[1]).toContain("1 card");
   });
 
   it("groups decks under their directory, repo root first", async () => {
@@ -240,7 +241,8 @@ describe("deck identity", () => {
     const drilled: Card[][] = [];
     await renderDeckList(container, (cards) => drilled.push(cards), () => {}, () => {});
 
-    const buttons = [...container.querySelectorAll(".deck-drill-btn")];
+    // The whole row is the button now, rather than a Drill button inside it.
+    const buttons = [...container.querySelectorAll("button.deck-row")];
     (buttons[0] as HTMLButtonElement).click();
 
     expect(drilled).toHaveLength(1);
@@ -264,9 +266,9 @@ describe("deck identity", () => {
     // Per deck: genuine supply, three each.
     expect(counts(container)[0]).toContain("3 new");
     expect(counts(container)[1]).toContain("3 new");
-    // The button has to promise what pressing it actually gives. Clamping each
-    // deck to the global budget and adding them up said "4 new" here.
-    expect(container.querySelector("#drill-all")!.textContent).toContain(
+    // The summary above Start has to promise what pressing it actually gives.
+    // Clamping each deck to the global budget and adding them up said "4 new".
+    expect(container.querySelector("#due-summary")!.textContent).toContain(
       "2 new"
     );
   });
@@ -286,6 +288,36 @@ describe("deck identity", () => {
     (container.querySelector("#drill-all") as HTMLButtonElement).click();
 
     expect(drilled[0]).toHaveLength(2);
+  });
+
+  it("says it is caught up, rather than offering an empty review, when nothing is due", async () => {
+    const { renderDeckList } = await freshDeckList();
+    localStorage.setItem("new_cards_per_day", "1");
+    await cache([card(1, "A", "a.md"), card(2, "A", "a.md")]);
+    const { recordIntroduced } = await import("../new-card-budget");
+    const { todayStr } = await import("../fsrs");
+    recordIntroduced(todayStr(), 1);
+
+    await renderDeckList(container, () => {}, () => {}, () => {});
+
+    expect(container.querySelector("#drill-all")).toBeNull();
+    expect(container.textContent).toContain("All caught up");
+    // The deck still says what it holds, without promising it today.
+    expect(counts(container)[0]).toContain("2 new left");
+  });
+
+  it("starts the review on Space, and stops listening once torn down", async () => {
+    const { renderDeckList } = await freshDeckList();
+    await cache([card(1, "A", "a.md")]);
+
+    const drilled: Card[][] = [];
+    const dispose = await renderDeckList(container, (c) => drilled.push(c), () => {}, () => {});
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: " " }));
+    expect(drilled).toHaveLength(1);
+
+    dispose();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: " " }));
+    expect(drilled).toHaveLength(1);
   });
 
   /**

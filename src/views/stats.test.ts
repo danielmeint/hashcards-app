@@ -119,9 +119,9 @@ describe("the stats view", () => {
       box.querySelector(".stat-label")?.textContent,
       box.querySelector(".stat-value")?.textContent,
     ]);
-    expect(boxes).toContainEqual(["Total cards", "4"]);
-    expect(boxes).toContainEqual(["Learned", "3"]);
-    expect(boxes).toContainEqual(["Due today", "2"]);
+    expect(boxes).toContainEqual(["cards", "4"]);
+    expect(boxes).toContainEqual(["learned", "3"]);
+    expect(boxes).toContainEqual(["due today", "2"]);
   });
 
   it("lists the card that keeps failing, with a way to rewrite it", async () => {
@@ -144,8 +144,8 @@ describe("the stats view", () => {
     const cells = container.querySelectorAll("#heatmap .heatmap-cell");
     expect(cells.length % 7).toBe(0);
     expect(cells.length).toBeGreaterThan(180);
-    // Today plus a fortnight.
-    expect(container.querySelectorAll("#forecast .forecast-bar-wrapper")).toHaveLength(15);
+    // A fortnight, starting today — "Next 14 days" on screen.
+    expect(container.querySelectorAll("#forecast .forecast-bar-wrapper")).toHaveLength(14);
     expect(text(container, "#forecast .forecast-bar-label")).toBe("Today");
   });
 

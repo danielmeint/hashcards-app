@@ -14,8 +14,11 @@ test("a lower desired retention schedules further out", async ({ page, github })
   await page.locator("#end-btn").click();
 
   await page.locator("#settings-btn").click();
-  await expect(page.locator("#desired-retention")).toHaveValue("0.9");
-  await page.locator("#desired-retention").selectOption("0.8");
+  // A segmented control now, not a <select>: the pressed segment is the value.
+  const choice = (v: string) => page.locator(`#desired-retention button[data-value="${v}"]`);
+  await expect(choice("0.9")).toHaveAttribute("aria-pressed", "true");
+  await choice("0.8").click();
+  await expect(choice("0.8")).toHaveAttribute("aria-pressed", "true");
   await page.locator("#back-btn").click();
 
   const atEighty = await goodPreview(page);

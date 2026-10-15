@@ -1,10 +1,11 @@
-import { html, render, TemplateResult } from "lit-html";
+import { html, nothing, render, TemplateResult } from "lit-html";
 import { unsafeHTML } from "lit-html/directives/unsafe-html.js";
 import { Card, Grade, Review } from "../../types";
 import { renderCardBody } from "../../render";
 import { typeset } from "../../typeset";
 import { attachCardGestures } from "./gestures";
 import { Session } from "./session";
+import { icon } from "../icons";
 
 /**
  * The drill's DOM.
@@ -61,9 +62,13 @@ export function createView(
       // The body is HTML on purpose — `renderCardBody` is markdown that has
       // already been rendered — so it says so. The deck name is not, and used
       // to be interpolated into the same string unescaped.
+      // The tools slot is the one part repainted with the chrome: whether the
+      // card is new, and whether it can be edited, belong to this moment
+      // rather than to the card.
       render(
         html`<div class="card-header">
-            <h1>${card.deckName}</h1>
+            <span class="card-deck">${card.deckName}</span>
+            <span class="card-tools"></span>
           </div>
           <div class="card-content">${unsafeHTML(renderCardBody(card))}</div>`,
         node
@@ -126,70 +131,116 @@ export function createView(
     });
   }
 
+  /** Deck-side extras, drawn into the card itself so they move with a swipe. */
+  function tools(): TemplateResult {
+    return html`${session.currentIsNew
+        ? html`<span class="pill pill-tint">New</span>`
+        : nothing}
+      <button
+        class="icon-btn card-edit"
+        id="edit-link"
+        type="button"
+        aria-label="Edit card"
+        title="Edit card"
+        ?hidden=${onEdit === undefined || !canEdit()}
+        @click=${(e: Event) => {
+          // The card is also the reveal target; editing it is not a tap on it.
+          e.stopPropagation();
+          onEdit?.();
+        }}
+      >
+        ${icon("edit", 17)}<span class="icon-btn-label">Edit</span><kbd>E</kbd>
+      </button>`;
+  }
+
   function drill(node: HTMLElement): TemplateResult {
     const revealed = session.revealed;
     // Cheap arithmetic, so computed up front rather than at reveal — by the
     // time the grades appear there is nothing left to do.
     const previews = session.previews();
 
-    return html`<div class="root">
-      <div class="header">
-        <div class="header-row">
+    return html`<div class="root drill">
+      <header class="drill-bar header">
+        <button
+          id="end-btn"
+          class="icon-btn"
+          type="button"
+          aria-label="End session"
+          title="End session"
+          @click=${onFinish}
+        >
+          ${icon("x")}<span class="icon-btn-label">End</span>
+        </button>
+        <div class="progress">
           <div class="progress-bar">
             <div
               class="progress-fill"
               style="width: ${session.progress * 100}%"
             ></div>
           </div>
-          <!-- Was a deep link to GitHub, which meant leaving the drill,
-               finding the card in a web editor and finding your way back. The
-               same sheet the leech list uses opens over the card instead. -->
-          <button
-            class="edit-link"
-            id="edit-link"
-            type="button"
-            ?hidden=${onEdit === undefined || !canEdit()}
-            @click=${() => onEdit?.()}
-          >
-            Edit
-          </button>
+          <span class="progress-count">${`${session.done} / ${session.total}`}</span>
         </div>
-        <div class="write-error" role="alert" ?hidden=${!session.writeFailed}>
-          Couldn't save progress on this device — reviews from this session may
-          be lost.
-        </div>
+        <button
+          id="undo-btn"
+          class="icon-btn"
+          type="button"
+          aria-label="Undo last grade"
+          title="Undo last grade"
+          ?disabled=${!session.canUndo}
+          @click=${() => void session.undo()}
+        >
+          ${icon("undo", 21)}<span class="icon-btn-label">Undo</span><kbd>U</kbd>
+        </button>
+      </header>
+      <div
+        class="notice notice-error write-error"
+        role="alert"
+        ?hidden=${!session.writeFailed}
+      >
+        <span>Couldn't save progress on this device — reviews from this session
+        may be lost.</span>
       </div>
       <div class="card-container ${revealed ? "" : "revealable"}">
         ${node}
-        <div class="swipe-hint" aria-hidden="true" hidden></div>
+        <div
+          class="swipe-hint"
+          aria-hidden="true"
+          hidden
+          data-forgot=${previews[0] ?? ""}
+          data-good=${previews[2] ?? ""}
+        ></div>
       </div>
       <div class="controls">
-        <div class="control-row">
-          <button
-            id="undo-btn"
-            class="btn"
-            ?disabled=${!session.canUndo}
-            @click=${() => void session.undo()}
-          >Undo</button>
-          <button
-            id="reveal-btn"
-            class="btn"
-            ?hidden=${revealed}
-            @click=${() => session.reveal()}
-          >Reveal</button>
-          <div class="grades" ?hidden=${!revealed}>
-            ${GRADES.map(
-              ([grade, label], i) => html`<button
-                class="btn grade-btn"
-                data-grade=${grade}
-                @click=${() => session.grade(grade)}
-              >
-                ${label}<span class="interval-preview">${previews[i] ?? ""}</span>
-              </button>`
-            )}
-          </div>
-          <button id="end-btn" class="btn" @click=${onFinish}>End</button>
+        <button
+          id="reveal-btn"
+          class="btn btn-primary btn-lg reveal-btn"
+          type="button"
+          ?hidden=${revealed}
+          @click=${() => session.reveal()}
+        >Show answer<kbd>Space</kbd></button>
+        <div class="grades" ?hidden=${!revealed}>
+          ${GRADES.map(
+            ([grade, label], i) => html`<button
+              class="grade-btn"
+              type="button"
+              data-grade=${grade}
+              @click=${() => session.grade(grade)}
+            >
+              <kbd>${grade}</kbd>
+              <span class="grade-text">
+                <span class="grade-label">${label}</span>
+                <span class="interval-preview">${previews[i] ?? ""}</span>
+              </span>
+            </button>`
+          )}
         </div>
+        <p class="controls-hint" aria-hidden="true">
+          <span class="hint-idle"
+            >${revealed ? "or swipe the card" : "or tap the card"}</span
+          ><span class="hint-reveal">Release to show the answer</span
+          ><span class="hint-good">Release to grade Good</span
+          ><span class="hint-forgot">Release to grade Forgot</span>
+        </p>
       </div>
     </div>`;
   }
@@ -253,6 +304,7 @@ export function createView(
     );
 
     render(drill(node), container);
+    render(tools(), node.querySelector(".card-tools") as HTMLElement);
     attachGestures();
     syncScrollLock();
     prerenderNext();
@@ -274,25 +326,24 @@ function summary(reviews: Review[], onDone: () => void): TemplateResult {
   for (const r of reviews) counts.set(r.grade, (counts.get(r.grade) ?? 0) + 1);
 
   return html`<div class="finished">
-    <h1>Session Complete</h1>
-    <div class="summary">
-      ${`Reviewed ${reviews.length} card${reviews.length === 1 ? "" : "s"}`}
-    </div>
-    <h2>Stats</h2>
-    <div class="stats">
-      <table>
+    <div class="finished-body">
+      <span class="done-badge">${icon("check", 24)}</span>
+      <h1>Session complete</h1>
+      <p class="summary">
+        ${`Reviewed ${reviews.length} card${reviews.length === 1 ? "" : "s"}`}
+      </p>
+      <div class="list stats">
         ${GRADES.map(
-          ([grade, label]) => html`<tr>
-            <td class="key">${label}</td>
-            <td class="val">${counts.get(grade) ?? 0}</td>
-          </tr>`
+          ([grade, label]) => html`<div class="row">
+            <span class="grade-dot grade-${label.toLowerCase()}"></span>
+            <span class="row-text key">${label}</span>
+            <span class="val">${counts.get(grade) ?? 0}</span>
+          </div>`
         )}
-      </table>
-    </div>
-    <div class="shutdown-container">
+      </div>
       <button
         id="done-btn"
-        class="btn btn-primary shutdown-button"
+        class="btn btn-primary btn-lg btn-block shutdown-button"
         @click=${onDone}
       >
         Done

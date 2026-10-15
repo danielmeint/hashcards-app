@@ -36,6 +36,11 @@ export type Session = {
   readonly revealed: boolean;
   /** 0 to 1, over the whole session including an earlier sitting. */
   readonly progress: number;
+  /** Cards answered for good, and how many the session holds, for "n / total". */
+  readonly done: number;
+  readonly total: number;
+  /** Whether the card on screen has never been reviewed. */
+  readonly currentIsNew: boolean;
   readonly canUndo: boolean;
   readonly finished: boolean;
   /** A write failed, so this session may not survive the device. */
@@ -211,6 +216,16 @@ export async function createSession(
     },
     get progress() {
       return totalCards === 0 ? 0 : completedHashes.size / totalCards;
+    },
+    get done() {
+      return completedHashes.size;
+    },
+    get total() {
+      return totalCards;
+    },
+    get currentIsNew() {
+      const card = queue[0];
+      return card !== undefined && cache.get(card.hash)?.type === "new";
     },
     get canUndo() {
       return undoStack.length > 0;

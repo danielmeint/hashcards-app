@@ -1,4 +1,5 @@
 import { html, nothing, render } from "lit-html";
+import { icon } from "./icons";
 import { GitHubConfig } from "../github";
 import { CaptureResult, CardSyntaxError, createCard } from "../card-edit";
 import { settings } from "../settings";
@@ -161,11 +162,11 @@ export function openCapture(
               </p>
             </div>
             <button
-              class="editor-close"
+              class="icon-btn editor-close"
               type="button"
               aria-label="Close"
               @click=${() => finish(null)}
-            >✕</button>
+            >${icon("x")}</button>
           </header>
           <div class="editor-body">
             ${deckPicker()}

@@ -41,6 +41,8 @@ import {
 import { CONFLICT_RETRIES, migrationHint, pullV1, pushV1, v1Files } from "./compat";
 import { pullDataBranch, pushDataBranch } from "./data-branch";
 import { refreshStates } from "./review-state";
+import { applyPending, pendingOps } from "./inbox-queue";
+import { conflictNotice, runInboxFlush } from "./inbox-commit";
 
 let cachedCards: Card[] | null = null;
 
@@ -160,6 +162,15 @@ async function runSync(
   setSyncStatus({ phase: "syncing", detail: null });
   try {
     const repos = scope.all ?? [config];
+    const notices: string[] = [];
+
+    // Inbox decisions made offline, or left behind by a closed app, go first:
+    // they are the user's own, and the listing below then finds them landed.
+    if (scope.push) {
+      const notice = await flushInboxQuietly(repos.filter((r) => !r.readOnly), report);
+      if (notice) notices.push(notice);
+    }
+
     if (scope.cards) {
       for (const repo of repos) await syncCards(repo, report);
     }
@@ -174,7 +185,6 @@ async function runSync(
     // `inStep` is the conjunction: one collection declining to push is still
     // reviews that have not left the device, and the deck list has to say so.
     let inStep = true;
-    const notices: string[] = [];
     for (const repo of repos) {
       if (repo.readOnly) continue;
       const result = await syncReviews(repo, scope.push, report);
@@ -199,6 +209,27 @@ async function runSync(
       needsSignIn: e instanceof AuthError,
     });
     return false;
+  }
+}
+
+/**
+ * Commit the Inbox's queue as part of a sync. A failure here is not the
+ * sync's: the queue stays, the reviews still go, and the notice says why the
+ * drafts did not. Only a refused credential stops everything, as it would
+ * anyway one request later.
+ */
+async function flushInboxQuietly(
+  repos: RepoConfig[],
+  report: (progress: SyncProgress) => void
+): Promise<string | undefined> {
+  if ((await pendingOps()).length === 0) return undefined;
+  report({ phase: "Saving Inbox" });
+  try {
+    return conflictNotice((await runInboxFlush(repos)).conflicts);
+  } catch (e) {
+    if (e instanceof AuthError) throw e;
+    console.warn("Could not commit Inbox changes:", e);
+    return `Inbox changes not saved yet: ${(e as Error).message}`;
   }
 }
 
@@ -443,7 +474,12 @@ export async function loadCards(): Promise<Card[]> {
   // collection it came from; a card carrying its own stale answer can be, and
   // was — the first migration into the keyed store stamped the file and left
   // every card inside it saying nothing.
-  cachedCards = files.flatMap((f) => inRepo(f.cards, f.repo));
+  // With the Inbox's queued decisions laid over them: a kept draft is a new
+  // card from the moment it is kept, not from the moment it is committed.
+  cachedCards = applyPending(
+    files.flatMap((f) => inRepo(f.cards, f.repo)),
+    await pendingOps()
+  );
   return cachedCards;
 }
 

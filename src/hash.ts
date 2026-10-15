@@ -56,3 +56,15 @@ export async function hashClozeFamily(text: string): Promise<string> {
   const data = concat(encoder.encode("Cloze"), encoder.encode(text));
   return sha256(data);
 }
+
+/**
+ * The SHA git gives a file with this text: SHA-1 over `blob <bytes>\0` and the
+ * bytes. What GitHub's tree listing will report for a file the app just
+ * committed, so the deck store can record it without fetching it back.
+ */
+export async function gitBlobSha(text: string): Promise<string> {
+  const body = encoder.encode(text);
+  const header = encoder.encode(`blob ${body.length}\0`);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", concat(header, body)));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+}

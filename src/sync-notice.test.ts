@@ -106,3 +106,30 @@ describe("what the deck list says about sync", () => {
     ).toMatchObject({ level: "info", action: null });
   });
 });
+
+describe("Inbox changes waiting on the device", () => {
+  it("counts them with the reviews when offline", () => {
+    expect(facts({ online: false, unsyncedReviews: 3, pendingEdits: 2 })!.text).toBe(
+      "Offline — 3 reviews and 2 Inbox changes will sync when you reconnect."
+    );
+    expect(facts({ online: false, pendingEdits: 1 })!.text).toBe(
+      "Offline — 1 Inbox change will sync when you reconnect."
+    );
+  });
+
+  it("names them when signed out", () => {
+    const line = facts({
+      status: { phase: "error", message: "401", needsSignIn: true },
+      pendingEdits: 4,
+    })!;
+    expect(line.text).toBe("Signed out of GitHub — 4 Inbox changes not saved.");
+  });
+
+  it("warns once one has waited a day, measured from the change itself", () => {
+    const old = facts({ pendingEdits: 2, oldestEditAt: ago(25 * HOUR), lastPushedAt: ago(MINUTE) })!;
+    expect(old).toMatchObject({ level: "warn", action: "retry" });
+    expect(old.text).toBe("2 Inbox changes haven't reached GitHub.");
+    // A fresh change is not stale because the last push of reviews was.
+    expect(facts({ pendingEdits: 1, oldestEditAt: ago(MINUTE), lastPushedAt: ago(48 * HOUR) })!.level).toBe("info");
+  });
+});

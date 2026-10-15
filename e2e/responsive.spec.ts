@@ -65,6 +65,24 @@ function seed(github: FakeGitHub): void {
     ].join("\n")
   );
   github.set("Reading list.md", qa([["Who wrote *Middlemarch*?", "George Eliot"]]));
+  // Two drafts for the Inbox, the way an agent leaves them: one with tags and
+  // an Extra note, one cloze with two deletions.
+  github.set(
+    "cs/Drafts.md",
+    [
+      "Status: draft",
+      "Tags: cka/workloads, kubectl",
+      "Q: Which command rolls a Deployment back to its previous revision?",
+      "A: `kubectl rollout undo deployment/<name>`",
+      "Extra: Add `--to-revision=N` to pick a specific one from `rollout history`.",
+      "",
+      "---",
+      "",
+      "Status: draft",
+      "C: A [StatefulSet] gives each Pod a stable [network identity] and its own volume.",
+      "",
+    ].join("\n")
+  );
 }
 
 type Width = 320 | 390 | 820 | 1440;
@@ -157,8 +175,39 @@ async function review(page: Page, deck: string, tag: string, grade: string): Pro
   await expect(page.locator(".deck-list-view")).toBeVisible();
 }
 
+/** The Inbox: a draft, the editor over it, a mid-swipe on a phone, and the end. */
+async function inbox(page: Page, tag: string): Promise<void> {
+  await page.locator("#inbox-btn").click();
+  await expect(page.locator(".inbox .card")).toBeVisible();
+  const controls = [
+    page.locator("#inbox-back"),
+    page.locator("#inbox-undo"),
+    page.locator("#inbox-edit"),
+    page.locator(".inbox .card"),
+    page.locator("#discard-btn"),
+    page.locator("#skip-btn"),
+    page.locator("#keep-btn"),
+  ];
+  await check(page, `${tag}-inbox`, controls);
+  await page.locator("#inbox-edit").click();
+  await expect(page.locator(".editor-text")).toBeVisible();
+  await check(page, `${tag}-inbox-editor`, [page.locator(".editor-save"), page.locator(".editor-cancel")]);
+  await page.locator(".editor-cancel").click();
+  await page.locator("#keep-btn").click();
+  await expect(page.locator(".inbox .card-content")).toContainText("StatefulSet");
+  if (await page.evaluate(() => "ontouchstart" in window)) {
+    await midSwipe(page, `${tag}-inbox-swipe`, [page.locator("#keep-btn")]);
+  }
+  await check(page, `${tag}-inbox-cloze`, controls);
+  await page.locator("#skip-btn").click();
+  await expect(page.locator(".inbox-finished")).toBeVisible();
+  await check(page, `${tag}-inbox-finished`, [page.locator("#inbox-done"), page.locator("#inbox-undo")]);
+  await page.locator("#inbox-done").click();
+  await expect(page.locator(".deck-list-view")).toBeVisible();
+}
+
 /** A finger held partway through a right swipe, then taken back: nothing graded. */
-async function midSwipe(page: Page, name: string): Promise<void> {
+async function midSwipe(page: Page, name: string, controls?: Locator[]): Promise<void> {
   const cdp = await page.context().newCDPSession(page);
   const box = (await page.locator(".card-container").boundingBox())!;
   const x = box.x + box.width / 3;
@@ -171,7 +220,7 @@ async function midSwipe(page: Page, name: string): Promise<void> {
   await touch("touchStart");
   for (const dx of [10, 30, 60, 100]) await touch("touchMove", dx);
   await expect(page.locator(".swipe-hint")).toBeVisible();
-  await check(page, name, [page.locator(".swipe-hint"), ...(await page.locator(".grade-btn").all())]);
+  await check(page, name, [page.locator(".swipe-hint"), ...(controls ?? (await page.locator(".grade-btn").all()))]);
   for (const dx of [60, 20, 0]) await touch("touchMove", dx);
   await touch("touchEnd");
   await cdp.detach();
@@ -189,7 +238,9 @@ async function tour(page: Page, github: FakeGitHub, tag: string): Promise<void> 
     page.locator("#stats-btn"),
     page.locator("#settings-btn"),
   ]);
-  await check(page, `${tag}-today-full`, [page.locator(".deck-row").last()], true);
+  await check(page, `${tag}-today-full`, [page.locator(".deck-row").last(), page.locator("#inbox-btn")], true);
+
+  await inbox(page, tag);
 
   await review(page, "Kubernetes", tag, "3");
   await review(page, "Rust", tag, "1");

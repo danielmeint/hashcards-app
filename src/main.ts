@@ -7,6 +7,7 @@ import { renderSettings } from "./views/settings";
 import { renderDeckList } from "./views/deck-list";
 import { renderDrill } from "./views/drill";
 import { renderStats } from "./views/stats";
+import { renderInbox } from "./views/inbox";
 import { getDemoData } from "./demo";
 import { warmTypesetting } from "./typeset";
 import { applyTheme, watchSystemTheme } from "./theme";
@@ -30,7 +31,7 @@ function freshHost(): HTMLElement {
   return host;
 }
 
-type View = "settings" | "decks" | "drill" | "stats";
+type View = "settings" | "decks" | "drill" | "stats" | "inbox";
 
 /**
  * Views that outlive their own render — the deck list listens for background
@@ -63,7 +64,8 @@ async function navigate(
         host,
         (cards, session) => navigate("drill", cards, session),
         () => navigate("settings"),
-        () => navigate("stats")
+        () => navigate("stats"),
+        () => navigate("inbox")
       );
       break;
 
@@ -77,6 +79,10 @@ async function navigate(
 
     case "stats":
       await renderStats(host, () => navigate("decks"));
+      break;
+
+    case "inbox":
+      disposeView = await renderInbox(host, () => navigate("decks"));
       break;
   }
 }

@@ -374,6 +374,48 @@ button.row, a.row, summary.row { cursor: pointer; }
 .finished .btn { margin-top: 12px; }
 .grade-dot { width: 10px; height: 10px; border-radius: 3px; }
 
+/* ===== Inbox ===== */
+
+/* Today's way in: a row like a deck's, marked as something waiting. */
+.row-icon { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--accent-tint); color: var(--accent); }
+
+/* The review screen, with both sides showing and three decisions instead of four grades. */
+.inbox-title { flex: none; font-size: 15px; font-weight: 700; }
+.card-source { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.card-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px/1.4 var(--font-mono); color: var(--faint); }
+.draft-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.draft-tag { padding: 2px 8px; border-color: var(--border-strong); color: var(--muted); font-size: 12px; font-weight: 500; }
+.inbox-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.7fr) minmax(0, 1fr); gap: 8px; }
+.inbox-btn {
+  min-width: 0; height: var(--control-h); display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 0 6px; border: 1px solid transparent; border-radius: 14px; font-size: 15px; font-weight: 600;
+}
+.inbox-btn .icon { stroke-width: 2.2; }
+.inbox-btn[data-action="discard"] { background: var(--g1-bg); color: var(--g1-fg); }
+.inbox-btn[data-action="skip"] { background: var(--surface); border-color: var(--border-strong); color: var(--muted); }
+.inbox-btn[data-action="keep"] { background: var(--g3-bg); color: var(--g3-fg); }
+.inbox-btn:active { transform: scale(0.98); }
+@media (hover: hover) {
+  .inbox-btn:hover { filter: brightness(0.97) saturate(1.15); }
+}
+/* The drill's stamp names an interval; a decision has none. */
+.inbox .card-container .swipe-hint::after { content: none; }
+.hint-keep, .hint-discard { display: none; }
+.inbox:has(.swipe-hint-positive:not([hidden])) .hint-keep,
+.inbox:has(.swipe-hint:not(.swipe-hint-positive):not([hidden])) .hint-discard { display: inline; }
+.inbox:has(.swipe-hint-positive:not([hidden])) .inbox-btn:not([data-action="keep"]),
+.inbox:has(.swipe-hint:not(.swipe-hint-positive):not([hidden])) .inbox-btn:not([data-action="discard"]) { opacity: 0.4; }
+.inbox:has(.swipe-hint-positive:not([hidden])) .inbox-btn[data-action="keep"] { box-shadow: inset 0 0 0 2px var(--g3-line); }
+.inbox:has(.swipe-hint:not(.swipe-hint-positive):not([hidden])) .inbox-btn[data-action="discard"] { box-shadow: inset 0 0 0 2px var(--g1-line); }
+
+.decision-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--faint); }
+.decision-dot[data-decision="keep"] { background: var(--g3-line); }
+.decision-dot[data-decision="discard"] { background: var(--g1-line); }
+.decision-dot[data-decision="edit"] { background: var(--accent); }
+.finished-actions { display: flex; gap: 8px; width: 100%; margin-top: 12px; }
+.finished-actions .btn { flex: 1; margin-top: 0; }
+.inbox-finished .summary code { font-size: 0.9em; }
+
 /* ===== Card content ===== */
 
 .rich-text { font-family: var(--font-content); font-size: clamp(20px, 15px + 2.6vw, 28px); line-height: 1.5; overflow-wrap: break-word; }

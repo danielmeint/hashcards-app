@@ -97,6 +97,12 @@ C: In Kubernetes, a [Deployment] manages a [ReplicaSet].
 - **`Reverse: yes`** (basic cards only) also schedules answer→question.
 - **`Status:`** is `draft` (not scheduled, shown in the Inbox) or `suspended`
   (kept, not scheduled). Absent means active.
+- **`Extra:`** is an optional last section of any card, after `A:` or the
+  `C:` text, like `A:` starts the answer. It is a note shown only after reveal
+  (context, a mnemonic, a docs pointer), never part of the question, and it
+  does not affect the card's identity.
+- **Tags** are lowercase, with `/` for hierarchy (`cka/type/syntax-pattern`),
+  and are normalised on read.
 - The frontmatter stays TOML between `---` lines and gains `tags`. A deck name
   still defaults to the file name.
 - Cloze syntax, `---` separators, Markdown, LaTeX, code and images are
@@ -354,6 +360,11 @@ into `hc` once M5 exists.
   tool without Daniel's go-ahead. Work on copies.
 - E2E port: set `E2E_PORT` per worktree so parallel runs don't share a dev
   server.
+- Worktrees share the main checkout's `node_modules` through a symlink. Never
+  run `npm install` or `npm ci` from a worktree; add dependencies on `v1`.
+- **Hashcards is not an Anki clone.** The Anki import is a one-off migration.
+  Map Anki's concepts onto hashcards-native ones (as with `Extra:`), and don't
+  grow the format to mirror Anki's features.
 
 ---
 

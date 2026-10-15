@@ -9,6 +9,8 @@ export type BasicCard = {
   type: "basic";
   question: string;
   answer: string;
+  /** The card's `Extra:` section: Markdown shown only after reveal. */
+  extra?: string;
 };
 
 export type ClozeCard = {
@@ -16,6 +18,8 @@ export type ClozeCard = {
   text: string;
   start: number;
   end: number;
+  /** The block's `Extra:` section, the same on every deletion of it. */
+  extra?: string;
 };
 
 export type CardContent = BasicCard | ClozeCard;

@@ -7,6 +7,7 @@ import { parseFile } from "../../src/parser";
 import { assertNotLiveCollection, openCollectionCopy, readCollection } from "./collection.ts";
 import { loadAnkictlConfig, loadDeckFiles, parseDeckFile } from "./decks.ts";
 import { buildImport, type ImportResult } from "./importer.ts";
+import { pb } from "./protobuf-writer.ts";
 
 /**
  * A tiny collection with Anki's real quirks: WAL mode, and `COLLATE unicase`
@@ -23,7 +24,8 @@ function makeCollection(path: string): void {
     CREATE TABLE notetypes (id integer NOT NULL PRIMARY KEY, name text NOT NULL COLLATE nocase);
     CREATE TABLE fields (ntid integer NOT NULL, ord integer NOT NULL, name text NOT NULL COLLATE nocase,
       PRIMARY KEY (ntid, ord)) WITHOUT ROWID;
-    CREATE TABLE decks (id integer PRIMARY KEY NOT NULL, name text NOT NULL COLLATE nocase);
+    CREATE TABLE decks (id integer PRIMARY KEY NOT NULL, name text NOT NULL COLLATE nocase, kind blob NOT NULL);
+    CREATE TABLE deck_config (id integer PRIMARY KEY NOT NULL, name text NOT NULL COLLATE nocase, config blob NOT NULL);
     CREATE TABLE notes (id integer PRIMARY KEY, mid integer NOT NULL, tags text NOT NULL, flds text NOT NULL);
     CREATE TABLE cards (id integer PRIMARY KEY, nid integer NOT NULL, did integer NOT NULL, ord integer NOT NULL,
       type integer NOT NULL, queue integer NOT NULL, due integer NOT NULL, ivl integer NOT NULL,
@@ -41,8 +43,16 @@ function makeCollection(path: string): void {
     INSERT INTO notetypes VALUES (10, 'Flashcards-as-Code Basic'), (20, 'Flashcards-as-Code Cloze'), (30, 'Basic');
     INSERT INTO fields VALUES (10, 0, 'Front'), (10, 1, 'Back'), (10, 2, 'Key'),
       (20, 0, 'Text'), (20, 1, 'Extra'), (20, 2, 'key'), (30, 0, 'Front'), (30, 1, 'Back');
-    INSERT INTO decks VALUES (1, 'Default'), (100, 'Cka' || char(31) || 'Storage');
   `);
+  // Default: never optimised. CKA: FSRS-6 parameters, and the Storage deck
+  // overrides its retention. A filtered deck has no preset.
+  const deck = db.prepare("INSERT INTO decks VALUES (?, ?, ?)");
+  deck.run(1, "Default", pb.blob(pb.bytes(1, pb.uint(1, 1))));
+  deck.run(100, "Cka\x1fStorage", pb.blob(pb.bytes(1, [...pb.uint(1, 2), ...pb.float(10, 0.85)])));
+  deck.run(200, "Cram", pb.blob(pb.bytes(2, pb.uint(1, 1))));
+  const preset = db.prepare("INSERT INTO deck_config VALUES (?, ?, ?)");
+  preset.run(1, "Default", pb.blob(pb.packedFloats(1, [1, 10]), pb.float(37, 0.9)));
+  preset.run(2, "CKA", pb.blob(pb.packedFloats(6, FSRS6), pb.float(37, 0.92)));
   const sep = "\x1f";
   const note = db.prepare("INSERT INTO notes VALUES (?, ?, ?, ?)");
   note.run(1, 10, " storage leech ", ["Q", "A", "pv-reclaim"].join(sep));
@@ -79,12 +89,17 @@ function makeCollection(path: string): void {
   db.close();
 }
 
+const FSRS6 = [
+  0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666, 0.796, 1.4835,
+  0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542,
+];
+
 const DECK = `deck: Cka::Storage
 notetype: Flashcards-as-Code Basic
 tags: [storage]
 notes:
 - key: pv-reclaim
-  tags: [CKA::Type::Syntax-Pattern]
+  tags: [CKA::Type::Syntax-Pattern, Storage, c++]
   front: Reclaim policy that keeps the data?
   back: |-
     **Retain**\\
@@ -139,7 +154,7 @@ tags = ["storage"]
 ---
 
 ID: pv-reclaim
-Tags: CKA::Type::Syntax-Pattern
+Tags: cka/type/syntax-pattern
 Q: Reclaim policy that keeps the data?
 A: **Retain**\\
 (\\~1 min, 2\\~3 retries)
@@ -148,8 +163,7 @@ A: **Retain**\\
 
 ID: pv-binding
 C: [\`storageClassName\`] matches, capacity [≥ request], mode [RWO]
-
-> \`k describe pvc\` \\[events\\]
+Extra: \`k describe pvc\` [events]
 
 ---
 
@@ -160,6 +174,11 @@ A: A
     const cards = await parseFile(md, "cka/storage.md", "storage");
     expect(cards).toHaveLength(5); // 2 basic + 3 deletions
     expect(cards[0].deckName).toBe("CKA: Storage");
+    expect(cards[0].tags).toEqual(["storage", "cka/type/syntax-pattern"]);
+    // The cloze Extra field is the card's Extra section, on every deletion.
+    expect(cards.filter((c) => c.id === "pv-binding").map((c) => c.content.extra)).toEqual(
+      Array(3).fill("`k describe pvc` [events]")
+    );
   });
 
   it("maps cloze ordinals by first appearance", () => {
@@ -206,11 +225,21 @@ A: A
     });
   });
 
+  it("writes no event for a skipped row, deleted cards' included", () => {
+    const written = [...result.files]
+      .filter(([path]) => path.startsWith("reviews/"))
+      .flatMap(([, text]) => text.trim().split("\n"));
+    expect(written).toHaveLength(result.summary.reviews.imported);
+    // Row 999's card is gone from the collection: counted above, written nowhere.
+    expect([...result.files.values()].join("\n")).not.toContain("2026-09-07T10:00:00");
+  });
+
   it("reports slugged keys, dropped hints, Anki-only tags and partial suspension", () => {
     expect(result.summary.idChanges).toEqual([{ key: "Not A Slug", id: "not-a-slug" }]);
     const messages = result.summary.warnings.map((w) => `${w.key}: ${w.message}`).join("\n");
     expect(messages).toMatch(/pv-binding: c2 hint "hint" dropped/);
     expect(messages).toMatch(/pv-reclaim: Anki-only tags not imported: leech/);
+    expect(messages).toMatch(/pv-reclaim: tag "c\+\+" has no valid hashcards form; dropped/);
     expect(messages).toMatch(/pv-binding: 1 of 3 Anki cards suspended/);
     expect(messages).toMatch(/Not A Slug: not in the Anki collection/);
     expect(messages).toMatch(/gone-from-files: Anki note 3/);
@@ -237,6 +266,15 @@ A: A
         decay: 0.154,
         lastReview: "2026-09-30T11:40:21.000Z",
       },
+    });
+    expect(ref.deckConfigs).toEqual({
+      "1": { name: "Default", fsrs: { version: null, params: [], desiredRetention: 0.9 } },
+      "2": { name: "CKA", fsrs: { version: 6, params: FSRS6, desiredRetention: 0.92 } },
+    });
+    expect(ref.decks).toEqual({
+      "Cka::Storage": { config: 2, desiredRetention: 0.85 },
+      Cram: { config: null },
+      Default: { config: 1 },
     });
     expect(ref.cards["pv-binding:3"]).toMatchObject({ state: "new", due: null, newPosition: 7, fsrs: null });
     expect(ref.cards["pv-binding:1"]).toMatchObject({ suspended: true });

@@ -18,6 +18,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { realpathSync } from "node:fs";
 import type { RevlogRow } from "./revlog.ts";
+import { type DeckKind, type FsrsSettings, decodeDeckConfig, decodeDeckKind } from "./deck-config.ts";
 
 /**
  * The importer's one hard rule: never the live collection, only a copy.
@@ -91,6 +92,10 @@ export type CollectionData = {
   schedVer: number | null;
   fsrs: boolean;
   decks: Map<number, string>;
+  /** Deck id -> its kind: which options preset a normal deck uses. */
+  deckKinds: Map<number, DeckKind>;
+  /** Options preset id -> its name and FSRS settings. */
+  deckConfigs: Map<number, { name: string; fsrs: FsrsSettings }>;
   notes: Map<number, CollectionNote>;
   cards: Map<number, CollectionCard>;
   revlog: RevlogRow[];
@@ -126,8 +131,32 @@ export function readCollection(db: DatabaseSync, keyField: string): CollectionDa
   }
 
   const decks = new Map<number, string>();
-  for (const r of db.prepare("SELECT id, name FROM decks").all() as { id: number; name: string }[]) {
-    decks.set(r.id, r.name.replaceAll("\x1f", "::"));
+  const deckKinds = new Map<number, DeckKind>();
+  for (const r of db.prepare("SELECT id, name, kind FROM decks").all() as {
+    id: number;
+    name: string;
+    kind: Uint8Array;
+  }[]) {
+    const name = r.name.replaceAll("\x1f", "::");
+    decks.set(r.id, name);
+    try {
+      deckKinds.set(r.id, decodeDeckKind(r.kind));
+    } catch (e) {
+      throw new Error(`deck "${name}": cannot read its kind: ${(e as Error).message}`);
+    }
+  }
+
+  const deckConfigs = new Map<number, { name: string; fsrs: FsrsSettings }>();
+  for (const r of db.prepare("SELECT id, name, config FROM deck_config").all() as {
+    id: number;
+    name: string;
+    config: Uint8Array;
+  }[]) {
+    try {
+      deckConfigs.set(r.id, { name: r.name, fsrs: decodeDeckConfig(r.config) });
+    } catch (e) {
+      throw new Error(`deck options "${r.name}": cannot read its config: ${(e as Error).message}`);
+    }
   }
 
   const notes = new Map<number, CollectionNote>();
@@ -171,6 +200,8 @@ export function readCollection(db: DatabaseSync, keyField: string): CollectionDa
     schedVer: typeof schedVer === "number" ? schedVer : null,
     fsrs: configValue(db, "fsrs") === true,
     decks,
+    deckKinds,
+    deckConfigs,
     notes,
     cards,
     revlog,

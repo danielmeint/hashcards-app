@@ -143,3 +143,44 @@ describe("cloze rendering", () => {
     expect(html).toContain("euros");
   });
 });
+
+/**
+ * The `Extra:` section is rendered with the card but hidden until reveal, by
+ * the same `.answer` rule that hides a basic card's back.
+ */
+describe("the Extra section", () => {
+  beforeAll(() => loadMarkdown());
+  beforeEach(() => localStorage.clear());
+
+  const parsed = async (text: string): Promise<Card> => {
+    const [card] = await parseFile(text, "aws.md", "aws");
+    return { ...card, repo: "someone/cards" };
+  };
+
+  /** The element holding the extra, from the HTML as the drill mounts it. */
+  const extraOf = (html: string): Element | null => {
+    const root = document.createElement("div");
+    root.innerHTML = html;
+    return root.querySelector(".extra");
+  };
+
+  it("follows a basic card's answer, hidden like it", async () => {
+    const html = renderCardBody(await parsed("Q: Capital of Estonia?\nA: Tallinn\nExtra: *Reval* in German"));
+    const extra = extraOf(html);
+    expect(extra?.classList.contains("answer")).toBe(true);
+    expect(extra?.innerHTML).toContain("<em>Reval</em> in German");
+    expect(html.indexOf("Tallinn")).toBeLessThan(html.indexOf("Reval"));
+  });
+
+  it("follows a cloze card's text, hidden until reveal", async () => {
+    const html = renderCardBody(await parsed("C: The capital of [Norway] is Oslo.\nExtra: See `docs/oslo.md`"));
+    const extra = extraOf(html);
+    expect(extra?.classList.contains("answer")).toBe(true);
+    expect(extra?.innerHTML).toContain("<code>docs/oslo.md</code>");
+  });
+
+  it("is absent from a card without one", async () => {
+    expect(extraOf(renderCardBody(await parsed("Q: a\nA: b")))).toBeNull();
+    expect(extraOf(renderCardBody(await parsed("C: [a] b")))).toBeNull();
+  });
+});

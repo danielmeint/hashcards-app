@@ -52,12 +52,14 @@ out/
 |---|---|
 | note `key` (in the `Key` field, per `ankictl.yaml` `key_field`) | `ID: <key>`. Kept as is when it matches `[a-z0-9][a-z0-9-]{1,63}`. Otherwise it is slugged with ankictl's rules, or becomes `k-<hash>` when nothing is sluggable, with `-2`, `-3` on collision. Changes are listed in the report. |
 | deck `Cka::Workloads And Scheduling` | file `cka/workloads-and-scheduling.md`, `name = "CKA: Workloads and Scheduling"` (minor words lowercased, `--acronym` applied) |
-| file `tags:` | frontmatter `tags = [...]` |
-| note `tags:` | `Tags: a, b` (the file's tags are not repeated) |
+| file `tags:` | frontmatter `tags = [...]`, normalised (below) |
+| note `tags:` | `Tags: a, b`, normalised; the file's tags are not repeated |
+| tag `CKA::Type::Syntax-Pattern` | `cka/type/syntax-pattern`: lowercase, `::` → `/`, whitespace → `-`, as the parser normalises. A tag with no valid form (`c++`) is dropped with a warning. |
 | Basic `front` / `back` | `Q:` / `A:` |
 | `Basic (and reversed card)` | `Reverse: yes`; Anki card ord 1 → key `<id>:r` |
 | Cloze `text` | `C:` with `{{cN::x}}` / `{{cN::x::hint}}` → `[x]` |
-| Cloze `extra`, other extra fields | appended under the cloze as a `>` quote; on Basic notes, appended to the answer |
+| Cloze `Extra` (`extra`), stock Cloze `Back Extra` (`back_extra`) | the card's `Extra:` section, shown only after reveal, as in Anki |
+| any other field beyond the card's sides | appended to the `Extra:` section, with a warning. Flashcards-as-Code Basic has only `Front` / `Back` / `Key`, so Basic notes normally have no Extra. |
 | `<field>_html` (raw HTML) | kept as HTML (marked passes it through); MathJax `\(…\)` / `\[…\]` → `$…$` / `$$…$$` |
 | all cards of a note suspended | `Status: suspended` |
 | Anki card ord *k* of a cloze note | key `<id>:<n>`, where *n* is the 1-based position of c*k+1*'s first deletion in the text |
@@ -92,6 +94,25 @@ relearning), suspended and buried flags, interval, reps and lapses, and the
 **due date**. With FSRS on, it also has `cards.data`: stability,
 difficulty, desired retention, decay and last review time.
 
+It also has Anki's **FSRS parameters**, since replaying a card needs the
+parameters it was scheduled with:
+
+```json
+"deckConfigs": { "1": { "name": "Default", "fsrs": { "version": 6, "params": [0.212, …], "desiredRetention": 0.9 } } },
+"decks": { "Cka::Storage": { "config": 1 }, "Cram": { "config": null } }
+```
+
+- `deckConfigs` is every deck options preset, decoded from the protobuf in
+  `deck_config.config` (`protobuf.ts`, `deck-config.ts`). `version` is the
+  newest of `fsrs_params_6`, `_5`, `_4` that has parameters, which is the one
+  Anki uses. `version: null` with no `params` means the preset was never
+  optimised, so Anki schedules with the built-in defaults of its FSRS version,
+  which the collection does not record. Floats are written as the shortest
+  decimal of the stored float32 (`0.9`, not `0.8999999761581421`).
+- `decks` is each deck's preset, from `decks.kind`, plus `desiredRetention`
+  where the deck overrides its preset's. Filtered decks have `config: null`;
+  their cards schedule by their home deck's.
+
 How `due` is read depends on the queue:
 
 - **Review and interday-learning cards** store a day number, counted from
@@ -122,8 +143,8 @@ Hashcards renders it with marked (GFM, `breaks: false`). They mostly agree:
 - **A line that is exactly `---`** would end the card. After a blank line it
   becomes `***`, the same horizontal rule. After text it is a setext heading,
   which is flagged.
-- **A line starting `Q:`, `A:` or `C:`** inside a field would start a new card.
-  It is flagged.
+- **A line starting `Q:`, `A:`, `C:` or `Extra:`** inside a field would start
+  a new card or section. It is flagged.
 - **`$…$`** that hashcards would typeset as maths is flagged. Shell
   `$(…)` inside code spans is safe, because KaTeX skips `<code>`.
 - **GFM autolinks** (`www.x.io`, `https://…` in prose) become links in
@@ -139,16 +160,17 @@ Hashcards renders it with marked (GFM, `breaks: false`). They mostly agree:
   first one. Flagged, not silently merged.
 - **Nested clozes**: inner markers are flattened to text, and the inner card is
   lost. Flagged.
-- **Cloze `Extra`**: Anki shows it only on the back. Hashcards has no
-  back-extra for clozes, so it is now visible on the front as well, as a quote.
+- **Anki tags that do not fit the tag pattern** (`c++`, `a.b`, non-ASCII)
+  are dropped with a warning. The CKA decks have none.
 - **Per-card suspension inside a cloze note**: `Status:` applies to the whole
   note, so a partly suspended note stays active and is flagged.
 - **Anki-only tags** (for example `leech`, which Anki adds itself, or tags
   added in the GUI and never pulled) are listed but not imported. The deck
   files own tags.
 - **Reviews of deleted cards**: `revlog` outlives its cards, but there is no
-  card → note → key link once the card is gone, so these rows are counted and
-  skipped.
+  card → note → key link once the card is gone. These rows are counted in the
+  summary (`card deleted from collection`) and written nowhere: no event, no
+  reference entry.
 - **Anki's day boundary** is the rollover hour (4 a.m.). Hashcards' days are
   local calendar days. A review between midnight and 4 a.m. counts as the
   previous day in Anki and as that day in hashcards. This matters only for
@@ -167,13 +189,14 @@ the collation swap cannot change a result.
 
 ## Folding into `hc import anki` (M5)
 
-- `convert.ts`, `revlog.ts`, `decks.ts`, `collection.ts` and `importer.ts`
+- `convert.ts`, `revlog.ts`, `decks.ts`, `collection.ts`, `protobuf.ts`,
+  `deck-config.ts` and `importer.ts`
   move into `src/core/import/anki/` (or `cli/`) unchanged. They are
   platform-neutral apart from `node:sqlite` and `node:fs` in `collection.ts`
   and `decks.ts`, which are CLI-only anyway.
 - The card types, the ID regex and the event type are replaced by M1's
   parser and M2's `src/core/events.ts` (serialiser, `src` field). The local
-  `ID_PATTERN`, `ReviewEvent` and `renderDeck` exist only because those
+  `ID_PATTERN`, `TAG_PATTERN`, `ReviewEvent` and `renderDeck` exist only because those
   milestones have not landed yet.
 - The CLI wrapper becomes `hc import anki --decks … --collection … --out …`.
   Writing into a repo stays out of scope: the output is reviewed and
@@ -188,14 +211,17 @@ the collation swap cannot change a result.
 npx vitest run tools/import-anki
 ```
 
-There are three test files:
+There are five test files:
 
 - `convert.test.ts`: cloze conversion, checked against the app's own parser;
-  IDs and slugs; deck paths and names; and the Markdown dialect, checked
+  IDs and slugs; tags, checked against the parser's normalisation; deck paths and names; and the Markdown dialect, checked
   against marked.
 - `revlog.test.ts`: the type and ease mapping, the time cap, `tz` across both
   2026 DST switches, local months, and Anki due dates.
+- `protobuf.test.ts` and `deck-config.test.ts`: the wire-format reader and
+  the FSRS preset and deck-kind decoders, on synthetic blobs built with
+  `protobuf-writer.ts`.
 - `importer.test.ts`: the whole pipeline over a synthetic collection built
   with `node:sqlite`. The collection is in WAL mode with a `unicase` schema,
-  and has one revlog row for every skip reason. The generated deck file is
-  parsed with `src/parser.ts`.
+  and has one revlog row for every skip reason, and protobuf deck and preset
+  blobs. The generated deck file is parsed with `src/parser.ts`.

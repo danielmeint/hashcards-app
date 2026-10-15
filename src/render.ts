@@ -158,10 +158,22 @@ export function renderCardBody(card: Card): string {
   if (content.type === "basic") {
     return (
       `<div class="question">${richText(renderMarkdown(content.question, card))}</div>` +
-      `<div class="answer">${richText(renderMarkdown(content.answer, card))}</div>`
+      `<div class="answer">${richText(renderMarkdown(content.answer, card))}</div>` +
+      renderExtra(content.extra, card)
     );
   }
-  return `<div class="prompt">${richText(
-    renderMarkdown(withClozeMarkers(content), card)
-  )}</div>`;
+  return (
+    `<div class="prompt">${richText(renderMarkdown(withClozeMarkers(content), card))}</div>` +
+    renderExtra(content.extra, card)
+  );
+}
+
+/**
+ * The `Extra:` section, after everything else. It carries the `answer` class
+ * so the rules that hide an answer until reveal hide it too, on both card
+ * types: a note under a cloze would otherwise give the deletion away.
+ */
+function renderExtra(extra: string | undefined, card: Card): string {
+  if (extra === undefined) return "";
+  return `<div class="answer extra">${richText(renderMarkdown(extra, card))}</div>`;
 }

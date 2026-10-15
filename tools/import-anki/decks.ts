@@ -119,6 +119,8 @@ export type OutCard = {
   tags: string[];
   status: "suspended" | null;
   reverse: boolean;
+  /** The card's `Extra:` section, shown after reveal; null for none. */
+  extra: string | null;
 } & ({ type: "basic"; question: string; answer: string } | { type: "cloze"; text: string });
 
 export type OutDeck = { name: string; tags: string[]; cards: OutCard[] };
@@ -128,7 +130,7 @@ function tomlString(s: string): string {
   return JSON.stringify(s);
 }
 
-function side(tag: "Q" | "A" | "C", text: string): string {
+function side(tag: "Q" | "A" | "C" | "Extra", text: string): string {
   // `Q:` alone then the text is equivalent (the parser trims), and keeps a
   // first line that is empty, or indented, from being changed by the trim.
   return text === "" || /^\s/.test(text) ? `${tag}:\n${text}` : `${tag}: ${text}`;
@@ -144,6 +146,7 @@ export function renderCard(card: OutCard): string {
   } else {
     lines.push(side("C", card.text));
   }
+  if (card.extra) lines.push(side("Extra", card.extra));
   return lines.join("\n");
 }
 

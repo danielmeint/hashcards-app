@@ -89,6 +89,33 @@ export function assignCardIds(keys: string[]): Map<string, string> {
 }
 
 // --------------------------------------------------------------------------
+// Tags
+
+/**
+ * The parser's tag pattern (src/parser.ts `TAG_PATTERN`, CARD_FORMAT_SPEC.md
+ * "Tags:"). Repeated rather than imported because this file runs under Node's
+ * type stripping, which cannot follow the app's extensionless imports; a test
+ * checks the two agree.
+ */
+export const TAG_PATTERN = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/;
+
+/**
+ * An Anki tag in the form the parser normalises every tag to:
+ * `CKA::Type::Syntax-Pattern` -> `cka/type/syntax-pattern`. Written out
+ * normalised rather than left for the parser, so the files read the way they
+ * will be shown. Null when nothing valid is left (`c++`); the caller warns.
+ */
+export function toTag(ankiTag: string): string | null {
+  const tag = ankiTag
+    .trim()
+    .toLowerCase()
+    .replace(/::/g, "/")
+    .replace(/\s+/g, "-")
+    .replace(/^\/+|\/+$/g, "");
+  return TAG_PATTERN.test(tag) ? tag : null;
+}
+
+// --------------------------------------------------------------------------
 // Deck paths and names
 
 const MINOR_WORDS = new Set(["a", "an", "and", "as", "at", "by", "for", "in", "of", "on", "or", "the", "to", "vs"]);
@@ -330,7 +357,8 @@ export function looksLikeMath(prose: string): boolean {
  * - A line that is exactly `---` ends the card in a hashcards file. After a
  *   blank line it is a thematic break and becomes `***`; after text it is a
  *   setext heading and is flagged.
- * - A line starting `Q:`, `A:` or `C:` would start a new card. Flagged.
+ * - A line starting `Q:`, `A:`, `C:` or `Extra:` would start a new card or
+ *   section. Flagged.
  * - `$…$` that hashcards would typeset as maths. Flagged.
  */
 export function convertMarkdown(source: string): MarkdownConversion {
@@ -357,8 +385,9 @@ export function convertMarkdown(source: string): MarkdownConversion {
         warnings.push(`line ${i + 1}: setext \`---\` heading would end the card; fix by hand`);
       }
     }
-    if (/^(Q|A|C):/.test(line)) {
-      warnings.push(`line ${i + 1} starts with "${line.slice(0, 2)}", which starts a new card`);
+    const marker = line.match(/^(Q:|A:|C:|Extra:)/);
+    if (marker) {
+      warnings.push(`line ${i + 1} starts with "${marker[1]}", which starts a new card or section`);
     }
   }
   text = lines.join("\n");

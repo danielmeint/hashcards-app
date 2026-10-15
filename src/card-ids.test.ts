@@ -106,6 +106,17 @@ A: ![Sweden on the map](map-swe.png)
     expect(await hashes(stampIds(DECK))).toEqual(await hashes(DECK));
   });
 
+  it("keeps a card's Extra section, and puts no ID inside it", async () => {
+    const text = "Q: a\nA: b\nExtra: a note\nover two lines\n---\nC: [c] d\nExtra: another\n";
+    const stamped = stampIds(text, sequence());
+    expect(unstamp(stamped, text)).toBe(text);
+    const cards = await parseFile(stamped, "t.md", "t");
+    expect(cards.map((c) => [c.key, c.content.extra])).toEqual([
+      ["id-1", "a note\nover two lines"],
+      ["id-2:1", "another"],
+    ]);
+  });
+
   it("is idempotent", () => {
     const once = stampIds(DECK);
     expect(stampIds(once)).toBe(once);

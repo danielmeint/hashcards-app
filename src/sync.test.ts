@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { GitHubConfig, RepoConfig } from "./github";
 import { Card, Grade, Review } from "./types";
@@ -17,6 +19,11 @@ const CONFIG: GitHubConfig = {
   repo: "cards",
   branch: "main",
 };
+
+/** Base64 of the UTF-8 bytes, as GitHub encodes contents. Plain `btoa` takes Latin-1 only. */
+function base64(text: string): string {
+  return btoa(Array.from(new TextEncoder().encode(text), (b) => String.fromCharCode(b)).join(""));
+}
 
 /** A stand-in repo, and a record of what was actually asked of it. */
 class FakeRepo {
@@ -295,7 +302,7 @@ class FakeRepo {
       if (!file) return new Response(null, { status: 404 });
       this.fetchedPaths.push(path);
       return new Response(
-        JSON.stringify({ content: btoa(file.content), sha: file.sha }),
+        JSON.stringify({ content: base64(file.content), sha: file.sha }),
         { status: 200 }
       );
     }
@@ -1198,6 +1205,144 @@ describe("a collection that has not been migrated", () => {
       { card: key, grade: 3 },
     ]);
     expect(app.state.getSyncStatus()).toEqual({ phase: "idle" });
+  });
+});
+
+/**
+ * The other end of `hc migrate` (PLAN-1.0 M4): the app reading a collection
+ * before and after it was migrated. The repo is a copy of my-hashcards
+ * (`cli/fixtures/v1-repo`), migrated with the same pure planner `hc` uses; the
+ * CLI's own tests cover the git side.
+ */
+describe("a collection migrated by hc migrate", () => {
+  // A path, not a URL: jsdom brings its own `URL`, which `fs` does not take.
+  const fixture = (path: string) =>
+    readFileSync(join(import.meta.dirname, "../cli/fixtures/v1-repo", path), "utf8");
+  const DECKS = [
+    "geography/europe/Europe_Central.md",
+    "geography/europe/Europe_Nordic_Baltic.md",
+    "geography/europe/Europe_Southern.md",
+    "geography/europe/Europe_Western.md",
+    "geography/germany/Germany_States.md",
+    "geography/norway/Norway_Counties.md",
+  ];
+  const LOGS = ["hashcards-reviews/2026-10.3e2bd77f.jsonl", "hashcards-reviews/2026-10.5a1b5635.jsonl"];
+  let repo: FakeRepo;
+
+  beforeEach(() => {
+    localStorage.clear();
+    Device.active = null;
+    repo = new FakeRepo();
+    repo.set("CARD_GUIDE.md", fixture("CARD_GUIDE.md"), "sha-guide");
+    for (const path of DECKS) repo.set(path, fixture(path), `sha-${path}`);
+    for (const path of LOGS) repo.set(path, fixture(path), `sha-${path}`);
+    repo.set("hashcards-state.json", fixture("hashcards-state.json"), "sha-state");
+    repo.setState(JSON.parse(fixture("hashcards-state.json")));
+    install(repo);
+  });
+
+  /** What `hc migrate --apply` and a push would do to the repo, as it is now. */
+  async function migrate() {
+    const { planMigration } = await import("./migrate");
+    let n = 0;
+    const logs = [...repo.files].filter(([path]) => path.startsWith("hashcards-reviews/"));
+    const plan = await planMigration({
+      decks: DECKS.map((path) => ({ path, text: repo.files.get(path)!.content })),
+      state: atob(repo.state!.content),
+      logs: logs.map(([path, f]) => ({ path, text: f.content })),
+      generate: () => `m${String(++n).padStart(3, "0")}`,
+    });
+    for (const deck of plan.stamped) repo.set(deck.path, deck.text, `sha-${deck.path}-migrated`);
+    for (const [path] of logs) repo.files.delete(path);
+    repo.files.delete("hashcards-state.json");
+    repo.state = null;
+    repo.commitFiles(Object.fromEntries(plan.files));
+    repo.retag('W/"migrated"');
+    return plan;
+  }
+
+  /** The app's state of every card a deck has, by its v1 hash, so keys can change under it. */
+  async function byHash(app: App) {
+    const performances = await app.db.getAllPerformances();
+    const out = new Map<string, { due: string; s: number; d: number; reps: number }>();
+    for (const card of await app.sync.loadCachedCards()) {
+      const state = performances.get(app.db.stateKey(card));
+      if (state) out.set(card.hash, { due: state.dueDate, s: state.stability, d: state.difficulty, reps: state.reviewCount });
+    }
+    return out;
+  }
+
+  it("keeps every card's memory state, and moves due dates only by fuzz", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    const before = await byHash(app);
+    expect(app.state.getSyncStatus()).toMatchObject({ notice: expect.stringContaining("hc migrate") });
+
+    const plan = await migrate();
+    expect(await app.sync.syncAll(CONFIG)).toBe(true);
+    const after = await byHash(app);
+
+    expect(app.state.getSyncStatus()).toEqual({ phase: "idle" });
+    expect(before.size).toBe(51);
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    const moved = new Map(plan.dueShift.moved.map((m) => [m.key, m]));
+    const cards = await app.sync.loadCachedCards();
+    for (const [hash, was] of before) {
+      const now = after.get(hash)!;
+      expect({ ...now, due: undefined }).toEqual({ ...was, due: undefined });
+      // Exactly the cards the plan said fuzz would move, to the dates it said.
+      const key = cards.find((c) => c.hash === hash)!.key;
+      expect([was.due, now.due]).toEqual(moved.has(key) ? [moved.get(key)!.before, moved.get(key)!.after] : [was.due, was.due]);
+    }
+    // Nothing of v1 written, before or after, and no reviews of its own to push.
+    expect(repo.stateWrites).toEqual([]);
+    expect(repo.fileWrites).toEqual([]);
+    expect(reviewFiles(repo).every(([path]) => path.endsWith(".v1.jsonl"))).toBe(true);
+  });
+
+  it("counts a review this device made before the migration once", async () => {
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+    await drill(app, [["Where is **Iceland**? Picture it on the map, then check.", Grade.Good]]);
+    await app.sync.syncAll(CONFIG);
+    expect(repo.fileWrites.map((w) => w.path)).toEqual(["hashcards-reviews/" + repo.fileWrites[0].path.split("/")[1]]);
+
+    await migrate();
+    await app.sync.syncAll(CONFIG);
+
+    const iceland = (await app.sync.loadCachedCards()).find((c) => question(c) === "Where is **Iceland**? Picture it on the map, then check.")!;
+    expect(iceland.id).not.toBeNull();
+    const performances = await app.db.getAllPerformances();
+    expect(performances.get(app.db.stateKey(iceland))!.reviewCount).toBe(1);
+    // Its old key no longer names a card, and must not linger as a second schedule.
+    expect(performances.has(`someone/cards/h:${iceland.hash.slice(0, 16)}`)).toBe(false);
+    // Nor is the review sent to the data branch a second time.
+    expect(reviewFiles(repo).every(([path]) => path.endsWith(".v1.jsonl"))).toBe(true);
+  });
+
+  it("agrees with a replay of the migrated events, and a fresh device agrees too", async () => {
+    const plan = await migrate();
+    const fresh = await new Device("tablet").use();
+    await fresh.sync.syncAll(CONFIG);
+
+    const { replay } = await import("./core/replay");
+    const expected = replay(plan.events, { retention: 0.9, fuzz: true });
+    const performances = await fresh.db.getAllPerformances();
+    const cards = await fresh.sync.loadCachedCards();
+    expect(cards).toHaveLength(240);
+    expect(cards.every((c) => c.id !== null)).toBe(true);
+    let scheduled = 0;
+    for (const card of cards) {
+      const want = expected.get(card.key);
+      const got = performances.get(fresh.db.stateKey(card));
+      if (!want) {
+        expect(got).toBeUndefined();
+        continue;
+      }
+      scheduled++;
+      expect(got).toMatchObject({ dueDate: want.dueDate, stability: want.stability, reviewCount: want.reviewCount });
+    }
+    expect(scheduled).toBe(51);
   });
 });
 

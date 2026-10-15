@@ -1,0 +1,22 @@
+---
+name = "Terraform State"
+---
+
+C: As of Terraform 1.10, native S3 state locking is enabled by setting [`use_lockfile = true`] in the backend configuration, eliminating the need for a separate [DynamoDB] table.
+
+---
+
+Q: How does modern Terraform (1.10+) natively lock state files in S3 without DynamoDB?
+A: It uses **S3 conditional writes** (specifically the `If-None-Match` header) to create a `.tflock` file. If the file already exists, the write fails, preventing concurrent state modifications.
+
+---
+
+C: Before native S3 locking was introduced, the `s3` backend required a [DynamoDB] table to implement state locks safely.
+
+---
+
+C: Without a remote backend configured, Terraform state is stored locally in a file named [`terraform.tfstate`].
+
+---
+
+C: The two primary reasons to use a remote backend like S3 are to enable [team collaboration] and keep sensitive data out of [version control].

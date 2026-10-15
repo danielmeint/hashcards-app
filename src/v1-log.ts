@@ -33,3 +33,11 @@ export function v1MonthOf(review: Review): string {
 /** Where `pushReviewLog` records what it last wrote to a month file. */
 export const v1PushedKey = (repo: string, month: string) =>
   `review_log:${repo}:${month}`;
+
+/**
+ * Where sync records the v1 files the last listing of a collection's `main`
+ * found. Empty once `hc migrate` has removed them: from then on the
+ * collection's history is on its data branch, this device's v1 reviews
+ * included, re-keyed (see `collectEvents`).
+ */
+export const v1FilesKey = (repo: string) => `v1_files:${repo}`;

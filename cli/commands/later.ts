@@ -22,6 +22,4 @@ function notYet(name: string, summary: string, milestone: string, positionals = 
   };
 }
 
-export const migrate = notYet("migrate", "migrate a v1 repo: stamp IDs, move history to hashcards-data", "M4");
-export const importCmd = notYet("import", "import an Anki collection (hc import anki)", "M6", 1);
 export const fit = notYet("fit", "fit FSRS parameters to the review history", "M7");

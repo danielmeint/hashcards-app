@@ -44,6 +44,7 @@ import { refreshStates } from "./review-state";
 import { settings } from "./settings";
 import { applyPending, pendingOps } from "./inbox-queue";
 import { conflictNotice, runInboxFlush } from "./inbox-commit";
+import { v1FilesKey as v1FilesKeyOf } from "./v1-log";
 
 let cachedCards: Card[] | null = null;
 
@@ -254,7 +255,7 @@ async function flushInboxQuietly(
 }
 
 /** The v1 files the last full listing of a collection's `main` found. */
-const v1FilesKey = (config: GitHubConfig) => `v1_files:${repoKey(config)}`;
+const v1FilesKey = (config: GitHubConfig) => v1FilesKeyOf(repoKey(config));
 
 /**
  * Pull, replay and push one collection's review data, in whichever format it

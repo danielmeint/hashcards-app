@@ -1,50 +1,63 @@
-# import-anki
+# `hc import anki`
 
-Prototype of `hc import anki` (PLAN-1.0.md, M6). It turns an
-ankictl deck repo (`~/projects/personal/ankictl`) plus a **copy** of the Anki collection
-into hashcards v2 deck files, v2 review events and a reference snapshot of
-Anki's scheduling state.
-
-It reads only. It writes only into `--out`.
+The Anki importer (PLAN-1.0 M6). It turns an ankictl deck repo
+(`~/projects/personal/anki-decks`) plus a **copy** of the Anki collection into
+deck files and review events in a migrated (1.0) card repo. These modules are
+the M6 prototype (`tools/import-anki/`), folded into `hc`;
+`cli/commands/import-anki.ts` is the command around them.
 
 ## Usage
 
 ```bash
-# 1. Copy the collection. Never point the tool at the live file. It refuses
-#    any path inside an `Anki2` directory.
+# 1. Copy the collection. Never point the importer at the live file: any path
+#    inside an `Anki2` directory is refused.
 mkdir -p /tmp/anki-copy
 cp ~/Library/Application\ Support/Anki2/User\ 1/collection.anki2* /tmp/anki-copy/
 
-# 2. Import.
-node tools/import-anki/import-anki.ts \
-  --decks ~/projects/personal/anki-decks \
-  --collection /tmp/anki-copy/collection.anki2 \
-  --out tools/import-anki/out \
-  --acronym CKA
+# 2. Look at the plan and the parity check (a dry run: nothing is written).
+hc import anki --decks ~/projects/personal/anki-decks \
+  --collection /tmp/anki-copy/collection.anki2 --into ~/cards --acronym CKA
+
+# 3. Commit it, locally, then push both branches together.
+hc import anki … --apply
+git -C ~/cards push --atomic origin main hashcards-data
 ```
 
 | Option | Default | |
 |---|---|---|
 | `--decks` | (required) | ankictl repo: `ankictl.yaml` plus `decks/**/*.yaml` |
 | `--collection` | (required) | a copy of `collection.anki2` (and `-wal`/`-shm`, if present) |
-| `--out` | (required) | must be missing, empty, or an earlier output of this tool (it carries `.import-anki-output`, and is cleared and rewritten) |
+| `--into` | `--repo`, or `.` | the card repo: a clean, migrated clone |
+| `--dir` | the top-level deck's name (`cka/`) | where the deck files go |
 | `--tz` | `Europe/Berlin` | IANA zone the reviews happened in |
 | `--max-ms` | `60000` | cap on one review's `ms` |
 | `--acronym` | none | repeatable; writes the word in this case in deck names (`Cka` → `CKA`) |
-| `--json` | off | print the summary as JSON |
+| `--out` | none | also write `reference.json` and `import-report.json` (new or empty dir) |
+| `--force` | off | replace the review files of an earlier import |
+| `--apply` | off | commit; without it, a dry run |
 
-`tools/import-anki/out/` is git-ignored. The output is deterministic, so two
-runs over the same inputs are byte-identical.
+With `--apply` it makes one commit on the current branch (the deck files) and
+one on `hashcards-data` (the events, `reviews/YYYY-MM.anki.jsonl`, on top of
+whatever devices have pushed), moving both refs in one transaction. `anki` is
+a reserved writer name: no device ever rebuilds those files. It never pushes.
 
-### Output
+It refuses a dirty tree, a repo not yet migrated, deck paths or card IDs the
+repo already has, and a second import without `--force`.
 
-```
-out/
-├── cka/workloads-and-scheduling.md   deck files     → main branch of the card repo
-├── reviews/2026-09.anki.jsonl        review events  → hashcards-data branch
-├── reference.json                    Anki's state per card key, for M6's parity check
-└── import-report.json                summary, ID changes, cloze maps, warnings
-```
+### Parity
+
+The dry run replays the imported events with hashcards' FSRS (the published
+default parameters, which is also what Anki used: the real collection's preset
+was never optimised) and compares each card's due date with Anki's
+(`reference.json`). It reports two numbers:
+
+- **Against Anki's due dates.** M6's exit criterion: 90% within a day.
+- **Without fuzz on either side**, Anki's side rebuilt from its own memory
+  state in `cards.data`. Anki fuzzes every interval of 3 days or more (±15% up
+  to a week, ±10% to 20 days, ±5% beyond) with a random draw it does not
+  store, and hashcards fuzzes with its own seeded one, so the first number
+  can miss a day's tolerance on cards whose memory state is identical. The
+  second number says whether the schedulers themselves agree.
 
 ## Mapping
 
@@ -187,31 +200,13 @@ cleared from the header and `COLLATE unicase` is rewritten to `nocase` in the
 schema. The file itself is never written. The importer only full-scans, so
 the collation swap cannot change a result.
 
-## Folding into `hc import anki` (M5)
-
-- `convert.ts`, `revlog.ts`, `decks.ts`, `collection.ts`, `protobuf.ts`,
-  `deck-config.ts` and `importer.ts`
-  move into `src/core/import/anki/` (or `cli/`) unchanged. They are
-  platform-neutral apart from `node:sqlite` and `node:fs` in `collection.ts`
-  and `decks.ts`, which are CLI-only anyway.
-- The card types, the ID regex and the event type are replaced by M1's
-  parser and M2's `src/core/events.ts` (serialiser, `src` field). The local
-  `ID_PATTERN`, `TAG_PATTERN`, `ReviewEvent` and `renderDeck` exist only because those
-  milestones have not landed yet.
-- The CLI wrapper becomes `hc import anki --decks … --collection … --out …`.
-  Writing into a repo stays out of scope: the output is reviewed and
-  committed by hand. `reviews/` goes to the `hashcards-data` branch and the
-  deck files to `main`.
-- The parity check (M6 exit criterion) replays the imported events with M2's
-  replay and compares each key's due date with `reference.json`.
-
 ## Tests
 
 ```bash
-npx vitest run tools/import-anki
+npx vitest run cli/anki cli/commands/import-anki.test.ts
 ```
 
-There are five test files:
+The test files:
 
 - `convert.test.ts`: cloze conversion, checked against the app's own parser;
   IDs and slugs; tags, checked against the parser's normalisation; deck paths and names; and the Markdown dialect, checked
@@ -224,4 +219,8 @@ There are five test files:
 - `importer.test.ts`: the whole pipeline over a synthetic collection built
   with `node:sqlite`. The collection is in WAL mode with a `unicase` schema,
   and has one revlog row for every skip reason, and protobuf deck and preset
-  blobs. The generated deck file is parsed with `src/parser.ts`.
+  blobs (`test-collection.ts`). The generated deck file is parsed with
+  `src/parser.ts`.
+- `parity.test.ts`: both parity measures.
+- `cli/commands/import-anki.test.ts`: the command on real git repos: dry run,
+  both commits, `--dir`, re-import, refusals (including a path in `Anki2`).

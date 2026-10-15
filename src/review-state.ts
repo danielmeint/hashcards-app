@@ -17,6 +17,7 @@ import {
   writeReplay,
 } from "./db";
 import { reviewEvent } from "./review-log";
+import { v1FilesKey } from "./v1-log";
 import { settings } from "./settings";
 
 /**
@@ -64,7 +65,20 @@ export async function collectEvents(): Promise<{
     else groups.set(group, [event]);
   };
 
+  const migrated = new Map<string, boolean>();
+  const isMigrated = async (repo: string) => {
+    if (!migrated.has(repo)) {
+      const files = await getMeta<unknown[]>(v1FilesKey(repo));
+      migrated.set(repo, files !== undefined && files.length === 0);
+    }
+    return migrated.get(repo)!;
+  };
   for (const review of await getAllReviews()) {
+    // A review this device wrote to a v1 log is, once the collection has been
+    // migrated, on the data branch already — under the card's new key, where
+    // this copy still has the old `h:` one. Replaying both would leave the
+    // card a second, orphaned schedule. The migrated copy is the one to keep.
+    if (review.v1Pushed && (await isMigrated(review.log))) continue;
     const event = reviewEvent(review);
     add(groupOf(review.log, event.card), event);
   }

@@ -10,7 +10,7 @@ import {
   localMonth,
   toEvent,
   tzOffsetMinutes,
-} from "./revlog.ts";
+} from "./revlog";
 
 const BERLIN = "Europe/Berlin";
 

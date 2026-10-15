@@ -41,9 +41,9 @@ describe("hc init", () => {
 });
 
 describe("later milestones", () => {
-  it.each([["migrate"], ["import", "anki"], ["fit"]])("hc %s is a stub that says where it is planned", async (...argv) => {
+  it.each([["fit"]])("hc %s is a stub that says where it is planned", async (...argv) => {
     const run = await hc([...argv, "--repo", makeRepo()]);
     expect(run.code).toBe(2);
-    expect(run.stderr).toMatch(/not implemented yet, see PLAN-1\.0\.md M[467]/);
+    expect(run.stderr).toMatch(/not implemented yet, see PLAN-1\.0\.md M7/);
   });
 });

@@ -5,9 +5,9 @@
  * CLI (`import-anki.ts`) does the reading and writing around it.
  */
 
-import type { AnkictlConfig, DeckFile, DeckNote, OutCard, OutDeck } from "./decks.ts";
-import { renderDeck } from "./decks.ts";
-import type { CollectionCard, CollectionData } from "./collection.ts";
+import type { AnkictlConfig, DeckFile, DeckNote, OutCard, OutDeck } from "./decks";
+import { renderDeck } from "./decks";
+import type { CollectionCard, CollectionData } from "./collection";
 import {
   assignCardIds,
   convertCloze,
@@ -16,10 +16,10 @@ import {
   deckDisplayName,
   deckToPath,
   toTag,
-} from "./convert.ts";
-import type { FsrsSettings } from "./deck-config.ts";
-import type { ReviewEvent, SkipReason } from "./revlog.ts";
-import { ankiDue, checkScheduler, classifyRevlog, localMonth, toEvent } from "./revlog.ts";
+} from "./convert";
+import type { FsrsSettings } from "./deck-config";
+import type { ReviewEvent, SkipReason } from "./revlog";
+import { ankiDue, checkScheduler, classifyRevlog, localMonth, toEvent } from "./revlog";
 
 export type ImportOptions = {
   /** IANA zone the reviews happened in. Anki does not record one. */

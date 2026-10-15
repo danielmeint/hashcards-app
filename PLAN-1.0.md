@@ -361,7 +361,7 @@ into `hc` once M5 exists.
 
 | Milestone | Status | Branch | Notes |
 |---|---|---|---|
-| M1 Format v2 and identity | in progress | `v1-format` | |
+| M1 Format v2 and identity | done, awaiting review | `v1-format` | Parser reads metadata and frontmatter `tags`; `src/card-key.ts` (keys), `src/card-ids.ts` (`stampIds`), spec v2 + `schema/card.schema.json`. `hash` unchanged and still the app's key until M3. Cached deck files lack the new fields until their SHA moves: M3 should force a re-parse. |
 | M2 Event log and replay | in progress | `v1-replay` | |
 | M3 Data branch and sync | not started | | needs M1, M2 |
 | M4 Migration | not started | | needs M3, M5 |

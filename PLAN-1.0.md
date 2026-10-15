@@ -374,12 +374,12 @@ into `hc` once M5 exists.
 
 | Milestone | Status | Branch | Notes |
 |---|---|---|---|
-| M1 Format v2 and identity | done, merged into `v1` | `v1-format` | Parser reads metadata and frontmatter `tags`; `src/card-key.ts` (keys), `src/card-ids.ts` (`stampIds`), spec v2 + `schema/card.schema.json`. `hash` unchanged and still the app's key until M3. Cached deck files lack the new fields until their SHA moves: M3 should force a re-parse. |
+| M1 Format v2 and identity | done, merged into `v1` | `v1-format` | Parser reads metadata and frontmatter `tags`; `src/card-key.ts` (keys), `src/card-ids.ts` (`stampIds`), spec v2 + `schema/card.schema.json`. `hash` unchanged and still the app's key until M3. Cached deck files lack the new fields until their SHA moves: M3 should force a re-parse. `v1-extra`: `Extra:` section (`content.extra`, outside hash and key, rendered as `.answer.extra`) and tag normalisation, in spec and schema. |
 | M2 Event log and replay | done, merged into `v1` | `v1-replay` | `src/core/{events,schedule,replay}.ts`. Live path and replay share one step; fuzz seeded by key + review count. v1 lines assume CET/CEST. Live-path equivalence and the real v1 log reproduce exactly. App wiring (keys into fuzz, tz on writes) is M3. |
 | M3 Data branch and sync | in progress | `v1-sync` | |
 | M4 Migration | not started | | needs M3, M5 |
 | M5 `hc` CLI | in progress | `v1-cli` | |
-| M6 Anki import | prototype merged into `v1` | `v1-anki-import` | `tools/import-anki/`: real run maps 153/153 notes, 168/168 cards, 625 reviews (314 of deleted cards skipped). Folds into `hc` with M5; parity check needs M2 |
+| M6 Anki import | prototype merged into `v1` | `v1-anki-import` | `tools/import-anki/`: real run maps 153/153 notes, 168/168 cards, 625 reviews (314 of deleted cards skipped). Folds into `hc` with M5; parity check needs M2. `v1-extra`: cloze Extra → `Extra:`, tags normalised, FSRS presets decoded into `reference.json` (real collection: one preset, never optimised, so Anki's defaults; retention 0.9). |
 | M7 Features | not started | | |
 | M8 UI 1.0 | in progress | `v1-ui` | Today and Review first |
 | M9 Ship | not started | | |

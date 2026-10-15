@@ -32,7 +32,9 @@ export async function renderStats(
   const leeches = findLeeches(cards, history);
 
   // --- Aggregate stats ---
-  const totalCards = cards.length;
+  // Drafts are proposals in the Inbox, not cards in the collection yet.
+  // Reverse cards and cloze deletions each count: each is scheduled.
+  const totalCards = cards.filter((c) => c.status !== "draft").length;
   const learnedCards = performances.size;
   const newCards = totalCards - learnedCards;
 

@@ -524,4 +524,36 @@ describe("a grade as an event", () => {
     session.grade(Grade.Easy);
     expect(session.finished).toBe(true);
   });
+
+  it("schedules a reverse card under its own :r key", async () => {
+    const { createSession, getAllReviews, getAllPerformances } = await fresh();
+    const { parseFile } = await import("../../parser");
+    const [forward, reverse] = (
+      await parseFile("ID: est\nReverse: yes\nQ: Estonia\nA: Tallinn\n", "c.md", "c")
+    ).map((c) => ({ ...c, repo: "someone/cards" }));
+    expect([forward.key, reverse.key]).toEqual(["est", "est:r"]);
+
+    // A card and its reverse are siblings: one direction a day.
+    const first = await createSession([forward, reverse]);
+    expect(first.total).toBe(1);
+    first.reveal();
+    first.grade(first.current!.key === "est" ? Grade.Good : Grade.Forgot);
+    await first.close();
+    await settle();
+    const other = (await getAllReviews())[0].key.endsWith(":r") ? forward : reverse;
+    const second = await createSession([other]);
+    second.reveal();
+    second.grade(other.key === "est" ? Grade.Good : Grade.Forgot);
+    await settle();
+
+    const reviews = await getAllReviews();
+    expect(reviews.map((r) => [r.key, r.grade]).sort()).toEqual([
+      ["someone/cards/est", Grade.Good],
+      ["someone/cards/est:r", Grade.Forgot],
+    ]);
+    const states = await getAllPerformances();
+    // Two cards, scheduled apart: knowing one direction says nothing of the other.
+    expect(states.get("someone/cards/est")!.dueDate).not.toBe(states.get("someone/cards/est:r")!.dueDate);
+  });
 });
+

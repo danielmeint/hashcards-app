@@ -8,6 +8,7 @@ import { renderDeckList } from "./views/deck-list";
 import { renderDrill } from "./views/drill";
 import { renderStats } from "./views/stats";
 import { renderInbox } from "./views/inbox";
+import { pushSettings } from "./sync";
 import { getDemoData } from "./demo";
 import { warmTypesetting } from "./typeset";
 import { applyTheme, watchSystemTheme } from "./theme";
@@ -55,6 +56,10 @@ async function navigate(
 
   switch (view) {
     case "settings":
+      // Leaving Settings is when its collection settings go to the repo,
+      // rather than whenever the next sync happens to run: another device
+      // opened now should already see them.
+      disposeView = () => void pushSettings();
       await renderSettings(host, () => navigate("decks"), settingsNotice);
       settingsNotice = undefined;
       break;

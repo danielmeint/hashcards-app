@@ -1,6 +1,8 @@
 import { html, nothing, render } from "lit-html";
 import {
   getConfig,
+  repoKey,
+  writableRepos,
   getIntervalFuzz,
   setIntervalFuzz,
   getDesiredRetention,
@@ -36,14 +38,18 @@ function retentionChoices(): number[] {
 }
 
 /**
- * Settings, in two halves: how the app connects to GitHub (delegated to
- * `auth-panel`, which owns the credential and the repo) and the preferences
- * that are purely local.
+ * Settings: how the app connects to GitHub (delegated to `auth-panel`, which
+ * owns the credential and the repo), then the preferences, in the two kinds
+ * there are. **Collection** settings (new cards per day, retention, fuzz) are
+ * the collection's, in its `hashcards.toml`, and every device follows them.
+ * **This device** (haptics, theme) stays in this browser.
  *
  * Preferences save the moment they change. They used to be collected off the
  * DOM by a `savePrefs()` that ran on Sync and on Back, which meant the only
  * ways out of this screen were also the only ways to keep a change — true
- * today and one new exit away from being false.
+ * today and one new exit away from being false. Collection settings are kept
+ * here at once and written to the repo on leaving the screen (`pushSettings`,
+ * from `main.ts`), or by the next sync if that fails.
  */
 export async function renderSettings(
   container: HTMLElement,
@@ -181,8 +187,9 @@ export async function renderSettings(
         <h2 class="group-title">Collections</h2>
         <div id="collections-host"></div>
       </section>
-      <section class="group">
-        <h2 class="group-title">Reviewing</h2>
+      <section class="group" id="collection-settings">
+        <h2 class="group-title">Collection</h2>
+        <p class="group-caption" id="collection-caption">${collectionCaption()}</p>
         <div class="list">
           <div class="row">
             <span class="row-text">
@@ -263,6 +270,11 @@ export async function renderSettings(
             </span>
             ${toggle("interval-fuzz", "Interval fuzz", getIntervalFuzz(), setIntervalFuzz)}
           </div>
+        </div>
+      </section>
+      <section class="group" id="device-settings">
+        <h2 class="group-title">This device</h2>
+        <div class="list">
           <div class="row">
             <span class="row-text">
               <span>Haptic feedback</span>
@@ -275,11 +287,6 @@ export async function renderSettings(
               setHapticFeedback
             )}
           </div>
-        </div>
-      </section>
-      <section class="group">
-        <h2 class="group-title">Appearance</h2>
-        <div class="list">
           <div class="row theme-row">
             <span class="row-text">Theme</span>
             ${segmented("theme", "Theme", THEMES, getTheme(), setTheme)}
@@ -323,6 +330,21 @@ export async function renderSettings(
     if (host) renderCollections(host as HTMLElement, paint);
   }
   collections();
+}
+
+/**
+ * Where the Collection settings live, so the split from This device is not
+ * left to be guessed. Which collection only when there is a choice: the
+ * settings are the first writable one's (`getConfig`), and with two of them
+ * that is worth saying.
+ */
+function collectionCaption(): string {
+  const writable = writableRepos();
+  const config = getConfig();
+  if (writable.length > 1 && config) {
+    return `Saved in ${repoKey(config)}'s hashcards.toml, and shared by your devices.`;
+  }
+  return "Saved in your collection's hashcards.toml, and shared by your devices.";
 }
 
 const THEMES: [Theme, string][] = [

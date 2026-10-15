@@ -41,6 +41,7 @@ import {
 import { CONFLICT_RETRIES, migrationHint, pullV1, pushV1, v1Files } from "./compat";
 import { pullDataBranch, pushDataBranch } from "./data-branch";
 import { refreshStates } from "./review-state";
+import { settings } from "./settings";
 import { applyPending, pendingOps } from "./inbox-queue";
 import { conflictNotice, runInboxFlush } from "./inbox-commit";
 
@@ -114,6 +115,25 @@ function start(config: RepoConfig, scope: SyncScope): Promise<boolean> {
     inFlight = null;
   });
   return inFlight;
+}
+
+/**
+ * Write the collection settings changed on the Settings screen into
+ * `hashcards.toml` now, rather than on the next sync. Called on leaving
+ * Settings. Under the same rule as a sync's push: only to your own
+ * collection, and only once it has given you cards. A failure is not
+ * reported: the change is still marked owed, and the next sync writes it.
+ */
+export async function pushSettings(): Promise<void> {
+  const config = getConfig();
+  if (!config || config.readOnly || !navigator.onLine) return;
+  if (settings.collectionDirty.get().length === 0) return;
+  if (!(await loadCachedCards()).some((c) => c.repo === repoKey(config))) return;
+  try {
+    await exclusive(() => pushCollectionSettings(config));
+  } catch (e) {
+    console.warn("Could not save settings to hashcards.toml; the next sync will:", e);
+  }
 }
 
 /** The chain every repository operation hangs off, so no two overlap. */

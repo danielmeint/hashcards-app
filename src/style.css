@@ -155,6 +155,7 @@ kbd { display: none; font: 600 11px var(--font-mono); border: 1px solid currentC
 .deck-group-name { text-transform: capitalize; }
 .group-note { padding: 0 6px; font-size: 13px; line-height: 1.4; color: var(--muted); }
 .group-note:empty { display: none; }
+.group-caption { padding: 0 6px 2px; font-size: 13px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
 .list { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
 .list > :not(:first-child) { border-top: 1px solid var(--divider); }
 

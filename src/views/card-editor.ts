@@ -8,7 +8,7 @@ import {
   commitCardEdit,
   readCardSource,
 } from "../card-edit";
-import { getAllPerformances } from "../db";
+import { getAllPerformances, stateKey } from "../db";
 import { syncStateOnly } from "../sync";
 
 /**
@@ -227,7 +227,7 @@ export function openCardEditor(card: Card): Promise<EditResult | null> {
           readCardSource(card),
           getAllPerformances(),
         ]);
-        const perf = performances.get(card.hash);
+        const perf = performances.get(stateKey(card));
         phase = {
           kind: "editing",
           source,

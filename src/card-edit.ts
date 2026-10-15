@@ -11,12 +11,18 @@ import {
 } from "./github";
 import { parseFile, topMetadata } from "./parser";
 import {
+  LocalBaseline,
+  addBaselines,
   getAllPerformances,
+  groupOf,
+  markReplayStale,
   inRepo,
-  migrateCardHistory,
+  stateKey,
   updateDeckFiles,
 } from "./db";
 import { deckNameFor, exclusive, loadCachedCards, loadCards } from "./sync";
+import { logTarget } from "./review-log";
+import { refreshStates } from "./review-state";
 
 /**
  * Editing a card in the app rather than on GitHub.
@@ -26,10 +32,11 @@ import { deckNameFor, exclusive, loadCachedCards, loadCards } from "./sync";
  * way back. Everything needed to do it here already existed: cards carry
  * `filePath` and an absolute line `range`, and the credential is write-scoped.
  *
- * The part that only works here is scheduling. Card identity is a hash of the
- * content, so an edit produces a new card and the old one's history is stranded
- * — see 1.7. An edit made in the app is the one moment both hashes are known at
- * once, so it is the one place that history can follow the card.
+ * The part that only works here is scheduling. A card with an ID keeps its key
+ * through any edit, and its history with it. One without an ID is keyed by a
+ * hash of its content, so an edit makes it a new card and strands the old
+ * one's history — see 1.7. An edit made in the app is the one moment both keys
+ * are known at once, so it is the one place that history can follow the card.
  */
 
 export type CardSource = {
@@ -229,7 +236,7 @@ async function runEdit(
 
   // Paired by position, the same way the history is: the card that replaced
   // this one is the one that landed in its slot.
-  const slot = before.findIndex((c) => c.hash === card.hash);
+  const slot = before.findIndex((c) => stateKey(c) === stateKey(card));
   return {
     cards: after,
     card: after[slot === -1 ? 0 : slot] ?? null,
@@ -273,8 +280,8 @@ function cardsInRange(
 }
 
 /**
- * Pair what was there against what replaced it, in order, and move each pair's
- * history across.
+ * Pair what was there against what replaced it, in order, and carry each
+ * pair's history across.
  *
  * By position rather than by content, because content is exactly what changed.
  * It is the right answer for the case this exists to serve — one card rewritten
@@ -282,17 +289,47 @@ function cardsInRange(
  * reordered within a block would pair wrongly; that costs the scheduling of
  * cards you were editing anyway, which is the same thing that happens today
  * with no pairing at all.
+ *
+ * A card whose key survived the edit (it has an ID) needs nothing: its events
+ * already name it. One whose key changed gets a baseline event under the new
+ * key — the old card's state as it stands — which is what a baseline is for:
+ * history that is not available under this name. The log is append-only, and
+ * other devices hold the old card's events too; this is the one way to carry
+ * it that every device replays the same.
  */
 async function carryHistory(before: Card[], after: Card[]): Promise<number> {
   const performances = await getAllPerformances();
+  const baselines: LocalBaseline[] = [];
   let migrated = 0;
   for (let i = 0; i < Math.min(before.length, after.length); i++) {
-    const from = before[i].hash;
-    const to = after[i].hash;
-    // An unchanged sibling in an edited cloze block already has its history.
-    if (from === to || !performances.has(from)) continue;
-    await migrateCardHistory(from, to);
+    const from = stateKey(before[i]);
+    const state = performances.get(from);
+    if (!state) continue;
     migrated++;
+    if (from === stateKey(after[i])) continue;
+    const target = logTarget(after[i]);
+    baselines.push({
+      log: target.log,
+      event: {
+        v: 2,
+        kind: "baseline",
+        card: target.card,
+        at: state.lastReviewedAt,
+        tz: -new Date(state.lastReviewedAt).getTimezoneOffset(),
+        s: state.stability,
+        d: state.difficulty,
+        reps: state.reviewCount,
+        ...(state.lastGrade !== null && state.lastGrade !== undefined ? { grade: state.lastGrade } : {}),
+        src: "edit",
+      },
+    });
+  }
+  if (baselines.length > 0) {
+    await addBaselines(baselines);
+    // Dated when the old card was last reviewed, so behind the watermark:
+    // those groups are replayed whole.
+    for (const { log, event } of baselines) await markReplayStale(groupOf(log, event.card));
+    await refreshStates();
   }
   return migrated;
 }

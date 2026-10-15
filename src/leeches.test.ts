@@ -17,7 +17,7 @@ function basic(hash: string, question = `Q ${hash}`): Card {
     content: { type: "basic", question, answer: "A" },
     hash,
     familyHash: null,
-    id: null, key: "", tags: [], status: "active",
+    id: hash, key: hash, tags: [], status: "active",
   };
 }
 
@@ -25,6 +25,9 @@ let clock = 0;
 function review(cardHash: string, grade: Grade): Review {
   clock += 1;
   return {
+    key: `someone/cards/${cardHash}`,
+    log: "someone/cards",
+    tz: 0,
     cardHash,
     reviewedAt: new Date(Date.UTC(2026, 0, clock)).toISOString(),
     grade,

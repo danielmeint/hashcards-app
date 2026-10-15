@@ -84,3 +84,39 @@ export function parseKey(text: string): (CardKey & { repo?: string }) | null {
   }
   return null;
 }
+
+/**
+ * A key as the app holds it locally: always `owner/repo/<key>`.
+ *
+ * A review log names a card relative to the collection it belongs to — your
+ * own cards bare (`est-capital`), a subscribed collection's with its repo in
+ * front. Read into one device that holds several collections, bare keys would
+ * collide (two repos can each have an `est-capital`), so locally every key is
+ * qualified by the log it came from. One that already names a repo keeps it.
+ */
+export function qualifyKey(log: string, key: string): string {
+  return key.includes("/") || log === "" ? key : `${log}/${key}`;
+}
+
+/**
+ * The inverse, for writing: a qualified key as the log of `log` spells it.
+ * Bare when the card is that collection's own, qualified otherwise.
+ */
+export function keyInLog(log: string, qualified: string): string {
+  return log !== "" && qualified.startsWith(`${log}/`)
+    ? qualified.slice(log.length + 1)
+    : qualified;
+}
+
+/**
+ * What the app calls a card locally: `owner/repo/<key>`.
+ *
+ * The key alone (`est-capital`, `h:…`) is only unique within one collection,
+ * and a device holds several. A card cached before keys existed has none, so
+ * it falls back to the `h:` key its hash gives — exactly what the parser would
+ * have produced for it, since a card from then had no ID.
+ */
+export function stateKey(card: { repo: string; key: string; hash: string }): string {
+  const key = card.key || formatKey({ kind: "hash", hash: card.hash });
+  return card.repo === "" ? key : `${card.repo}/${key}`;
+}

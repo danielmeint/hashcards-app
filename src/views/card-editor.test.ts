@@ -65,9 +65,9 @@ async function openSheet(
   await loadCards();
 
   if (options.reviewed) {
-    const { importState } = await import("../db");
+    const { importState, stateKey } = await import("../db");
     await importState({
-      [cards[1].hash]: {
+      [stateKey(cards[1])]: {
         type: "reviewed",
         lastReviewedAt: "2026-01-01T00:00:00.000Z",
         stability: 3,

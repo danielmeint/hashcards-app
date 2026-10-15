@@ -8,7 +8,15 @@
 import { settings } from "./settings";
 
 export type SyncStatus =
-  | { phase: "idle" }
+  | {
+      phase: "idle";
+      /**
+       * Something worth saying that is not a failure — a collection still on
+       * the v1 format, say. Text only; the deck list shows it beside the last
+       * sync time.
+       */
+      notice?: string;
+    }
   | { phase: "syncing"; detail: string | null }
   | {
       phase: "error";

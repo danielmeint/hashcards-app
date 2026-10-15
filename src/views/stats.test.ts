@@ -28,7 +28,7 @@ const card = (n: number, question = `Q${n}`): Card => ({
   content: { type: "basic", question, answer: `A${n}` },
   hash: `hash-${n}`,
   familyHash: null,
-  id: null, key: "", tags: [], status: "active",
+  id: `k${n}`, key: `k${n}`, tags: [], status: "active",
 });
 
 const day = (offset: number) =>
@@ -45,8 +45,14 @@ const performance = (dueDate: string) => ({
   reviewCount: 4,
 });
 
-const review = (hash: string, grade: Grade, offset: number): Review => ({
-  cardHash: hash,
+/** The app's key for `card(n)`. */
+const keyOf = (n: number) => `someone/cards/k${n}`;
+
+const review = (n: number, grade: Grade, offset: number): Review => ({
+  key: keyOf(n),
+  log: "someone/cards",
+  tz: 0,
+  cardHash: `hash-${n}`,
   reviewedAt: day(offset),
   grade,
   stability: 4,
@@ -87,24 +93,35 @@ describe("the stats view", () => {
     await seedCards(stats, [card(1), card(2), card(3), card(4)]);
     const today = new Date().toISOString().slice(0, 10);
     await stats.importState({
-      "hash-1": performance(today),
-      "hash-2": performance(today),
-      "hash-3": performance(day(30).slice(0, 10)),
+      [keyOf(1)]: performance(today),
+      [keyOf(2)]: performance(today),
+      [keyOf(3)]: performance(day(30).slice(0, 10)),
     });
-    // hash-1 has failed enough to be a leech; hash-2 has not.
-    for (const [hash, grades] of [
-      ["hash-1", [Grade.Forgot, Grade.Forgot, Grade.Forgot, Grade.Good]],
-      ["hash-2", [Grade.Good, Grade.Easy]],
+    const { orderOf, compareOrder } = await import("../core/replay");
+    // Card 1 has failed enough to be a leech; card 2 has not.
+    for (const [n, grades] of [
+      [1, [Grade.Forgot, Grade.Forgot, Grade.Forgot, Grade.Good]],
+      [2, [Grade.Good, Grade.Easy]],
     ] as const) {
       for (const [i, grade] of grades.entries()) {
-        await stats.persistReview(hash, performance(today), review(hash, grade, -grades.length + i), {
+        const state = {
+          ...performance(today),
+          lastDay: today,
+          lastGrade: null,
+          key: keyOf(n),
+          group: "someone/cards",
+          card: `k${n}`,
+        };
+        const at = day(-grades.length + i);
+        const event = { v: 2, kind: "review", card: `k${n}`, at, tz: 0, grade } as const;
+        await stats.persistReview(review(n, grade, -grades.length + i), state, orderOf(event), {
           queue: [],
           requeued: [],
           completed: [],
           gradedNew: [],
           totalCards: 1,
           startedAt: day(-1),
-        });
+        }, compareOrder);
       }
     }
     return stats;

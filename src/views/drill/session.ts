@@ -1,13 +1,19 @@
 import { Card, DrillSession, Grade, Performance, Review } from "../../types";
-import { updatePerformance, todayStr, formatInterval } from "../../fsrs";
+import { updatePerformance, todayStr, formatInterval, localDay } from "../../fsrs";
 import {
+  PersistedReview,
+  StateRecord,
   getAllPerformances,
   getReviewsSince,
   persistReview,
   revertReview,
   saveSession,
   clearSession,
+  stateKey,
 } from "../../db";
+import { CardState, applyEvent, compareOrder, orderOf } from "../../core/replay";
+import { ReviewEvent } from "../../core/events";
+import { logTarget } from "../../review-log";
 import { getConfig, getDesiredRetention, getIntervalFuzz } from "../../github";
 import { recordIntroduced } from "../../new-card-budget";
 import { syncStateOnly } from "../../sync";
@@ -45,17 +51,23 @@ export type Session = {
   readonly finished: boolean;
   /** A write failed, so this session may not survive the device. */
   readonly writeFailed: boolean;
-  /** The card an undo would bring back, so the view can keep it built. */
+  /**
+   * The content hash of the card an undo would bring back, so the view can
+   * keep it built. A hash rather than a key because what the view caches is
+   * rendered content, and an edit changes that without changing the key.
+   */
   readonly undoTarget: string | null;
 
   reveal(): void;
   grade(grade: Grade): void;
   undo(): Promise<void>;
   /**
-   * Put what an edit made of a card where the old one was, or drop it if the
-   * edit deleted it. `keptScheduling` says whether the old card's history
-   * followed the new hash; when it did not, this is a card nothing has ever
-   * seen, and the intervals it offers have to say so.
+   * Put what an edit made of a card (the one whose content hash was `from`)
+   * where the old one was, or drop it if the edit deleted it. `keptScheduling`
+   * says whether the old card's history followed it to a new key; when it did
+   * not, this is a card nothing has ever seen, and the intervals it offers
+   * have to say so. A card that kept its key (it has an ID) keeps its history
+   * whatever this says.
    */
   replaceCard(from: string, to: Card | null, keptScheduling: boolean): void;
   /** Formatted interval each grade would give the current card. */
@@ -69,20 +81,43 @@ export type Session = {
 };
 
 type UndoEntry = {
-  cardHash: string;
+  /** The card's `stateKey`. */
+  key: string;
+  /** Its replay group, whose mark the write may have moved. */
+  group: string;
   grade: Grade;
   /** Scheduling state before the grade, used to reverse the write. */
   prevPerf: Performance;
-  /** Key of the persisted review; null until the write lands. */
-  reviewKey: IDBValidKey | null;
+  /** What the write changed; null until it lands. */
+  persisted: PersistedReview | null;
 };
 
-/** Fresh drills shuffle and bury cloze siblings; resumed ones keep their order. */
+/**
+ * The state a card was in before a grade, as `applyEvent` takes it. A state
+ * from the cache already is one; anything else (the demo's, a test's) is
+ * filled in the way the live path always read it, in this device's days.
+ */
+function asCardState(perf: Performance): CardState | undefined {
+  if (perf.type === "new") return undefined;
+  const state = perf as Partial<CardState> & typeof perf;
+  return {
+    ...perf,
+    lastDay: state.lastDay ?? localDay(new Date(perf.lastReviewedAt)),
+    lastGrade: state.lastGrade ?? null,
+  };
+}
+
+/** Cards that bury each other: a block's cloze deletions, a card and its reverse. */
+function familyOf(card: Card): string | null {
+  return card.id ? `${card.repo}/${card.id}` : card.familyHash;
+}
+
+/** Fresh drills shuffle and bury siblings; resumed ones keep their order. */
 function buildQueue(dueCards: Card[], resume?: DrillSession): Card[] {
   if (resume) {
-    const byHash = new Map(dueCards.map((c) => [c.hash, c]));
+    const byKey = new Map(dueCards.map((c) => [stateKey(c), c]));
     return resume.queue
-      .map((hash) => byHash.get(hash))
+      .map((key) => byKey.get(key))
       .filter((c): c is Card => c !== undefined);
   }
 
@@ -92,13 +127,14 @@ function buildQueue(dueCards: Card[], resume?: DrillSession): Card[] {
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
 
-  // Bury cloze siblings: keep only the first card per family hash.
+  // Bury siblings: keep only the first card per family.
   const seenFamilies = new Set<string>();
   const queue: Card[] = [];
   for (const card of shuffled) {
-    if (card.familyHash) {
-      if (seenFamilies.has(card.familyHash)) continue;
-      seenFamilies.add(card.familyHash);
+    const family = familyOf(card);
+    if (family) {
+      if (seenFamilies.has(family)) continue;
+      seenFamilies.add(family);
     }
     queue.push(card);
   }
@@ -112,9 +148,8 @@ async function buildCache(
   const source = provided ?? (await getAllPerformances());
   const cache = new Map<string, Performance>();
   for (const card of cards) {
-    if (!cache.has(card.hash)) {
-      cache.set(card.hash, source.get(card.hash) ?? { type: "new" });
-    }
+    const key = stateKey(card);
+    if (!cache.has(key)) cache.set(key, source.get(key) ?? { type: "new" });
   }
   return cache;
 }
@@ -129,18 +164,19 @@ export async function createSession(
   const cache = await buildCache(queue, options.cache);
 
   /**
-   * Every card this session can reach, by hash — including ones already
+   * Every card this session can reach, by key — including ones already
    * retired, which undo has to be able to bring back. A map rather than a
-   * search through `dueCards` because an edit changes a card's hash mid-drill,
-   * and the array the drill was started with cannot be told about that.
+   * search through `dueCards` because an edit can change a card (and an ID-less
+   * card's key) mid-drill, and the array the drill was started with cannot be
+   * told about that.
    */
-  const known = new Map(dueCards.map((c) => [c.hash, c]));
+  const known = new Map(dueCards.map((c) => [stateKey(c), c]));
 
   // Cards never reviewed before, so a grade can be charged against today's
   // new-card budget exactly once.
   const newCardHashes = new Set<string>();
-  for (const [hash, perf] of cache) {
-    if (perf.type === "new") newCardHashes.add(hash);
+  for (const [key, perf] of cache) {
+    if (perf.type === "new") newCardHashes.add(key);
   }
   const gradedNewCards = new Set<string>(resume?.gradedNew ?? []);
 
@@ -154,7 +190,7 @@ export async function createSession(
   const reviews: Review[] = [];
   let revealed = false;
   /** The card on screen and since when, for each review's duration. */
-  let shown: { hash: string; at: number } | null = null;
+  let shown: { key: string; at: number } | null = null;
   const useFuzz = getIntervalFuzz();
   // Read once, like fuzz: a session schedules every card it grades the same way.
   const retention = getDesiredRetention();
@@ -181,7 +217,7 @@ export async function createSession(
   /** Current drill position, for persistence. */
   function snapshot(): DrillSession {
     return {
-      queue: queue.map((c) => c.hash),
+      queue: queue.map(stateKey),
       completed: [...completedHashes],
       gradedNew: [...gradedNewCards],
       totalCards,
@@ -205,7 +241,7 @@ export async function createSession(
       const card = queue[0] ?? null;
       // The first time the view asks for a card is when it goes on screen,
       // which is where the time spent on it starts.
-      if (card && shown?.hash !== card.hash) shown = { hash: card.hash, at: Date.now() };
+      if (card && shown?.key !== stateKey(card)) shown = { key: stateKey(card), at: Date.now() };
       return card;
     },
     get next() {
@@ -237,7 +273,8 @@ export async function createSession(
       return writeFailed;
     },
     get undoTarget() {
-      return undoStack[undoStack.length - 1]?.cardHash ?? null;
+      const entry = undoStack[undoStack.length - 1];
+      return entry ? known.get(entry.key)?.hash ?? null : null;
     },
 
     reveal() {
@@ -252,13 +289,34 @@ export async function createSession(
 
       const reviewedAt = new Date().toISOString();
       const card = queue.shift()!;
-      const perf = cache.get(card.hash)!;
-      const newPerf = updatePerformance(perf, grade, reviewedAt, {
-        fuzz: useFuzz,
-        retention,
-      });
+      const key = stateKey(card);
+      const target = logTarget(card);
+      const perf = cache.get(key)!;
+      // The grade is the event this device will push. Its state comes from
+      // replay's own step, keyed as the log keys it, in this device's zone as
+      // recorded on the event — so a replay anywhere later gives the same.
+      const tz = -new Date(reviewedAt).getTimezoneOffset();
+      const durationMs = shown?.key === key ? Date.now() - shown.at : undefined;
+      const event: ReviewEvent = {
+        v: 2,
+        kind: "review",
+        card: target.card,
+        at: reviewedAt,
+        tz,
+        grade,
+        ...(durationMs !== undefined ? { ms: durationMs } : {}),
+      };
+      const newPerf: StateRecord = {
+        ...applyEvent(asCardState(perf), event, { retention, fuzz: useFuzz }),
+        key,
+        group: target.group,
+        card: target.card,
+      };
 
       const review: Review = {
+        key,
+        log: target.log,
+        tz,
         cardHash: card.hash,
         reviewedAt,
         grade,
@@ -267,16 +325,16 @@ export async function createSession(
         intervalRaw: newPerf.intervalRaw,
         intervalDays: newPerf.intervalDays,
         dueDate: newPerf.dueDate,
-        ...(shown?.hash === card.hash ? { durationMs: Date.now() - shown.at } : {}),
+        ...(durationMs !== undefined ? { durationMs } : {}),
       };
 
-      cache.set(card.hash, newPerf);
+      cache.set(key, newPerf);
 
       // Charge the new-card budget only when the card is actually graded —
       // and never in demo mode, which is meant to persist nothing. The budget
       // lives in localStorage, so it counts as persistence.
-      if (newCardHashes.has(card.hash) && !gradedNewCards.has(card.hash)) {
-        gradedNewCards.add(card.hash);
+      if (newCardHashes.has(key) && !gradedNewCards.has(key)) {
+        gradedNewCards.add(key);
         if (!dryRun) recordIntroduced(todayStr(), 1);
       }
 
@@ -288,27 +346,29 @@ export async function createSession(
       if (grade === Grade.Forgot || grade === Grade.Hard) {
         queue.push(card);
       } else {
-        completedHashes.add(card.hash);
+        completedHashes.add(key);
       }
 
       reviews.push(review);
 
       const undoEntry: UndoEntry = {
-        cardHash: card.hash,
+        key,
+        group: target.group,
         grade,
         prevPerf: perf,
-        reviewKey: null,
+        persisted: null,
       };
       undoStack.push(undoEntry);
 
       if (!dryRun) {
         const position = snapshot();
         enqueueWrite(async () => {
-          undoEntry.reviewKey = await persistReview(
-            card.hash,
-            newPerf,
+          undoEntry.persisted = await persistReview(
             review,
-            position
+            newPerf,
+            orderOf(event),
+            position,
+            compareOrder
           );
         });
       }
@@ -321,23 +381,24 @@ export async function createSession(
       if (undoStack.length === 0) return;
 
       const entry = undoStack.pop()!;
-      const card = known.get(entry.cardHash);
+      const card = known.get(entry.key);
       if (!card) return;
+      const key = entry.key;
 
       reviews.pop();
 
       if (entry.grade === Grade.Forgot || entry.grade === Grade.Hard) {
-        const idx = queue.findLastIndex((c) => c.hash === card.hash);
+        const idx = queue.findLastIndex((c) => stateKey(c) === key);
         if (idx >= 0) queue.splice(idx, 1);
       } else {
-        completedHashes.delete(card.hash);
+        completedHashes.delete(key);
       }
 
       // Give back the new-card budget if this was the card's first grade.
-      if (gradedNewCards.has(card.hash)) {
-        const stillGraded = reviews.some((r) => r.cardHash === card.hash);
+      if (gradedNewCards.has(key)) {
+        const stillGraded = reviews.some((r) => r.key === key);
         if (!stillGraded) {
-          gradedNewCards.delete(card.hash);
+          gradedNewCards.delete(key);
           if (!dryRun) recordIntroduced(todayStr(), -1);
         }
       }
@@ -345,46 +406,48 @@ export async function createSession(
       queue.unshift(card);
 
       // Reverse the persisted write. Writes are serialized, so the grade's
-      // write has landed and its key is populated by the time this runs.
+      // write has landed and `persisted` is filled in by the time this runs.
       if (!dryRun) {
         const position = snapshot();
+        const prev = entry.prevPerf;
+        const prevState =
+          prev.type === "new"
+            ? null
+            : ({ key, group: entry.group, card: key, ...asCardState(prev)!, ...prev } as StateRecord);
         await enqueueWrite(() =>
-          revertReview(
-            entry.cardHash,
-            entry.prevPerf,
-            entry.reviewKey,
-            position
-          )
+          revertReview(key, entry.group, prevState, entry.persisted, position)
         );
       }
-      cache.set(card.hash, entry.prevPerf);
+      cache.set(key, entry.prevPerf);
 
       revealed = false;
       notify();
     },
 
-    replaceCard(from: string, to: Card | null, keptScheduling: boolean) {
-      const at = queue.findIndex((c) => c.hash === from);
+    replaceCard(fromHash: string, to: Card | null, keptScheduling: boolean) {
+      const at = queue.findIndex((c) => c.hash === fromHash);
       if (at === -1) return;
       // An edit that only moved whitespace the parser trims produces the same
       // card back. Nothing to substitute, and unpicking the undo stack for it
       // would be throwing away history for no change at all.
-      if (to !== null && to.hash === from) return;
+      if (to !== null && to.hash === fromHash) return;
+      const from = stateKey(queue[at]);
+      const toKey = to === null ? null : stateKey(to);
 
       // Grades already given to the old text stand — they happened, and the
       // review log has them. What cannot stand is undoing one: reversing a
       // grade means writing the card's earlier scheduling back, and after an
-      // edit there is no longer a single card that scheduling belongs to. The
-      // entries go, and the reviews that pair with them go with them, so the
-      // stack and the list stay the parallel things the rest of undo assumes.
+      // edit that scheduling may belong to a different card. The entries go,
+      // and the reviews that pair with them go with them, so the stack and the
+      // list stay the parallel things the rest of undo assumes.
       for (let i = undoStack.length - 1; i >= 0; i--) {
-        if (undoStack[i].cardHash === from) undoStack.splice(i, 1);
+        if (undoStack[i].key === from) undoStack.splice(i, 1);
       }
       for (let i = reviews.length - 1; i >= 0; i--) {
-        if (reviews[i].cardHash === from) reviews.splice(i, 1);
+        if (reviews[i].key === from) reviews.splice(i, 1);
       }
 
-      if (to === null) {
+      if (to === null || toKey === null) {
         queue.splice(at, 1);
         // The progress bar counts completions against the size of the queue;
         // a card that left without being answered has to leave the denominator
@@ -392,18 +455,24 @@ export async function createSession(
         if (!completedHashes.has(from)) totalCards = Math.max(0, totalCards - 1);
       } else {
         queue[at] = to;
-        known.set(to.hash, to);
-
-        // A rewrite that kept its history is the same card wearing a new hash;
-        // one that did not is a card nothing has ever seen.
+        known.set(toKey, to);
+        // The same key is the same card (it has an ID): its history is its
+        // own, whatever the editor was asked. A new key is a card that kept
+        // the old one's history only if the edit carried it.
+        if (toKey === from) {
+          savePosition();
+          revealed = false;
+          notify();
+          return;
+        }
         const perf: Performance = keptScheduling
           ? cache.get(from) ?? { type: "new" }
           : { type: "new" };
-        cache.set(to.hash, perf);
-        if (perf.type === "new") newCardHashes.add(to.hash);
+        cache.set(toKey, perf);
+        if (perf.type === "new") newCardHashes.add(toKey);
 
         for (const set of [completedHashes, gradedNewCards]) {
-          if (set.delete(from)) set.add(to.hash);
+          if (set.delete(from)) set.add(toKey);
         }
       }
 
@@ -421,7 +490,7 @@ export async function createSession(
     previews() {
       const card = queue[0];
       if (!card) return [];
-      const perf = cache.get(card.hash)!;
+      const perf = cache.get(stateKey(card))!;
       const now = new Date().toISOString();
       return [Grade.Forgot, Grade.Hard, Grade.Good, Grade.Easy].map((grade) =>
         formatInterval(

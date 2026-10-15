@@ -37,6 +37,12 @@ function card(n: number, familyHash: string | null = null): Card {
   };
 }
 
+/**
+ * The key the app gives a fixture card: it has no ID, so its key is its
+ * hash's `h:` key, in its collection.
+ */
+const keyOf = (hash: string) => `someone/cards/h:${hash}`;
+
 /** Drain the serialized write queue. */
 async function settle(): Promise<void> {
   for (let i = 0; i < 50; i++) await new Promise((r) => setTimeout(r, 0));
@@ -126,7 +132,7 @@ describe("drill session", () => {
     session.reveal();
     session.grade(Grade.Forgot);
     await settle();
-    const lapsed = (await getAllPerformances()).get("hash-1")!;
+    const lapsed = (await getAllPerformances()).get(keyOf("hash-1"))!;
 
     session.reveal();
     session.grade(Grade.Good);
@@ -134,7 +140,7 @@ describe("drill session", () => {
 
     const reviews = await getAllReviews();
     expect(reviews.map((r) => r.grade)).toEqual([Grade.Forgot, Grade.Good]);
-    const relearned = (await getAllPerformances()).get("hash-1")!;
+    const relearned = (await getAllPerformances()).get(keyOf("hash-1"))!;
     expect(relearned.type === "reviewed" && relearned.reviewCount).toBe(2);
     expect(relearned.type === "reviewed" && lapsed.type === "reviewed" &&
       relearned.stability >= lapsed.stability).toBe(true);
@@ -199,10 +205,10 @@ describe("drill session", () => {
     const cards = [card(1), card(2), card(3), card(4)];
     const session = await createSession(cards, {
       resume: {
-        queue: ["hash-3", "hash-4"],
+        queue: [keyOf("hash-3"), keyOf("hash-4")],
         requeued: [],
-        completed: ["hash-1", "hash-2"],
-        gradedNew: ["hash-1", "hash-2"],
+        completed: [keyOf("hash-1"), keyOf("hash-2")],
+        gradedNew: [keyOf("hash-1"), keyOf("hash-2")],
         totalCards: 4,
         startedAt: new Date().toISOString(),
       },
@@ -220,9 +226,9 @@ describe("drill session", () => {
     const cards = [card(1), card(2), card(3)];
     const session = await createSession(cards, {
       resume: {
-        queue: ["hash-3", "hash-1"],
+        queue: [keyOf("hash-3"), keyOf("hash-1")],
         requeued: [],
-        completed: ["hash-2"],
+        completed: [keyOf("hash-2")],
         gradedNew: [],
         totalCards: 3,
         startedAt: new Date().toISOString(),
@@ -304,7 +310,7 @@ describe("a card rewritten during the drill", () => {
     const { createSession } = await fresh();
     const perf = new Map([
       [
-        "hash-1",
+        keyOf("hash-1"),
         {
           type: "reviewed" as const,
           lastReviewedAt: "2026-01-01T00:00:00.000Z",
@@ -329,7 +335,7 @@ describe("a card rewritten during the drill", () => {
     const { createSession } = await fresh();
     const perf = new Map([
       [
-        "hash-1",
+        keyOf("hash-1"),
         {
           type: "reviewed" as const,
           lastReviewedAt: "2026-01-01T00:00:00.000Z",
@@ -428,7 +434,7 @@ describe("a card rewritten during the drill", () => {
     session.replaceCard("hash-1", rewritten(1), true);
     await settle();
 
-    expect((await loadSession())!.queue).toEqual(["hash-1-v2"]);
+    expect((await loadSession())!.queue).toEqual([keyOf("hash-1-v2")]);
   });
 
   it("ignores a card that is not in the queue", async () => {
@@ -438,5 +444,84 @@ describe("a card rewritten during the drill", () => {
     session.replaceCard("hash-9", rewritten(9), true);
 
     expect(session.current!.hash).toBe("hash-1");
+  });
+});
+
+/**
+ * Since M3 the review log is the truth. A grade is an event, and the state the
+ * drill shows for it has to be the state replaying that event gives — on this
+ * device and every other, fuzz included. Before, the live path drew fuzz from
+ * `Math.random`, and nothing could ever have reproduced it.
+ */
+describe("a grade as an event", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem(
+      "repos",
+      JSON.stringify([{ owner: "someone", repo: "cards", branch: "main" }])
+    );
+  });
+
+  it("records the key, the log and the timezone, and schedules as replay does", async () => {
+    const { createSession, getAllReviews, getAllPerformances } = await fresh();
+    const alpha: Card = { ...card(1), id: "alpha", key: "alpha" };
+    const lastReviewedAt = "2026-09-01T08:00:00.000Z";
+    // Far enough on that fuzz has days to move the interval by.
+    const prior = {
+      type: "reviewed" as const,
+      lastReviewedAt,
+      stability: 30,
+      difficulty: 5,
+      intervalRaw: 30,
+      intervalDays: 30,
+      dueDate: "2026-10-01",
+      reviewCount: 4,
+    };
+    const session = await createSession([alpha], {
+      cache: new Map([["someone/cards/alpha", prior]]),
+    });
+    session.reveal();
+    session.grade(Grade.Good);
+    await settle();
+
+    const [review] = await getAllReviews();
+    expect(review).toMatchObject({ key: "someone/cards/alpha", log: "someone/cards" });
+    expect(review.tz).toBe(-new Date(review.reviewedAt).getTimezoneOffset());
+
+    const { replay } = await import("../../core/replay");
+    const { reviewEvent } = await import("../../review-log");
+    const replayed = replay(
+      [
+        {
+          v: 2,
+          kind: "baseline",
+          card: "alpha",
+          at: lastReviewedAt,
+          tz: -new Date(lastReviewedAt).getTimezoneOffset(),
+          s: 30,
+          d: 5,
+          reps: 4,
+        },
+        reviewEvent(review),
+      ],
+      { fuzz: true, retention: 0.9 }
+    ).get("alpha")!;
+    const live = (await getAllPerformances()).get("someone/cards/alpha")!;
+    expect(live.dueDate).toBe(replayed.dueDate);
+    expect(live.stability).toBe(replayed.stability);
+    expect(live.reviewCount).toBe(5);
+  });
+
+  it("buries a card's reverse with it, as cloze siblings are", async () => {
+    const { createSession } = await fresh();
+    const forward: Card = { ...card(1), id: "pair", key: "pair" };
+    const reverse: Card = { ...card(2), id: "pair", key: "pair:r" };
+
+    const session = await createSession([forward, reverse]);
+
+    expect(session.finished).toBe(false);
+    session.reveal();
+    session.grade(Grade.Easy);
+    expect(session.finished).toBe(true);
   });
 });

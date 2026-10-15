@@ -1,4 +1,5 @@
 import { Card, Grade, Review } from "./types";
+import { stateKey } from "./card-key";
 
 /**
  * Cards that keep failing.
@@ -47,18 +48,18 @@ export function findLeeches(
   reviews: Review[],
   threshold: number = LEECH_THRESHOLD
 ): Leech[] {
-  const byHash = new Map(cards.map((c) => [c.hash, c]));
+  const byKey = new Map(cards.map((c) => [stateKey(c), c]));
 
   const grouped = new Map<string, Review[]>();
   for (const review of reviews) {
-    if (!byHash.has(review.cardHash)) continue;
-    const list = grouped.get(review.cardHash);
+    if (!byKey.has(review.key)) continue;
+    const list = grouped.get(review.key);
     if (list) list.push(review);
-    else grouped.set(review.cardHash, [review]);
+    else grouped.set(review.key, [review]);
   }
 
   const leeches: Leech[] = [];
-  for (const [hash, history] of grouped) {
+  for (const [key, history] of grouped) {
     // Insertion order is chronological in practice, but an undo removes and a
     // later grade re-adds, so sort rather than assume.
     history.sort((a, b) => a.reviewedAt.localeCompare(b.reviewedAt));
@@ -70,7 +71,7 @@ export function findLeeches(
 
     const last = lapseIndexes[lapseIndexes.length - 1];
     leeches.push({
-      card: byHash.get(hash)!,
+      card: byKey.get(key)!,
       lapses: lapseIndexes.length,
       reviews: history.length,
       lastLapseAt: history[last].reviewedAt,
@@ -86,7 +87,7 @@ export function findLeeches(
       Number(isRecovering(a)) - Number(isRecovering(b)) ||
       b.lapses - a.lapses ||
       b.lapses / b.reviews - a.lapses / a.reviews ||
-      a.card.hash.localeCompare(b.card.hash)
+      stateKey(a.card).localeCompare(stateKey(b.card))
   );
   return leeches;
 }

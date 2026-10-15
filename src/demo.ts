@@ -1,6 +1,6 @@
 import { Card, Performance, ReviewedPerformance } from "./types";
 import { parseFile } from "./parser";
-import { inRepo } from "./db";
+import { inRepo, stateKey } from "./db";
 import { todayStr } from "./fsrs";
 
 function addDays(dateStr: string, days: number): string {
@@ -165,7 +165,7 @@ export async function getDemoData(): Promise<{
 
   for (let i = 0; i < cards.length; i++) {
     const template = PERF_TEMPLATES[i];
-    cache.set(cards[i].hash, template ? template(today) : { type: "new" });
+    cache.set(stateKey(cards[i]), template ? template(today) : { type: "new" });
   }
 
   return { cards, cache };

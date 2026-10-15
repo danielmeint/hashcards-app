@@ -1,28 +1,25 @@
-import { Card, ReviewedPerformance } from "./types";
+import { Card } from "./types";
 import {
+  ConflictError,
+  DATA_BRANCH,
   GitHubConfig,
   RepoConfig,
   SyncProgress,
+  getConfig,
+  getRef,
   getRepos,
   repoKey,
   listMdFiles,
   getFilesContent,
   getBlob,
   FileEntry,
-  readStateFile,
-  writeStateFile,
-  StateFile,
-  ConflictError,
 } from "./github";
 import {
   DeckFile,
-  exportState,
   getAllDeckFiles,
-  getAllOrigins,
   getMeta,
   inRepo,
-  importState,
-  recordOrigins,
+  markReplayStale,
   setMeta,
   updateDeckFiles,
   getMediaShas,
@@ -30,10 +27,20 @@ import {
   MediaFile,
 } from "./db";
 import { forgetMediaUrl, mediaRefs, mediaType } from "./media";
-import { pushReviewLog } from "./review-log";
 import { parseFile } from "./parser";
 import { recordSyncSuccess, setSyncStatus } from "./sync-state";
 import { AuthError } from "./auth";
+import { isDeckPath } from "./collection-config";
+import {
+  CONFIG_PATH,
+  adoptReviewConfig,
+  cachedCollectionConfig,
+  pushCollectionSettings,
+  readCollectionConfig,
+} from "./collection-settings";
+import { CONFLICT_RETRIES, migrationHint, pullV1, pushV1, v1Files } from "./compat";
+import { pullDataBranch, pushDataBranch } from "./data-branch";
+import { refreshStates } from "./review-state";
 
 let cachedCards: Card[] | null = null;
 
@@ -57,9 +64,10 @@ export function syncAll(config: RepoConfig): Promise<boolean> {
 /**
  * Every configured collection, in order, then the review state.
  *
- * Cards are fetched from all of them; state is pushed only to the ones the app
- * may write to. A subscription is someone else's repository — your scheduling
- * for its cards is yours, and it stays here.
+ * Cards are fetched from all of them; review data is read from and written to
+ * only the ones the app may write to. A subscription is someone else's
+ * repository — your reviews of its cards are yours, and they go in your own
+ * collection's data branch.
  */
 export function syncEverything(): Promise<boolean> {
   const repos = getRepos();
@@ -68,10 +76,9 @@ export function syncEverything(): Promise<boolean> {
 }
 
 /**
- * Push review state without re-fetching cards — nothing about the repo has
- * changed just because a session ended. Joins a sync already in progress rather
- * than racing it: two writers interleaving on the state file is how a merge
- * gets lost.
+ * Push reviews without re-fetching cards — nothing about the repo has changed
+ * just because a session ended. Joins a sync already in progress rather than
+ * racing it: two writers building on one tip is a race one of them loses.
  */
 export function syncStateOnly(config: RepoConfig): Promise<boolean> {
   return start(config, { cards: false, push: true });
@@ -156,27 +163,32 @@ async function runSync(
     if (scope.cards) {
       for (const repo of repos) await syncCards(repo, report);
     }
-    // Every writable collection gets its own state file. `inStep` is the
-    // conjunction: one repo declining to push is still review state that has
-    // not left the device, and the deck list has to say so.
-    let inStep = true;
-    for (const repo of repos) {
-      const push = scope.push && !repo.readOnly;
-      const pushed = await fullSync(repo, push, report);
-      inStep = inStep && pushed;
-      // The same consent as the state file: a collection you may write to and
-      // whose cards you have actually been reviewing.
-      const key = repoKey(repo);
-      const holds = new Set(
-        (await loadCachedCards()).filter((c) => c.repo === key).map((c) => c.hash)
-      );
-      if (push && holds.size > 0) {
-        report({ phase: "Saving review history" });
-        await pushReviewLog(repo, holds);
-      }
+
+    // One schedule, one new-card budget: the review settings are your own
+    // collection's, whichever collections this sync visited.
+    const primary = getConfig();
+    if (primary && !primary.readOnly) {
+      adoptReviewConfig((await cachedCollectionConfig(repoKey(primary))).review);
     }
+
+    // `inStep` is the conjunction: one collection declining to push is still
+    // reviews that have not left the device, and the deck list has to say so.
+    let inStep = true;
+    const notices: string[] = [];
+    for (const repo of repos) {
+      if (repo.readOnly) continue;
+      const result = await syncReviews(repo, scope.push, report);
+      inStep = inStep && result.inStep;
+      if (result.notice) notices.push(result.notice);
+    }
+    // Settings changed on the Settings screen since the last sync, or retention
+    // adopted from the file just now: every due date follows.
+    await refreshStates();
+
     recordSyncSuccess(inStep);
-    setSyncStatus({ phase: "idle" });
+    setSyncStatus(
+      notices.length > 0 ? { phase: "idle", notice: notices.join(" ") } : { phase: "idle" }
+    );
     return true;
   } catch (e) {
     // A credential that is gone or refused is not a retryable failure, and a
@@ -187,6 +199,76 @@ async function runSync(
       needsSignIn: e instanceof AuthError,
     });
     return false;
+  }
+}
+
+/** The v1 files the last full listing of a collection's `main` found. */
+const v1FilesKey = (config: GitHubConfig) => `v1_files:${repoKey(config)}`;
+
+/**
+ * Pull, replay and push one collection's review data, in whichever format it
+ * is in.
+ *
+ * - **Migrated, or new** — it has a `hashcards-data` branch, or nothing of v1
+ *   on `main` at all: other devices' events come from the branch, and this
+ *   device's go back as one commit, creating the branch the first time.
+ * - **Not migrated** — v1 files on `main` and no data branch: read and written
+ *   as v1 (`compat.ts`), with a hint that `hc migrate` is waiting.
+ *
+ * Which one is decided afresh every sync, so running the migration on another
+ * machine is picked up by the next sync here with nothing to configure.
+ *
+ * Nothing is pushed to a collection this device holds no cards from. Choosing
+ * a repository in a list is not consent to commit to it (see `adoptRepo`), and
+ * a repo with no cards — the app's own source repo, say — is not one whose
+ * reviews we own.
+ */
+async function syncReviews(
+  config: RepoConfig,
+  push: boolean,
+  report: (progress: SyncProgress) => void
+): Promise<{ inStep: boolean; notice?: string }> {
+  const key = repoKey(config);
+  const holdsCards = (await loadCachedCards()).some((c) => c.repo === key);
+  const canPush = push && holdsCards;
+
+  report({ phase: "Fetching reviews" });
+  let head = await getRef(config, DATA_BRANCH);
+  // Never listed since M3 (a tree tag from before still answering 304): which
+  // format this collection is in is not known, and guessing "new" would put a
+  // data branch into a repo that has not been migrated. Listing it settles it.
+  if (head === null && (await getMeta(v1FilesKey(config))) === undefined) {
+    await syncCards(config, report);
+  }
+  const files = (await getMeta<FileEntry[]>(v1FilesKey(config))) ?? [];
+
+  if (head === null && files.length > 0) {
+    const state = await pullV1(config, files);
+    await refreshStates();
+    report({ phase: "Saving review state" });
+    const inStep = await pushV1(config, files, state, canPush);
+    return { inStep, notice: migrationHint(config) };
+  }
+
+  for (let attempt = 0; ; attempt++) {
+    const pulled = await pullDataBranch(config, head);
+    for (const group of pulled.invalid) await markReplayStale(group);
+    await refreshStates(pulled.fresh);
+    report({ phase: "Saving reviews" });
+    try {
+      const inStep = await pushDataBranch(config, pulled.tip, canPush);
+      if (canPush && repoKey(getConfig() ?? config) === key) {
+        await pushCollectionSettings(config);
+      }
+      return { inStep };
+    } catch (e) {
+      // Another device moved the branch between our read and our write. Its
+      // files are not ours and ours are not its, so there is nothing to
+      // merge: read the new tip and build on that.
+      if (!(e instanceof ConflictError) || attempt >= CONFLICT_RETRIES) throw e;
+      report({ phase: "Merging a newer change" });
+      head = await getRef(config, DATA_BRANCH);
+    }
   }
 }
 
@@ -221,12 +303,23 @@ export async function syncCards(
   onProgress?: (progress: SyncProgress) => void
 ): Promise<Card[]> {
   onProgress?.({ phase: "Checking for changes" });
-  const etag = await getMeta<string>(treeEtagKey(config));
+  // A collection never listed since M3 is listed in full whatever its tag
+  // says: what this listing learns besides the decks (`hashcards.toml`, the v1
+  // files) was not recorded by the listing the tag belongs to.
+  const known = (await getMeta(v1FilesKey(config))) !== undefined;
+  const etag = known ? await getMeta<string>(treeEtagKey(config)) : null;
   const listing = await listMdFiles(config, etag);
 
   if (!listing.changed) return loadCards();
 
   const key = repoKey(config);
+  // Which Markdown files are decks is the collection's to say, in its
+  // `hashcards.toml`. Every one of them, when it says nothing.
+  const collection = await readCollectionConfig(
+    config,
+    listing.blobs.find((f) => f.path === CONFIG_PATH)
+  );
+  const decks = listing.files.filter((f) => isDeckPath(f.path, collection.decks));
   // Only this collection's files: another one's `Algebra.md` is a different
   // file that happens to share a name, and comparing SHAs across the two would
   // have each repeatedly declare the other stale.
@@ -235,8 +328,8 @@ export async function syncCards(
       .filter((file) => file.repo === key)
       .map((file) => [file.path, file])
   );
-  const wanted = new Set(listing.files.map((f) => f.path));
-  const stale = listing.files.filter(
+  const wanted = new Set(decks.map((f) => f.path));
+  const stale = decks.filter(
     (f) => stored.get(f.path)?.sha !== f.sha
   );
   const removed = [...stored.keys()]
@@ -277,14 +370,10 @@ export async function syncCards(
   // here, so the tag is never recorded for a state we did not reach. Recording
   // it early would make the next sync report "nothing changed" over files we
   // never actually got.
+  await setMeta(v1FilesKey(config), v1Files(listing.blobs));
   await setMeta(treeEtagKey(config), listing.etag);
 
-  const cards = await loadCards();
-  await recordOrigins(
-    cards.filter((c) => c.repo === key).map((c) => c.hash),
-    key
-  );
-  return cards;
+  return loadCards();
 }
 
 /**
@@ -365,164 +454,4 @@ export async function loadCards(): Promise<Card[]> {
  */
 export async function loadCachedCards(): Promise<Card[]> {
   return cachedCards ?? loadCards();
-}
-
-/**
- * Merge remote scheduling into local, last-write-wins per card.
- *
- * Pure, and idempotent: merging an already-merged set against a newer remote
- * gives the same answer as merging both from scratch. That is what makes the
- * conflict retry below safe to do without asking anyone.
- */
-function mergeState(
-  local: Record<string, ReviewedPerformance>,
-  remoteCards: Record<string, unknown>
-): Record<string, ReviewedPerformance> {
-  const merged: Record<string, ReviewedPerformance> = {};
-  const allHashes = new Set([
-    ...Object.keys(local),
-    ...Object.keys(remoteCards),
-  ]);
-
-  for (const hash of allHashes) {
-    const localPerf = local[hash];
-    const remotePerf = remoteCards[hash] as ReviewedPerformance | undefined;
-
-    if (localPerf && remotePerf) {
-      // LWW: keep the one with the later lastReviewedAt
-      merged[hash] =
-        localPerf.lastReviewedAt >= remotePerf.lastReviewedAt
-          ? localPerf
-          : { ...remotePerf, type: "reviewed" };
-    } else if (localPerf) {
-      merged[hash] = localPerf;
-    } else if (remotePerf) {
-      merged[hash] = { ...remotePerf, type: "reviewed" };
-    }
-  }
-
-  return merged;
-}
-
-/**
- * The part of the merged scheduling that belongs in this repository's file.
- *
- * `exportState` returns every performance the device holds, and writing all of
- * them into whichever repo happens to be configured is how two collections end
- * up each carrying the other's cards — not data loss, since hashes are
- * content-derived and last-write-wins stays correct per card, but each file
- * accumulates scheduling for cards it does not have and leaks that those cards
- * exist somewhere else.
- *
- * The rule is the cards this repo holds **plus** the orphans last seen in it.
- * The second half is not optional: a card temporarily out of the repo — a file
- * being reorganised, a branch mid-rename, a card edited on another device and
- * not yet pulled here — would otherwise drop out of the file and come back with
- * its history gone. Anki keeps orphaned state for the same reason.
- */
-async function scopeToRepo(
-  merged: Record<string, ReviewedPerformance>,
-  key: string
-): Promise<Record<string, ReviewedPerformance>> {
-  const origins = await getAllOrigins();
-  // Held now *by this collection*, which covers a card written on this device a
-  // moment ago and not yet carried into `origins` by a sync. Filtering by repo
-  // is what keeps it from meaning "held by any collection" — the deck store
-  // holds every one of them at once now.
-  const here = new Set(
-    (await loadCachedCards()).filter((c) => c.repo === key).map((c) => c.hash)
-  );
-
-  const mine: Record<string, ReviewedPerformance> = {};
-  for (const [hash, perf] of Object.entries(merged)) {
-    if (here.has(hash) || origins.get(hash) === key) mine[hash] = perf;
-  }
-  return mine;
-}
-
-/** The merged set as the repo stores it — scheduling only, no local bookkeeping. */
-function toStateFile(merged: Record<string, ReviewedPerformance>): StateFile {
-  const stateFile: StateFile = { version: 1, cards: {} };
-  for (const [hash, perf] of Object.entries(merged)) {
-    stateFile.cards[hash] = {
-      lastReviewedAt: perf.lastReviewedAt,
-      stability: perf.stability,
-      difficulty: perf.difficulty,
-      intervalRaw: perf.intervalRaw,
-      intervalDays: perf.intervalDays,
-      dueDate: perf.dueDate,
-      reviewCount: perf.reviewCount,
-    };
-  }
-  return stateFile;
-}
-
-/**
- * How many times a push will re-merge and try again before reporting failure.
- * Bounded because a conflict that keeps recurring is no longer a race with one
- * other device — it is something that will still be true on the next attempt,
- * and hammering the contents API is not a way to find out which.
- */
-const CONFLICT_RETRIES = 2;
-
-/**
- * Merge review state with the repo, last-write-wins per card.
- *
- * The SHA sent with a write is the one read at the top of this function, so a
- * second device committing in between makes GitHub refuse the push — correctly,
- * since accepting it would drop whatever that device had recorded. Losing that
- * race is not a failure worth showing anyone: the merge is per-card LWW and
- * idempotent, so the answer is to read the new state, merge again, and push
- * that. Before 1.5 this surfaced as nothing at all; now it would surface as a
- * red "Try again" for something the app can settle by itself.
- *
- * Returns whether remote is now in step with local — false when there was a
- * difference this call declined to push. The caller records that, so a run of
- * declined or skipped pushes is visible as reviews that never left the device
- * rather than as a "Synced just now" that means nothing.
- */
-export async function fullSync(
-  config: GitHubConfig,
-  push: boolean = true,
-  onProgress?: (progress: SyncProgress) => void
-): Promise<boolean> {
-  const key = repoKey(config);
-
-  for (let attempt = 0; ; attempt++) {
-    onProgress?.({
-      phase: attempt === 0 ? "Fetching review state" : "Merging a newer change",
-    });
-    const remote = await readStateFile(config);
-
-    // Local is re-read on every attempt, not just the first: a merge writes
-    // back into IndexedDB, and a retry has to build on that rather than on the
-    // state this sync started with.
-    const local = await exportState();
-    const merged = mergeState(local, remote?.data?.cards || {});
-    await importState(merged);
-
-    // Everything this file already knew about belongs to this collection,
-    // including cards no device holds any more — that is what the file *is*.
-    await recordOrigins(Object.keys(remote?.data?.cards ?? {}), key);
-
-    const stateFile = toStateFile(await scopeToRepo(merged, key));
-
-    // A repo we hold no cards for is not a repo whose scheduling we own, so
-    // writing a state file into it says something untrue about it. This is the
-    // backstop under `adoptRepo`: it also catches a repo that was configured by
-    // hand, and one whose card files have all been deleted.
-    const canPush = push && (await loadCachedCards()).length > 0;
-
-    const remoteJson = remote ? JSON.stringify(remote.data) : null;
-    if (remoteJson === JSON.stringify(stateFile)) return true;
-    if (!canPush) return false;
-
-    onProgress?.({ phase: "Saving review state" });
-    try {
-      await writeStateFile(config, stateFile, remote?.sha);
-      return true;
-    } catch (e) {
-      if (!(e instanceof ConflictError) || attempt >= CONFLICT_RETRIES) throw e;
-    }
-  }
 }

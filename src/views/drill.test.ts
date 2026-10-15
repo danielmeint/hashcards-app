@@ -122,7 +122,7 @@ describe("drill persistence", () => {
 
     expect(reviews[0].grade).toBe(Grade.Good);
     expect(perfs.size).toBe(1);
-    expect(perfs.get(reviews[0].cardHash)!.reviewCount).toBe(1);
+    expect(perfs.get(reviews[0].key)!.reviewCount).toBe(1);
   });
 
   it("keeps every graded card when the session is abandoned midway", async () => {
@@ -182,7 +182,7 @@ describe("drill persistence", () => {
     );
     const perfs = await getAllPerformances();
     expect(perfs.size).toBe(1);
-    expect([...perfs.keys()]).toEqual([reviews[0].cardHash]);
+    expect([...perfs.keys()]).toEqual([reviews[0].key]);
   });
 
   it("offers the ordinary grades for a card that comes round again", async () => {
@@ -248,11 +248,11 @@ describe("drill persistence", () => {
     );
 
     // Every card graded exactly once across the two sittings.
-    expect(new Set(reviews.map((r) => r.cardHash)).size).toBe(3);
+    expect(new Set(reviews.map((r) => r.key)).size).toBe(3);
   });
 
   it("drops cards that have left the repo when resuming", async () => {
-    const { renderDrill, getAllReviews, loadSession } = await freshDrill();
+    const { renderDrill, getAllReviews, loadSession, stateKey } = await freshDrill();
     const cards = [basicCard(1), basicCard(2), basicCard(3)];
     await renderDrill(container, cards, () => {});
 
@@ -264,7 +264,7 @@ describe("drill persistence", () => {
     );
 
     // One of the queued cards no longer exists in the synced card set.
-    const survivors = cards.filter((c) => c.hash !== session!.queue[0]);
+    const survivors = cards.filter((c) => stateKey(c) !== session!.queue[0]);
 
     document.body.innerHTML = "";
     const resumed = document.createElement("div");
@@ -277,7 +277,7 @@ describe("drill persistence", () => {
       (r) => r.length === 2,
       "the remaining card"
     );
-    expect(reviews.map((r) => r.cardHash)).not.toContain(session!.queue[0]);
+    expect(reviews.map((r) => r.key)).not.toContain(session!.queue[0]);
   });
 
   it("writes nothing in dry-run (demo) mode", async () => {

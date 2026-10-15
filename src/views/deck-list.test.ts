@@ -140,7 +140,7 @@ describe("deck list", () => {
     // device, which turns an unseen card into a due review.
     const { importState } = await import("../db");
     await importState({
-      "hash-1": {
+      "someone/cards/h:hash-1": {
         type: "reviewed",
         lastReviewedAt: "2000-01-01T00:00:00.000Z",
         stability: 1,

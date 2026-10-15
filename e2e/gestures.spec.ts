@@ -35,7 +35,7 @@ async function touchDrag(
   await cdp.detach();
 }
 
-const graded = async (page: Page) => (await readStore(page, "performances")).length;
+const graded = async (page: Page) => (await readStore(page, "states")).length;
 
 test.beforeEach(async ({ page, github }, info) => {
   test.skip(!info.project.use.hasTouch, "touch gestures are the phone's");

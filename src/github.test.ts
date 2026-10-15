@@ -211,3 +211,73 @@ describe("the repository picker's list", () => {
     expect(repos.find((r) => r.repo === "cards")!.defaultBranch).toBe("master");
   });
 });
+
+/**
+ * The data branch moves by fast-forward only, and losing that race is the one
+ * failure sync settles by itself. So "someone else got there first" has to be
+ * told apart from every other refusal — 422 is also GitHub's answer to a
+ * malformed request, and retrying that is the same answer three times.
+ */
+describe("the data branch's ref", () => {
+  const CONFIG = { owner: "someone", repo: "cards", branch: "main" };
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  async function answering(status: number, body: unknown) {
+    const github = await fresh();
+    await github.saveCredential({ kind: "pat", token: "token" });
+    const sent: { url: string; init?: RequestInit }[] = [];
+    globalThis.fetch = vi.fn(async (url: unknown, init?: RequestInit) => {
+      sent.push({ url: String(url), init });
+      return new Response(body === null ? null : JSON.stringify(body), { status });
+    }) as unknown as typeof fetch;
+    return { ...github, sent };
+  }
+
+  it("reads a missing branch as none, not as a failure", async () => {
+    const { getRef } = await answering(404, { message: "Not Found" });
+    expect(await getRef(CONFIG, "hashcards-data")).toBeNull();
+  });
+
+  it("updates without force, so only a fast-forward lands", async () => {
+    const { updateRef, sent } = await answering(200, { object: { sha: "c2" } });
+    await updateRef(CONFIG, "hashcards-data", "c2");
+    expect(sent[0].url).toMatch(/\/git\/refs\/heads\/hashcards-data$/);
+    expect(JSON.parse(String(sent[0].init!.body))).toEqual({ sha: "c2", force: false });
+  });
+
+  it("reports a refused fast-forward as a lost race", async () => {
+    const { updateRef, ConflictError } = await answering(422, { message: "Update is not a fast forward" });
+    await expect(updateRef(CONFIG, "hashcards-data", "c2")).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it("reports a branch created meanwhile as a lost race", async () => {
+    const { createRef, ConflictError } = await answering(422, { message: "Reference already exists" });
+    await expect(createRef(CONFIG, "hashcards-data", "c1")).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it("does not mistake any other 422 for one", async () => {
+    const { updateRef, ConflictError } = await answering(422, { message: "Object does not exist" });
+    const error = await updateRef(CONFIG, "hashcards-data", "c2").catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(ConflictError);
+  });
+
+  it("sends file contents inline, and removals as a null SHA", async () => {
+    const { createTree, sent } = await answering(201, { sha: "t2", tree: [{ path: "a", sha: "b1", type: "blob" }] });
+    const tree = await createTree(CONFIG, "t1", [
+      { path: "a", content: "x\n" },
+      { path: "gone", sha: null },
+    ]);
+    expect(tree.sha).toBe("t2");
+    expect(JSON.parse(String(sent[0].init!.body))).toEqual({
+      base_tree: "t1",
+      tree: [
+        { path: "a", mode: "100644", type: "blob", content: "x\n" },
+        { path: "gone", mode: "100644", type: "blob", sha: null },
+      ],
+    });
+  });
+});

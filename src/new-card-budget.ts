@@ -1,6 +1,8 @@
 import { Card, ReviewedPerformance } from "./types";
 import { todayStr } from "./fsrs";
 import { settings } from "./settings";
+import { markDirty } from "./collection-settings";
+import { stateKey } from "./db";
 
 // --- Settings ---
 
@@ -8,8 +10,10 @@ export function getNewCardsPerDay(): number {
   return settings.newCardsPerDay.get();
 }
 
+/** A collection setting: written to `hashcards.toml` on the next sync. */
 export function setNewCardsPerDay(n: number): void {
   settings.newCardsPerDay.set(n);
+  markDirty("newPerDay");
 }
 
 // --- Today's budget ---
@@ -45,7 +49,10 @@ export function selectDueCards(
   const newCards: Card[] = [];
 
   for (const card of cards) {
-    const perf = performances.get(card.hash);
+    // A draft is a proposal, a suspended card is set aside: neither is due,
+    // and neither is offered as new.
+    if (card.status === "draft" || card.status === "suspended") continue;
+    const perf = performances.get(stateKey(card));
     if (!perf) {
       newCards.push(card);
     } else if (perf.dueDate <= today) {
@@ -74,7 +81,8 @@ export function countDue(
   let newCount = 0;
 
   for (const card of cards) {
-    const perf = performances.get(card.hash);
+    if (card.status === "draft" || card.status === "suspended") continue;
+    const perf = performances.get(stateKey(card));
     if (!perf) {
       newCount++;
     } else if (perf.dueDate <= today) {

@@ -119,8 +119,14 @@ export function getDesiredRetention(): number {
   return settings.desiredRetention.get();
 }
 
+/**
+ * Desired retention and fuzz are collection settings (`hashcards.toml`): a
+ * change is kept here at once, written to the file on the next sync, and moves
+ * every due date — replay recomputes them all at the new values.
+ */
 export function setDesiredRetention(value: number): void {
   settings.desiredRetention.set(value);
+  collectionSettingChanged("desiredRetention");
 }
 
 export function getIntervalFuzz(): boolean {
@@ -129,6 +135,18 @@ export function getIntervalFuzz(): boolean {
 
 export function setIntervalFuzz(on: boolean): void {
   settings.intervalFuzz.set(on);
+  collectionSettingChanged("fuzz");
+}
+
+/**
+ * Loaded on demand: the modules behind it import this one, and a setting
+ * changed from the Settings screen does not need them on the startup path.
+ */
+function collectionSettingChanged(field: "desiredRetention" | "fuzz"): void {
+  void import("./collection-settings").then(({ markDirty }) => markDirty(field));
+  void import("./review-state")
+    .then(({ refreshStates }) => refreshStates())
+    .catch((e) => console.warn("Could not reschedule after a settings change:", e));
 }
 
 export function getHapticFeedback(): boolean {
@@ -302,6 +320,11 @@ export type TreeListing =
       files: FileEntry[];
       /** Every image and audio file, for sync to pick the referenced ones from. */
       media: FileEntry[];
+      /**
+       * Every file, for what is not a deck or media: `hashcards.toml`, and the
+       * v1 files that say a collection has not been migrated yet.
+       */
+      blobs: FileEntry[];
       etag: string | null;
     };
 
@@ -342,6 +365,7 @@ export async function listMdFiles(
     changed: true,
     files: blobs.filter((f) => f.path.endsWith(".md")),
     media: blobs.filter((f) => mediaType(f.path) !== null),
+    blobs,
     etag: res.headers.get("etag"),
   };
 }
@@ -571,6 +595,173 @@ async function writeFailure(res: Response): Promise<Error> {
   // race won from the other side: we read a 404, so we sent no SHA at all, and
   // by the time the write landed the file existed.
   if (res.status === 409 || (res.status === 422 && /\bsha\b/i.test(message))) {
+    return new ConflictError(message);
+  }
+  return new Error(message);
+}
+
+// --- The data branch, through the Git Data API ---
+//
+// Review data lives on an orphan branch, `hashcards-data`, so that `main`'s
+// history is the cards' history and nothing else (PLAN-1.0 §2.3). The contents
+// API commits one file per request; a sync touches a month file and the
+// snapshot, and those belong in one commit. So this half talks to git
+// directly: read the ref, read the tree, write a tree on top of it, a commit on
+// top of that, and move the ref — which is refused unless it is a fast-forward,
+// and that refusal is the lost race a caller retries.
+
+export const DATA_BRANCH = "hashcards-data";
+
+/** The commit a branch points at, or null if there is no such branch. */
+export async function getRef(
+  config: GitHubConfig,
+  branch: string
+): Promise<string | null> {
+  const res = await apiFetch(
+    `/repos/${config.owner}/${config.repo}/git/ref/heads/${encodePath(branch)}`
+  );
+  // A repository with no commits at all answers 409 rather than 404; for the
+  // question "is there a data branch" that is the same answer.
+  if (res.status === 404 || res.status === 409) return null;
+  if (!res.ok) throw new Error(await apiError(res));
+  const data = (await res.json()) as { object: { sha: string } };
+  return data.object.sha;
+}
+
+export type TreeEntry = { path: string; sha: string; type: string };
+
+/**
+ * Every entry under a commit or tree, recursively, and the SHA of the tree
+ * itself (what a new tree is built on top of). A truncated listing is an error
+ * for the same reason as on `main`: whatever was left out would read as gone.
+ */
+export async function getTree(
+  config: GitHubConfig,
+  treeish: string
+): Promise<{ sha: string; entries: TreeEntry[] }> {
+  const res = await apiFetch(
+    `/repos/${config.owner}/${config.repo}/git/trees/${treeish}?recursive=1`
+  );
+  if (!res.ok) throw new Error(await apiError(res));
+  const data = (await res.json()) as { sha: string; tree: TreeEntry[]; truncated?: boolean };
+  if (data.truncated) {
+    throw new Error(`${config.owner}/${config.repo}'s ${DATA_BRANCH} is too large to list in one request`);
+  }
+  return { sha: data.sha, entries: data.tree };
+}
+
+/** A blob's bytes as text. */
+export async function getBlobText(config: GitHubConfig, sha: string): Promise<string> {
+  return new TextDecoder().decode(await getBlob(config, sha));
+}
+
+/**
+ * Store one blob, returning its SHA. A tree can also take file contents inline
+ * (`TreeChange.content`), which is what sync uses — one request instead of one
+ * per file — so this is for content too large to send that way comfortably.
+ */
+export async function createBlob(config: GitHubConfig, text: string): Promise<string> {
+  const res = await apiFetch(`/repos/${config.owner}/${config.repo}/git/blobs`, {
+    method: "POST",
+    body: JSON.stringify({ content: text, encoding: "utf-8" }),
+  });
+  if (!res.ok) throw new Error(await apiError(res));
+  return ((await res.json()) as { sha: string }).sha;
+}
+
+/**
+ * One change to a tree: a file's new contents, an existing blob by SHA, or
+ * `sha: null` to remove the path.
+ */
+export type TreeChange =
+  | { path: string; content: string }
+  | { path: string; sha: string | null };
+
+/**
+ * A new tree: `base` with `changes` applied, or just `changes` for a first
+ * commit with nothing under it. Returns the new tree's SHA and the blob SHA
+ * each changed path ended up with.
+ */
+export async function createTree(
+  config: GitHubConfig,
+  base: string | null,
+  changes: TreeChange[]
+): Promise<{ sha: string; blobs: Map<string, string> }> {
+  const res = await apiFetch(`/repos/${config.owner}/${config.repo}/git/trees`, {
+    method: "POST",
+    body: JSON.stringify({
+      ...(base ? { base_tree: base } : {}),
+      tree: changes.map((c) => ({ path: c.path, mode: "100644", type: "blob", ...("content" in c ? { content: c.content } : { sha: c.sha }) })),
+    }),
+  });
+  if (!res.ok) throw new Error(await apiError(res));
+  const data = (await res.json()) as { sha: string; tree?: TreeEntry[] };
+  return {
+    sha: data.sha,
+    blobs: new Map((data.tree ?? []).map((e) => [e.path, e.sha])),
+  };
+}
+
+/** A commit of `tree` on top of `parents` — none for the orphan branch's first. */
+export async function createCommit(
+  config: GitHubConfig,
+  message: string,
+  tree: string,
+  parents: string[]
+): Promise<string> {
+  const res = await apiFetch(`/repos/${config.owner}/${config.repo}/git/commits`, {
+    method: "POST",
+    body: JSON.stringify({ message, tree, parents }),
+  });
+  if (!res.ok) throw new Error(await apiError(res));
+  return ((await res.json()) as { sha: string }).sha;
+}
+
+/**
+ * Move `branch` from the commit the caller built on to `sha`.
+ *
+ * GitHub has no "expected old value" on a ref update, but a non-forced update
+ * must be a fast-forward, and `sha`'s only parent is the commit the caller
+ * read. If another device moved the branch in between, the new commit is not a
+ * descendant of where the branch now is, and GitHub refuses with a 422 — a
+ * `ConflictError`, which the caller settles by building again on the new tip.
+ */
+export async function updateRef(
+  config: GitHubConfig,
+  branch: string,
+  sha: string
+): Promise<void> {
+  const res = await apiFetch(
+    `/repos/${config.owner}/${config.repo}/git/refs/heads/${encodePath(branch)}`,
+    { method: "PATCH", body: JSON.stringify({ sha, force: false }) }
+  );
+  if (res.ok) return;
+  throw await refFailure(res);
+}
+
+/**
+ * Create `branch` at `sha` — the orphan branch's first commit. Two devices
+ * creating it at once is the same race as above from the other side: the
+ * second is told the reference already exists.
+ */
+export async function createRef(
+  config: GitHubConfig,
+  branch: string,
+  sha: string
+): Promise<void> {
+  const res = await apiFetch(`/repos/${config.owner}/${config.repo}/git/refs`, {
+    method: "POST",
+    body: JSON.stringify({ ref: `refs/heads/${branch}`, sha }),
+  });
+  if (res.ok) return;
+  throw await refFailure(res);
+}
+
+async function refFailure(res: Response): Promise<Error> {
+  const message = await apiError(res);
+  // 422 is also GitHub's answer to a malformed request, so only the two
+  // messages that mean "someone else got there first" are a lost race.
+  if (res.status === 409 || (res.status === 422 && /fast forward|already exists/i.test(message))) {
     return new ConflictError(message);
   }
   return new Error(message);

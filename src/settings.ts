@@ -15,6 +15,12 @@ import { DEFAULT_RETENTION, MAX_RETENTION, MIN_RETENTION } from "./fsrs";
  * here: this is about there being one definition of `github_branch`, not about
  * every caller learning a new API.
  *
+ * Since M3, three of these — new cards per day, desired retention and fuzz —
+ * are a local copy of the collection's `hashcards.toml`, read on every sync
+ * and written back when changed here (`collection-settings.ts`). They stay
+ * here too, because the first paint and an offline drill need them before any
+ * sync. Theme and haptics are the device's own and never leave it.
+ *
  * IndexedDB holds everything larger — cards, reviews, credentials, the tree
  * ETag. The rule is that `localStorage` holds what must be readable
  * synchronously during the first paint, and nothing else.
@@ -127,6 +133,12 @@ export const settings = {
   /** Names this device's review-log files, so no two devices write one file. */
   deviceId: setting("device_id", optionalText),
   lastPushedAt: setting("last_pushed_at", optionalText),
+  /**
+   * Collection settings changed on this device and not yet written to the
+   * collection's `hashcards.toml` — by name, so a sync writes those and keeps
+   * taking the rest from the file. `collection-settings.ts`.
+   */
+  collectionDirty: setting("collection_settings_dirty", json<string[]>([])),
 };
 
 /**

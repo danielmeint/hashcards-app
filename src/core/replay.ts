@@ -104,8 +104,15 @@ function ordered(events: Iterable<ReviewLogEvent>): { event: ReviewLogEvent; ord
   return all.filter((e, i) => i === 0 || e.order.line !== all[i - 1].order.line);
 }
 
-/** One event applied to a card's state. Never mutates `prior`. */
-function apply(
+/**
+ * One event applied to a card's state. Never mutates `prior`.
+ *
+ * Exported for the live path: a grade in the app is applied to the cached
+ * state with exactly this, so what the drill shows is what a replay of the log
+ * later computes — the same key seeding fuzz, the same recorded `tz` counting
+ * days.
+ */
+export function applyEvent(
   prior: CardState | undefined,
   event: ReviewLogEvent,
   options: ReplayOptions
@@ -160,7 +167,7 @@ export type Replayed = {
   options: string;
 };
 
-function fingerprint({ params, retention, fuzz }: ReplayOptions): string {
+export function fingerprint({ params, retention, fuzz }: ReplayOptions): string {
   return JSON.stringify([
     [...(params ?? PARAMETERS)],
     retention ?? DEFAULT_RETENTION,
@@ -176,7 +183,7 @@ export function replayAll(
   const cards = new Map<string, CardState>();
   let watermark: EventOrder | null = null;
   for (const { event, order } of ordered(events)) {
-    cards.set(event.card, apply(cards.get(event.card), event, options));
+    cards.set(event.card, applyEvent(cards.get(event.card), event, options));
     watermark = order;
   }
   return { cards, watermark, options: fingerprint(options) };
@@ -224,7 +231,7 @@ export function replayMore(
   const cards = new Map(prev.cards);
   let watermark = prev.watermark;
   for (const { event, order } of fresh) {
-    cards.set(event.card, apply(cards.get(event.card), event, options));
+    cards.set(event.card, applyEvent(cards.get(event.card), event, options));
     watermark = order;
   }
   return { cards, watermark, options: prev.options, replayedAll: false };

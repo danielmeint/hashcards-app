@@ -311,6 +311,10 @@ button.row, a.row, summary.row { cursor: pointer; }
 .card-content > :last-child { margin-bottom: auto; }
 .card-content .answer { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--divider); visibility: hidden; }
 .card-content.revealed .answer { visibility: visible; }
+/* The optional Extra note (src/render.ts): part of the answer side, so it
+   reveals with it, but a quieter aside than the answer itself. */
+.card-content .extra { margin-top: 14px; padding-top: 12px; border-top-style: dashed; color: var(--muted); }
+.card-content .extra .rich-text { font: clamp(15px, 13px + 0.6vw, 17px) / 1.5 var(--font-ui); }
 
 /* A grade stamp while a swipe is in progress. The interval comes from the
    view, so the gesture code only has to say which way the card is going. */

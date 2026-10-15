@@ -93,6 +93,25 @@ export async function collectEvents(): Promise<{
   return { groups, v1 };
 }
 
+/**
+ * Every grade in the log — this device's and every other device's, as pulled
+ * — keyed as the app keys cards (`owner/repo/<key>`). Baselines are left out:
+ * they stand for history, they are not grades anyone gave.
+ */
+export async function reviewHistory(): Promise<
+  { key: string; reviewedAt: string; grade: 1 | 2 | 3 | 4 }[]
+> {
+  const { groups } = await collectEvents();
+  const history = [];
+  for (const [group, events] of groups) {
+    for (const event of events) {
+      if (event.kind !== "review") continue;
+      history.push({ key: stateKeyIn(group, event.card), reviewedAt: event.at, grade: event.grade });
+    }
+  }
+  return history;
+}
+
 /** Per collection, the key each v1 content hash now belongs to. */
 async function keysByHash(): Promise<Map<string, Map<string, string>>> {
   const byRepo = new Map<string, Map<string, string>>();

@@ -7,7 +7,8 @@ Version 2
 Hashcards decks are plain Markdown files (`.md`) in a git repository. Each file
 is a **deck**, and each deck holds **card blocks**: a basic card (`Q:` / `A:`)
 or a cloze card (`C:`), optionally preceded by **metadata lines** that give the
-card a stable ID, tags and a status.
+card a stable ID, tags and a status, and optionally followed by an **`Extra:`**
+note shown after the answer.
 
 ```markdown
 ---
@@ -32,6 +33,7 @@ A: ![Germany on the map](map-deu.png)
 ID: k3n9wq2p
 Status: draft
 C: In Kubernetes, a [Deployment] manages a [ReplicaSet].
+Extra: A rollout creates a new ReplicaSet and scales the old one down.
 ```
 
 People, scripts and agents all write these files. Agents that would rather
@@ -49,6 +51,8 @@ emit structured data can use the JSON Schema in
 | Every card is scheduled. | Cards can be **drafts** (waiting to be accepted) or **suspended**. |
 | A reverse card means writing the card twice. | **`Reverse: yes`** schedules the answer→question card too. |
 | Cloze siblings share a "family hash". | Cloze siblings share an ID: `<id>:1`, `<id>:2`, … |
+| Notes about a card go in the answer or nowhere. | An optional **`Extra:`** section, shown only after reveal, outside the card's identity. |
+| Tags are free text. | Tags are **normalised** (`CKA::Workloads` → `cka/workloads`) and checked. |
 
 Every version 1 file is a valid version 2 file. Its cards have no IDs, so they
 are keyed by their content hash exactly as before, until IDs are stamped in
@@ -86,7 +90,8 @@ tags = ["geo", "europe"]
 
 - `name` (string): overrides the deck name derived from the file name.
 - `tags` (array of strings, on one line): every card in the file carries these
-  tags, before any of its own.
+  tags, before any of its own. They are normalised and checked like a card's
+  [`Tags:`](#tags).
 - The opening `---` must be the very first line of the file, and the closing
   `---` must appear on its own line.
 - Other keys are ignored.
@@ -99,8 +104,8 @@ share one deck name, which is useful for splitting a large subject across files
 ## Card Blocks
 
 A **block** is one card's worth of lines: optional metadata lines, then a `Q:`
-line with its `A:`, or a `C:` line, and every line after them up to the next
-card. Blocks are separated by `---` on a line of its own:
+line with its `A:`, or a `C:` line, then an optional [`Extra:`](#extra-section)
+line, and every line after them up to the next card. Blocks are separated by `---` on a line of its own:
 
 ```
 ID: monoid
@@ -165,9 +170,32 @@ be split unambiguously.
 Tags: capitals, baltic
 ```
 
-Comma-separated. Surrounding whitespace is trimmed, empty entries are dropped,
-and repeats are removed. A card's tags are the file's frontmatter `tags`, then
-its own.
+Comma-separated. A card's tags are the file's frontmatter `tags`, then its
+own. Each tag is **normalised** as it is read:
+
+1. Surrounding whitespace is trimmed, and an empty entry is dropped.
+2. It is lowercased.
+3. `::` becomes `/` (Anki's hierarchy separator, so imported tags keep their levels).
+4. Each run of whitespace becomes `-`.
+5. Leading and trailing `/` are removed.
+
+The result must then match
+
+```
+^[a-z0-9][a-z0-9_-]*(/[a-z0-9][a-z0-9_-]*)*$
+```
+
+that is, levels of lowercase letters, digits, `_` and `-`, each starting with a
+letter or digit, separated by `/`. Anything else (`c++`, `a.b`, `a//b`, `ä`) is
+an error. Finally, repeats are removed, including two spellings of one tag:
+
+```
+Tags: CKA::Type::Syntax Pattern, cka/type/syntax-pattern, Lists
+```
+
+gives the tags `cka/type/syntax-pattern` and `lists`. Write tags in their
+normalised form; the normalising is there so other spellings still mean the
+same tag, not as a style to rely on.
 
 ### `Reverse:`
 
@@ -271,6 +299,45 @@ C: Truth table for OR:
 | T   | F   | [T]        |
 | T   | T   | [T]        |
 ```
+
+### Extra section
+
+Either card type may end with an **`Extra:`** section: a note shown only once
+the answer is revealed, such as context, a mnemonic or a pointer to the docs.
+It is never part of the question, and a cloze card's note is hidden with its
+deletions, so it cannot give them away.
+
+```
+ID: est-capital
+Q: What is the capital of Estonia?
+A: Tallinn
+Extra: Called *Reval* until 1918.
+
+---
+
+ID: cka-wl-set-image
+C: Change a Deployment's image: `kubectl` [set image] `deploy/web` [nginx=nginx:1.27]
+Extra:
+The container name comes before `=`.
+
+See `kubectl set image --help`.
+```
+
+`Extra:` works like `A:`: it starts at the beginning of a line, its text may
+start on the same line or the next, and it runs over any number of lines to the
+next card boundary. It is Markdown, trimmed like the other sides.
+
+**Rules:**
+- `Extra:` comes after the `A:` of a basic card or after the `C:` text of a
+  cloze card. Before either, including among the metadata lines, it is an
+  error.
+- At most one `Extra:` per card.
+- An `Extra:` with nothing after it is an error.
+- A reverse card (`Reverse: yes`) carries the same extra, and so does every
+  deletion of a cloze block.
+- **Extra is not part of the card's identity.** It never enters the
+  [content hash](#content-hashes) or the [key](#card-keys): adding, rewording
+  or removing it keeps the card's history.
 
 ## Content Features
 
@@ -390,8 +457,8 @@ C: The capital of [Norway] is [Oslo].
 
 Every card also has a SHA-256 content hash, as in version 1. It is no longer a
 card's identity once the card has an ID, but it still keys cards without one
-(`h:` keys) and maps version 1 review history onto IDs. **Metadata lines never
-enter the hash.**
+(`h:` keys) and maps version 1 review history onto IDs. **Metadata lines and
+the `Extra:` section never enter the hash.**
 
 `+` below is byte concatenation with no separator; strings are UTF-8.
 
@@ -441,12 +508,12 @@ kept. That includes a reverse card identical to a card written out by hand.
 The parser is a line-by-line state machine. Metadata lines are only recognised
 in **Start**; in every other state they are text.
 
-| State | On metadata | On `Q:` | On `A:` | On `C:` | On `---` | On text | On EOF |
-|---|---|---|---|---|---|---|---|
-| **Start** | Record it | → ReadingQuestion | Error | → ReadingCloze | Stay (error after metadata) | Stay (error after metadata, unless blank) | End (error after metadata) |
-| **ReadingQuestion** | *(text)* | Error | → ReadingAnswer | Error | Error | Append to question | Error |
-| **ReadingAnswer** | *(text)* | Emit card, → ReadingQuestion | Error | Emit card, → ReadingCloze | Emit card, → Start | Append to answer | Emit card, End |
-| **ReadingCloze** | *(text)* | Emit card, → ReadingQuestion | Error | Emit card, → ReadingCloze | Emit card, → Start | Append to text | Emit card, End |
+| State | On metadata | On `Q:` | On `A:` | On `C:` | On `Extra:` | On `---` | On text | On EOF |
+|---|---|---|---|---|---|---|---|---|
+| **Start** | Record it | → ReadingQuestion | Error | → ReadingCloze | Error | Stay (error after metadata) | Stay (error after metadata, unless blank) | End (error after metadata) |
+| **ReadingQuestion** | *(text)* | Error | → ReadingAnswer | Error | Error | Error | Append to question | Error |
+| **ReadingAnswer** | *(text)* | Emit card, → ReadingQuestion | Error | Emit card, → ReadingCloze | Start extra (error if started) | Emit card, → Start | Append to extra if started, else answer | Emit card, End |
+| **ReadingCloze** | *(text)* | Emit card, → ReadingQuestion | Error | Emit card, → ReadingCloze | Start extra (error if started) | Emit card, → Start | Append to extra if started, else text | Emit card, End |
 
 - "Emit card" adds the completed block (basic, plus its reverse; or every
   deletion of a cloze) to the output, with the metadata recorded in Start.
@@ -467,6 +534,11 @@ in **Start**; in every other state they are text.
 | `A:` while reading an answer | "Found answer tag while reading an answer" |
 | `A:` while reading a cloze | "Found answer tag while reading a cloze card" |
 | `C:` with no `[...]` deletions | "Cloze card must contain at least one cloze deletion" |
+| `Extra:` before any card, or among metadata | "Found Extra: without a card before it" |
+| `Extra:` while reading a question | "Found Extra: before the card's A: line" |
+| A second `Extra:` in one card | "A card can only have one Extra: section" |
+| `Extra:` with nothing after it | "Found Extra: with nothing after it" |
+| A tag that does not normalise to the tag pattern | "Invalid tag" |
 | Unclosed frontmatter `---` | "Frontmatter opening '---' found but no closing '---'" |
 | Frontmatter `tags` not a one-line array of strings | "Frontmatter tags must be a TOML array of strings on one line" |
 | `ID:` not matching the pattern | "Invalid card ID" |
@@ -505,14 +577,15 @@ rather than Markdown:
 | `question`, `answer` | basic | `Q: …` and `A: …` |
 | `text` | cloze | `C: …`, deletions in `[brackets]` |
 | `id` | no | `ID: …`; stamped if absent |
-| `tags` | no | `Tags: a, b` |
+| `extra` | no | `Extra: …`, after the card |
+| `tags` | no | `Tags: a, b`, already [normalised](#tags) |
 | `reverse` | no, basic only | `Reverse: yes` when `true` |
 | `status` | no | `Status: draft` / `Status: suspended`; `active` writes no line |
 
-A block is written as its metadata lines, then the card, separated from the
-cards before it by `---`. The schema also rejects text the parser would split
-into several cards: a line after the first that starts with `Q:`, `A:` or `C:`,
-or that is a `---` separator. The parser remains the authority; a card that
+A block is written as its metadata lines, then the card, then its `Extra:`,
+separated from the cards before it by `---`. The schema also rejects text the
+parser would split: a line after the first that starts with `Q:`, `A:`, `C:` or
+`Extra:`, or that is a `---` separator. The parser remains the authority; a card that
 validates against the schema and fails to parse is a bug in the schema.
 
 ## Complete Example
@@ -546,6 +619,7 @@ A:
 
 ID: water
 C: Water has the chemical formula [H₂O] and a molar mass of approximately [18.015 g/mol].
+Extra: 2 × 1.008 (H) + 15.999 (O).
 
 ---
 
@@ -576,7 +650,7 @@ This file produces:
 |---|---|---|---|
 | `avogadro` | basic | science | active |
 | `noble-gases` | basic | science, lists | active |
-| `water:1`, `water:2` | cloze | science | active |
+| `water:1`, `water:2` | cloze, with an extra | science | active |
 | `ph-scale:1` … `ph-scale:3` | cloze | science | suspended |
 | `benzene`, `benzene:r` | basic and its reverse | science | active |
 | `h:…` | basic, no ID yet | science | draft |

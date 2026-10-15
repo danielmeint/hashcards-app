@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/danielmeint/hashcards-app/blob/main/schema/card.schema.json",
   "title": "Hashcards card",
-  "description": "One card as structured JSON, for tools and agents that would rather emit data than Markdown. It describes exactly one block of a deck file (CARD_FORMAT_SPEC.md, format v2); whatever writes it into the file turns it into metadata lines and Q:/A: or C:. The parser stays the authority: this schema catches the common mistakes, not every one.",
+  "description": "One card as structured JSON, for tools and agents that would rather emit data than Markdown. It describes exactly one block of a deck file (CARD_FORMAT_SPEC.md, format v2); whatever writes it into the file turns it into metadata lines, Q:/A: or C:, and an optional Extra:. The parser stays the authority: this schema catches the common mistakes, not every one.",
   "type": "object",
   "required": ["file", "type"],
   "properties": {
@@ -37,12 +37,17 @@
         { "pattern": "\\[[\\s\\S]*\\]" }
       ]
     },
+    "extra": {
+      "description": "Either card type: a note shown only after the answer is revealed (context, a mnemonic, a pointer to the docs), as Markdown. Becomes the Extra: line and the lines after it, the last section of the card. Never part of the question, and changing it does not change the card's identity.",
+      "$ref": "#/$defs/side"
+    },
     "tags": {
-      "description": "Added to the deck file's frontmatter tags. Written as one comma-separated Tags: line, so a tag cannot contain a comma.",
+      "description": "Added to the deck file's frontmatter tags. Written as one comma-separated Tags: line. Lowercase letters, digits, '_' and '-', with '/' between levels of a hierarchy, as the parser normalises them: 'cka/type/syntax-pattern', not 'CKA::Type::Syntax Pattern'.",
       "type": "array",
       "items": {
         "type": "string",
-        "pattern": "^[^,\\n\\r]*[^,\\s][^,\\n\\r]*$"
+        "pattern": "^[a-z0-9][a-z0-9_-]*(/[a-z0-9][a-z0-9_-]*)*$",
+        "examples": ["capitals", "cka/type/syntax-pattern"]
       },
       "uniqueItems": true
     },
@@ -80,11 +85,11 @@
   "additionalProperties": false,
   "$defs": {
     "side": {
-      "description": "Card text. Not blank, and no line after the first may start with Q:, A: or C:, or be a --- separator: those would end the card early.",
+      "description": "Card text. Not blank, and no line after the first may start with Q:, A:, C: or Extra:, or be a --- separator: those would end the section early.",
       "type": "string",
       "allOf": [
         { "pattern": "\\S" },
-        { "pattern": "^(?![\\s\\S]*\\n(?:Q:|A:|C:|[ \\t]*---[ \\t\\r]*(?:\\n|$)))" }
+        { "pattern": "^(?![\\s\\S]*\\n(?:Q:|A:|C:|Extra:|[ \\t]*---[ \\t\\r]*(?:\\n|$)))" }
       ]
     }
   },
@@ -110,6 +115,15 @@
       "type": "cloze",
       "id": "cka-deployment-owns",
       "text": "In Kubernetes, a [Deployment] manages a [ReplicaSet].",
+      "status": "draft"
+    },
+    {
+      "file": "cka/workloads.md",
+      "type": "cloze",
+      "id": "cka-wl-set-image",
+      "tags": ["cka/workloads", "cka/type/syntax-pattern"],
+      "text": "Change a Deployment's image: kubectl [set image] deploy/web [nginx=nginx:1.27]",
+      "extra": "The container name comes before `=`. Docs: *kubectl set image --help*",
       "status": "draft"
     }
   ]

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import schema from "../schema/card.schema.json";
 import { ID_PATTERN } from "./card-key";
-import { parseFile } from "./parser";
+import { parseFile, TAG_PATTERN } from "./parser";
 
 /**
  * `schema/card.schema.json` is the shape agents emit; the parser is what reads
@@ -17,6 +17,7 @@ type SchemaCard = {
   question?: string;
   answer?: string;
   text?: string;
+  extra?: string;
   tags?: string[];
   reverse?: boolean;
   status?: "active" | "draft" | "suspended";
@@ -32,12 +33,29 @@ function toBlock(card: SchemaCard): string {
   ].filter(Boolean);
   const body =
     card.type === "basic" ? `Q: ${card.question}\nA: ${card.answer}` : `C: ${card.text}`;
-  return [...meta, body].join("\n");
+  const extra = card.extra === undefined ? [] : [`Extra: ${card.extra}`];
+  return [...meta, body, ...extra].join("\n");
 }
 
 describe("the card JSON Schema", () => {
   it("allows exactly the IDs the parser does", () => {
     expect(schema.properties.id.pattern).toBe(ID_PATTERN.source);
+  });
+
+  it("allows exactly the tags the parser does, once normalised", () => {
+    // `source` escapes the slashes a JSON string leaves bare.
+    expect(new RegExp(schema.properties.tags.items.pattern).source).toBe(TAG_PATTERN.source);
+  });
+
+  it("knows every field the parser reads off a block", () => {
+    expect(Object.keys(schema.properties).sort()).toEqual(
+      ["answer", "extra", "file", "id", "question", "reverse", "status", "tags", "text", "type"]
+    );
+  });
+
+  it("has an example of every optional field", () => {
+    const used = new Set((schema.examples as object[]).flatMap((e) => Object.keys(e)));
+    expect([...used].sort()).toEqual(Object.keys(schema.properties).sort());
   });
 
   it("offers the statuses the parser produces", () => {
@@ -52,6 +70,7 @@ describe("the card JSON Schema", () => {
       expect(c.id).toBe(card.id ?? null);
       expect(c.tags).toEqual(card.tags ?? []);
       expect(c.status).toBe(card.status ?? "active");
+      expect(c.content.extra).toBe(card.extra);
     }
   });
 
@@ -59,6 +78,7 @@ describe("the card JSON Schema", () => {
     const side = new RegExp(schema.$defs.side.allOf[1].pattern);
     expect(side.test("one\nA: two")).toBe(false);
     expect(side.test("one\n---\ntwo")).toBe(false);
+    expect(side.test("one\nExtra: two")).toBe(false);
     expect(side.test("one\n  ---  ")).toBe(false);
     expect(side.test("one\n\n- two\n----\nC:ats")).toBe(false);
     expect(side.test("one\n\n- two\n----")).toBe(true);

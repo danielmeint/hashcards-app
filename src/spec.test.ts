@@ -27,6 +27,23 @@ describe("the format spec's examples", () => {
       ["k3n9wq2p:1", "draft", ["geo", "europe"]],
       ["k3n9wq2p:2", "draft", ["geo", "europe"]],
     ]);
+    expect(cards[3].content.extra).toMatch(/^A rollout creates/);
+  });
+
+  it("Extra section example parses as described", async () => {
+    const block = blocksUnder("Card Types").find((b) => b.includes("Extra:"))!;
+    const cards = await parseFile(block, "t.md", "t");
+    expect(cards.map((c) => [c.key, c.content.extra])).toEqual([
+      ["est-capital", "Called *Reval* until 1918."],
+      ["cka-wl-set-image:1", "The container name comes before `=`.\n\nSee `kubectl set image --help`."],
+      ["cka-wl-set-image:2", "The container name comes before `=`.\n\nSee `kubectl set image --help`."],
+    ]);
+  });
+
+  it("tag example normalises as described", async () => {
+    const block = blocksUnder("Metadata Lines").find((b) => b.includes("CKA::"))!;
+    const [card] = await parseFile(`${block}Q: a\nA: b`, "t.md", "t");
+    expect(card.tags).toEqual(["cka/type/syntax-pattern", "lists"]);
   });
 
   it("complete example produces the cards its table lists", async () => {
@@ -46,6 +63,7 @@ describe("the format spec's examples", () => {
     ]);
     expect(cards.filter((c) => c.status === "active")).toHaveLength(6);
     expect(cards[1].tags).toEqual(["science", "lists"]);
+    expect(cards.filter((c) => c.content.extra).map((c) => c.key)).toEqual(["water:1", "water:2"]);
   });
 
   it("stamping example is what stamping does", () => {

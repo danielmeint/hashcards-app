@@ -16,12 +16,13 @@ import {
   getIntroducedToday,
   resetIntroduced,
 } from "../new-card-budget";
-import { DEFAULT_RETENTION, todayStr } from "../fsrs";
+import { todayStr } from "../fsrs";
 import { getTheme, setTheme, Theme } from "../theme";
 import { adoptRepo, syncAll, getCachedCards } from "../sync";
 import { getSyncStatus, onSyncStatus } from "../sync-state";
 import { renderAuthPanel } from "./auth-panel";
 import { renderCollections } from "./collections";
+import { icon } from "./icons";
 
 /** Presets across the range the setting allows (`MIN_RETENTION`–`MAX_RETENTION`). */
 const RETENTIONS = [0.8, 0.85, 0.9, 0.93, 0.95];
@@ -109,137 +110,192 @@ export async function renderSettings(
     }
   }
 
-  function view() {
-    return html`<div class="settings-view">
-      <h1>Settings</h1>
-      ${notice ? html`<p class="settings-notice">${notice}</p>` : nothing}
-      ${isFirstRun ? welcome(credential !== null) : nothing}
-      <section class="settings-section">
-        <h2>GitHub</h2>
-        <div id="auth-host"></div>
-      </section>
-      <section class="settings-section">
-        <h2>Collections</h2>
-        <div id="collections-host"></div>
-      </section>
-      <section class="settings-section">
-        <h2>Reviewing</h2>
-        <div class="field-group">
-          <label for="new-per-day">New cards per day</label>
-          <input
-            type="number"
-            id="new-per-day"
-            .value=${String(state.newPerDay)}
-            min="1"
-            max="999"
-            @change=${(e: Event) =>
-              setNewPerDay((e.target as HTMLInputElement).value)}
-          />
-          <div class="new-cards-status">
-            <span id="new-cards-counter"
-              >${`${state.introducedToday}/${state.newPerDay} introduced today`}</span
-            >
-            ${state.introducedToday > 0
-              ? html`<button
-                  type="button"
-                  id="reset-new-btn"
-                  class="reset-btn"
-                  @click=${() => {
-                    resetIntroduced();
-                    state.introducedToday = 0;
-                    paint();
-                  }}
-                >
-                  Reset
-                </button>`
-              : nothing}
-          </div>
-        </div>
-        <div class="field-group">
-          <label for="desired-retention">Desired retention</label>
-          <select
-            id="desired-retention"
-            @change=${(e: Event) =>
-              setDesiredRetention(Number((e.target as HTMLSelectElement).value))}
-          >
-            ${retentionChoices().map(
-              (value) =>
-                html`<option
-                  value=${value}
-                  ?selected=${value === getDesiredRetention()}
-                >
-                  ${`${Math.round(value * 100)}%${value === DEFAULT_RETENTION ? " (default)" : ""}`}
-                </option>`
-            )}
-          </select>
-          <p class="field-hint">
-            How likely you should be to remember a card when it comes due.
-            Higher means more reviews; it changes future intervals, not past
-            ones.
-          </p>
-        </div>
-        <div class="field-group">
-          <label for="theme">Theme</label>
-          <select
-            id="theme"
-            @change=${(e: Event) =>
-              setTheme((e.target as HTMLSelectElement).value as Theme)}
-          >
-            ${THEMES.map(
-              ([value, label]) =>
-                html`<option value=${value} ?selected=${value === getTheme()}>
-                  ${label}
-                </option>`
-            )}
-          </select>
-        </div>
-        <label class="toggle-label">
-          <input
-            type="checkbox"
-            id="interval-fuzz"
-            .checked=${getIntervalFuzz()}
-            @change=${(e: Event) =>
-              setIntervalFuzz((e.target as HTMLInputElement).checked)}
-          />
-          Interval fuzz (vary intervals slightly to avoid clustering)
-        </label>
-        <label class="toggle-label">
-          <input
-            type="checkbox"
-            id="haptic-feedback"
-            .checked=${getHapticFeedback()}
-            @change=${(e: Event) =>
-              setHapticFeedback((e.target as HTMLInputElement).checked)}
-          />
-          Haptic feedback on grade and swipe
-        </label>
-      </section>
-      <div class="settings-buttons">
-        <button
+  /** One segmented control: a row of choices, one of them pressed. */
+  function segmented<T>(
+    id: string,
+    label: string,
+    choices: [T, string][],
+    current: T,
+    choose: (value: T) => void
+  ) {
+    return html`<div class="segmented" id=${id} role="group" aria-label=${label}>
+      ${choices.map(
+        ([value, text]) => html`<button
           type="button"
-          id="sync-btn"
-          class="btn"
-          ?disabled=${state.syncing}
-          @click=${() => void sync()}
+          data-value=${String(value)}
+          aria-pressed=${value === current ? "true" : "false"}
+          @click=${() => {
+            choose(value);
+            paint();
+          }}
         >
-          Sync Now
-        </button>
+          ${text}
+        </button>`
+      )}
+    </div>`;
+  }
+
+  function toggle(id: string, label: string, on: boolean, set: (on: boolean) => void) {
+    return html`<button
+      type="button"
+      class="switch"
+      id=${id}
+      role="switch"
+      aria-label=${label}
+      aria-checked=${on ? "true" : "false"}
+      @click=${() => {
+        set(!on);
+        paint();
+      }}
+    ></button>`;
+  }
+
+  function view() {
+    const retention = getDesiredRetention();
+    return html`<div class="page settings-view">
+      <header class="page-head">
         ${config
-          ? html`<button type="button" id="back-btn" class="btn" @click=${onDone}>
-              Back to Decks
+          ? html`<button
+              type="button"
+              id="back-btn"
+              class="icon-btn"
+              aria-label="Back"
+              title="Back"
+              @click=${onDone}
+            >
+              ${icon("back")}<span class="icon-btn-label">Today</span>
             </button>`
           : nothing}
-      </div>
-      <div id="settings-status">${state.status}</div>
-      <div class="settings-footer">
-        <div class="settings-version">hashcards ${__COMMIT_HASH__}</div>
+        <h1>Settings</h1>
+      </header>
+      ${notice
+        ? html`<p class="notice notice-warn settings-notice">${notice}</p>`
+        : nothing}
+      ${isFirstRun ? welcome(credential !== null) : nothing}
+      <section class="group">
+        <h2 class="group-title">GitHub</h2>
+        <div id="auth-host"></div>
+        <p class="group-note" id="settings-status" role="status">${state.status}</p>
+      </section>
+      <section class="group">
+        <h2 class="group-title">Collections</h2>
+        <div id="collections-host"></div>
+      </section>
+      <section class="group">
+        <h2 class="group-title">Reviewing</h2>
+        <div class="list">
+          <div class="row">
+            <span class="row-text">
+              <label class="row-title" for="new-per-day">New cards per day</label>
+              <span class="row-sub">
+                <span id="new-cards-counter"
+                  >${`${state.introducedToday} of ${state.newPerDay} introduced today`}</span
+                >${state.introducedToday > 0
+                  ? html`<button
+                      type="button"
+                      id="reset-new-btn"
+                      class="link-btn reset-btn"
+                      @click=${() => {
+                        resetIntroduced();
+                        state.introducedToday = 0;
+                        paint();
+                      }}
+                    >
+                      Reset
+                    </button>`
+                  : nothing}
+              </span>
+            </span>
+            <div class="stepper">
+              <button
+                type="button"
+                aria-label="Fewer"
+                ?disabled=${state.newPerDay <= 1}
+                @click=${() => setNewPerDay(String(state.newPerDay - 1))}
+              >
+                −
+              </button>
+              <input
+                type="number"
+                id="new-per-day"
+                inputmode="numeric"
+                .value=${String(state.newPerDay)}
+                min="1"
+                max="999"
+                @change=${(e: Event) =>
+                  setNewPerDay((e.target as HTMLInputElement).value)}
+              />
+              <button
+                type="button"
+                aria-label="More"
+                ?disabled=${state.newPerDay >= 999}
+                @click=${() => setNewPerDay(String(state.newPerDay + 1))}
+              >
+                +
+              </button>
+            </div>
+          </div>
+          <div class="row row-stack">
+            <div class="row-line">
+              <span>Desired retention</span>
+              <strong>${`${Math.round(retention * 100)}%`}</strong>
+            </div>
+            ${segmented(
+              "desired-retention",
+              "Desired retention",
+              retentionChoices().map((v): [number, string] => [
+                v,
+                `${Math.round(v * 100)}%`,
+              ]),
+              retention,
+              setDesiredRetention
+            )}
+            <p class="row-sub">
+              How likely you should be to remember a card when it comes due.
+              Higher means more reviews; it changes future intervals, not past
+              ones.
+            </p>
+          </div>
+          <div class="row">
+            <span class="row-text">
+              <span>Interval fuzz</span>
+              <span class="row-sub">Spread reviews so they don't bunch up</span>
+            </span>
+            ${toggle("interval-fuzz", "Interval fuzz", getIntervalFuzz(), setIntervalFuzz)}
+          </div>
+          <div class="row">
+            <span class="row-text">
+              <span>Haptic feedback</span>
+              <span class="row-sub">On grade and swipe</span>
+            </span>
+            ${toggle(
+              "haptic-feedback",
+              "Haptic feedback",
+              getHapticFeedback(),
+              setHapticFeedback
+            )}
+          </div>
+        </div>
+      </section>
+      <section class="group">
+        <h2 class="group-title">Appearance</h2>
+        <div class="list">
+          <div class="row theme-row">
+            <span class="row-text">Theme</span>
+            ${segmented("theme", "Theme", THEMES, getTheme(), setTheme)}
+          </div>
+        </div>
+      </section>
+      <footer class="settings-footer">
+        <span class="settings-version">hashcards ${__COMMIT_HASH__}</span>
+        <span aria-hidden="true">·</span>
         <a
           href="https://github.com/danielmeint/hashcards-app"
           target="_blank"
           rel="noopener"
-          >GitHub</a
+          >Source on GitHub</a
         >
-      </div>
+      </footer>
     </div>`;
   }
 
@@ -256,7 +312,8 @@ export async function renderSettings(
     () => {
       if (getConfig()) void sync(true);
       collections();
-    }
+    },
+    () => sync()
   );
 
   // Re-rendered whenever the connection panel changes the list underneath it —
@@ -269,7 +326,7 @@ export async function renderSettings(
 }
 
 const THEMES: [Theme, string][] = [
-  ["system", "Match system"],
+  ["system", "System"],
   ["light", "Light"],
   ["dark", "Dark"],
 ];

@@ -1,4 +1,4 @@
-import { html, render, TemplateResult } from "lit-html";
+import { html, nothing, render, TemplateResult } from "lit-html";
 import {
   GitHubConfig,
   RepoRef,
@@ -14,6 +14,8 @@ import {
   signOut,
 } from "../auth";
 import { installUrl, signInAvailable } from "../github-app";
+import { formatSyncAge, getLastSyncedAt } from "../sync-state";
+import { icon } from "./icons";
 
 /**
  * The connection half of Settings: how the app authenticates, and which
@@ -35,7 +37,9 @@ type Repos =
 
 export async function renderAuthPanel(
   host: HTMLElement,
-  onConnected: () => void
+  onConnected: () => void,
+  /** "Sync now", offered once connected. Settings owns the sync and its status. */
+  onSync?: () => Promise<void>
 ): Promise<void> {
   const config = getConfig();
   const state = {
@@ -47,6 +51,7 @@ export async function renderAuthPanel(
     branch: config?.branch ?? "main",
     status: null as { message: string; error: boolean } | null,
     repos: { kind: "loading" } as Repos,
+    syncing: false,
   };
 
   const paint = () => render(view(), host);
@@ -131,6 +136,7 @@ export async function renderAuthPanel(
       <div
         class="auth-status ${state.status?.error ? "auth-status-error" : ""}"
         id="auth-status"
+        role="status"
       >
         ${state.status?.message ?? ""}
       </div>
@@ -139,15 +145,20 @@ export async function renderAuthPanel(
 
   function signedOut(): TemplateResult {
     if (!signInAvailable()) {
-      return html`<p class="auth-lead">
-          Connect the GitHub repository your cards live in.
-        </p>
-        ${patFields("Connect")}`;
+      return html`<div class="list">
+        <div class="disclosure-body">
+          <p class="auth-lead auth-note">
+            Connect the GitHub repository your cards live in.
+          </p>
+          ${patFields("Connect")}
+        </div>
+      </div>`;
     }
-    return html`<button
+    return html`<div class="auth-signin">
+      <button
         type="button"
         id="signin-btn"
-        class="btn btn-primary btn-signin"
+        class="btn btn-primary btn-lg btn-block btn-signin"
         @click=${() => {
           say("Redirecting to GitHub…");
           beginSignIn();
@@ -155,71 +166,104 @@ export async function renderAuthPanel(
       >
         Sign in with GitHub
       </button>
-      <p class="auth-lead">
+      <p class="auth-lead group-note">
         Hashcards can reach only the repositories you pick, with a token that
         expires — revoke it any time by uninstalling the app on GitHub.
       </p>
-      <details class="auth-fallback">
-        <summary>Use a personal access token instead</summary>
-        ${patFields("Connect")}
-      </details>`;
+      <details class="list disclosure auth-fallback">
+        <summary class="row row-action">
+          Use a personal access token instead${icon("chevron", 18)}
+        </summary>
+        <div class="disclosure-body">${patFields("Connect")}</div>
+      </details>
+    </div>`;
   }
 
+  async function disconnect(): Promise<void> {
+    await signOut();
+    state.credential = null;
+    state.status = null;
+    paint();
+  }
+
+  /**
+   * Connected, the panel is three rows: who, sync, sign out. Everything that
+   * set the connection up — the repository, the branch, the token — folds
+   * away behind one more, open only while there is no repository yet.
+   */
   function connected(): TemplateResult {
-    if (state.credential?.kind === "app") {
-      const who = state.credential.login
-        ? `@${state.credential.login}`
-        : "GitHub";
-      return html`<div class="auth-identity">
-          <span>Signed in as <strong>${who}</strong></span>
-          <button
+    const app = state.credential?.kind === "app";
+    const login = app && state.credential?.kind === "app" ? state.credential.login : null;
+    const name = app ? (login ?? "GitHub") : "Personal access token";
+    const synced = getLastSyncedAt();
+    const repo = getConfig();
+    const how = app ? "Signed in with GitHub" : repo ? `${repo.owner}/${repo.repo}` : "No repository yet";
+    return html`<div class="list">
+      <div class="row account auth-identity">
+        <span class="avatar" aria-hidden="true">${name.charAt(0).toUpperCase()}</span>
+        <span class="row-text">
+          <span class="row-title">${name}</span>
+          <span class="row-sub"
+            >${synced ? `${how} · synced ${formatSyncAge(synced)}` : how}</span
+          >
+        </span>
+      </div>
+      <details class="disclosure" ?open=${!repo}>
+        <summary class="row row-action">
+          ${app ? "Repository" : "Token and repository"}${repo
+            ? html`<span class="row-sub">${repo.repo}</span>`
+            : ""}${icon("chevron", 18)}
+        </summary>
+        <div class="disclosure-body">
+          ${app
+            ? html`<div class="field-group">
+                  <label for="repo-select">Repository</label>
+                  <div id="repo-picker">${repoPicker()}</div>
+                  <a
+                    href=${installUrl()}
+                    target="_blank"
+                    rel="noopener"
+                    class="auth-link"
+                    >Add or remove repositories on GitHub</a
+                  >
+                </div>
+                ${branchField()}
+                <details class="auth-fallback">
+                  <summary class="link-btn">Enter a repository manually</summary>
+                  <div class="disclosure-body">${repoFields()}</div>
+                </details>`
+            : patFields("Test connection")}
+        </div>
+      </details>
+      ${onSync
+        ? html`<button
             type="button"
-            id="signout-btn"
-            class="btn btn-small"
+            id="sync-btn"
+            class="row row-action"
+            ?disabled=${state.syncing}
             @click=${async () => {
-              await signOut();
-              state.credential = null;
-              state.status = null;
+              state.syncing = true;
               paint();
+              try {
+                await onSync();
+              } finally {
+                state.syncing = false;
+                paint();
+              }
             }}
           >
-            Sign out
-          </button>
-        </div>
-        <div class="field-group">
-          <label for="repo-select">Repository</label>
-          <div id="repo-picker">${repoPicker()}</div>
-          <a
-            href=${installUrl()}
-            target="_blank"
-            rel="noopener"
-            class="auth-link"
-            >Add or remove repositories on GitHub</a
-          >
-        </div>
-        ${branchField()}
-        <details class="auth-fallback">
-          <summary>Enter a repository manually</summary>
-          ${repoFields()}
-        </details>`;
-    }
-    return html`<div class="auth-identity">
-        <span>Connected with a personal access token</span>
-        <button
-          type="button"
-          id="signout-btn"
-          class="btn btn-small"
-          @click=${async () => {
-            await signOut();
-            state.credential = null;
-            state.status = null;
-            paint();
-          }}
-        >
-          Disconnect
-        </button>
-      </div>
-      ${patFields("Test connection")}`;
+            ${state.syncing ? "Syncing…" : "Sync now"}
+          </button>`
+        : nothing}
+      <button
+        type="button"
+        id="signout-btn"
+        class="row row-action row-danger"
+        @click=${() => void disconnect()}
+      >
+        ${app ? "Sign out" : "Disconnect"}
+      </button>
+    </div>`;
   }
 
   function patFields(action: string): TemplateResult {
@@ -249,7 +293,7 @@ export async function renderAuthPanel(
       ${repoFields()} ${branchField()}
       <button
         type="button"
-        class="btn btn-primary"
+        class="btn btn-primary btn-block"
         id=${testing ? "test-connection-btn" : "connect-pat-btn"}
         @click=${() => void (testing ? testConnection() : connectWithToken())}
       >
@@ -326,7 +370,7 @@ export async function renderAuthPanel(
       return html`<p class="auth-note">
           This account has not given Hashcards access to any repository yet.
         </p>
-        <a href=${installUrl()} target="_blank" rel="noopener" class="btn"
+        <a href=${installUrl()} target="_blank" rel="noopener" class="btn btn-small"
           >Choose repositories</a
         >`;
     }

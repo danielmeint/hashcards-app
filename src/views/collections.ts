@@ -1,4 +1,5 @@
 import { html, render, TemplateResult } from "lit-html";
+import { icon } from "./icons";
 import {
   RepoConfig,
   getRepos,
@@ -80,18 +81,17 @@ export function renderCollections(host: HTMLElement, onChanged: () => void): voi
 
   function row(repo: RepoConfig): TemplateResult {
     const key = repoKey(repo);
-    return html`<div class="collection-row" data-repo=${key}>
-      <div class="collection-name">
+    const tag = repo.readOnly
+      ? `subscribed · read-only${repo.branch === "main" ? "" : ` · ${repo.branch}`}`
+      : `yours · ${repo.branch} branch`;
+    return html`<div class="row collection-row" data-repo=${key}>
+      <span class="row-text collection-name">
         <span class="collection-key">${key}</span>
-        <span class="collection-tag"
-          >${repo.readOnly ? "subscribed" : "yours"}${repo.branch === "main"
-            ? ""
-            : ` · ${repo.branch}`}</span
-        >
-      </div>
+        <span class="row-sub collection-tag">${tag}</span>
+      </span>
       <button
         type="button"
-        class="btn btn-small collection-remove"
+        class="link-btn collection-remove"
         @click=${() => void remove(repo)}
       >
         Remove
@@ -131,7 +131,7 @@ export function renderCollections(host: HTMLElement, onChanged: () => void): voi
           draft = { ...draft, branch: (e.target as HTMLInputElement).value };
         }}
       />
-      <button type="button" class="btn collection-save" @click=${add}>
+      <button type="button" class="btn btn-primary collection-save" @click=${add}>
         Subscribe
       </button>
     </div>`;
@@ -139,26 +139,28 @@ export function renderCollections(host: HTMLElement, onChanged: () => void): voi
 
   function view(): TemplateResult {
     return html`
-      ${repos.length === 0
-        ? html`<p class="collection-empty">No collections yet.</p>`
-        : repos.map(row)}
+      <div class="list">
+        ${repos.length === 0
+          ? html`<p class="collection-empty">No collections yet.</p>`
+          : repos.map(row)}
+        ${adding
+          ? form()
+          : html`<button
+              type="button"
+              class="row row-action collection-add-btn"
+              @click=${() => {
+                adding = true;
+                error = null;
+                paint();
+              }}
+            >
+              ${icon("plus", 18)}Subscribe to a deck
+            </button>`}
+      </div>
       <p class="collection-error" ?hidden=${error === null}>${error ?? ""}</p>
-      ${adding
-        ? form()
-        : html`<button
-            type="button"
-            class="btn collection-add-btn"
-            @click=${() => {
-              adding = true;
-              error = null;
-              paint();
-            }}
-          >
-            Subscribe to a deck
-          </button>`}
-      <p class="collection-note">
-        A subscription is read-only: its cards are drilled here and your
-        scheduling stays with you, but nothing is ever written back to it.
+      <p class="group-note collection-note">
+        Subscribed decks are reviewed here with your own scheduling; nothing is
+        ever written back to them.
       </p>
     `;
   }

@@ -17,6 +17,29 @@ export class FakeGitHub {
   unhandled: string[] = [];
   private shas = 0;
 
+  // The `hashcards-data` branch, through the Git Data API. `main` is `files`.
+  refs = new Map<string, string>();
+  commits = new Map<string, { tree: string; parents: string[] }>();
+  trees = new Map<string, Map<string, string>>();
+  blobs = new Map<string, string>();
+  /** Every ref move, refused ones included. */
+  refWrites: { sha: string; ok: boolean }[] = [];
+
+  /** The files on a data branch, by path, as text. */
+  branchFiles(branch = "hashcards-data"): Map<string, string> {
+    const head = this.refs.get(branch);
+    if (!head) return new Map();
+    const tree = this.trees.get(this.commits.get(head)!.tree)!;
+    return new Map([...tree].map(([path, sha]) => [path, this.blobs.get(sha)!]));
+  }
+
+  private descends(commit: string, ancestor: string): boolean {
+    for (let at: string | undefined = commit; at; at = this.commits.get(at)?.parents[0]) {
+      if (at === ancestor) return true;
+    }
+    return false;
+  }
+
   constructor(readonly config: FakeRepoConfig) {}
 
   set(path: string, content: string | Buffer): void {
@@ -49,7 +72,7 @@ export class FakeGitHub {
     const cors = {
       "access-control-allow-origin": "*",
       "access-control-allow-headers": "*",
-      "access-control-allow-methods": "GET, PUT, POST, OPTIONS",
+      "access-control-allow-methods": "GET, PUT, POST, PATCH, OPTIONS",
       "access-control-expose-headers": "etag, x-oauth-scopes",
     };
     const json = (body: unknown, status = 200) =>
@@ -58,6 +81,64 @@ export class FakeGitHub {
     if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
 
     if (url.pathname === "/user") return json({ login: owner });
+
+    // --- The data branch ---
+    const path = url.pathname.slice(base.length);
+    const ref = path.match(/^\/git\/ref\/heads\/(.+)$/);
+    if (ref && req.method() === "GET") {
+      const sha = this.refs.get(decodeURIComponent(ref[1]));
+      return sha ? json({ object: { sha } }) : json({ message: "Not Found" }, 404);
+    }
+    const treeRead = path.match(/^\/git\/trees\/([^/]+)$/);
+    const treeSha = treeRead && (this.commits.get(treeRead[1])?.tree ?? (this.trees.has(treeRead[1]) ? treeRead[1] : null));
+    if (treeSha) {
+      const tree = [...this.trees.get(treeSha)!].map(([p, sha]) => ({ path: p, sha, type: "blob" }));
+      return json({ sha: treeSha, tree, truncated: false });
+    }
+    if (path === "/git/trees" && req.method() === "POST") {
+      const body = req.postDataJSON() as { base_tree?: string; tree: { path: string; content?: string; sha?: string | null }[] };
+      const next = new Map(body.base_tree ? this.trees.get(body.base_tree) : []);
+      for (const entry of body.tree) {
+        if (entry.content !== undefined) {
+          const sha = `blob-${++this.shas}`;
+          this.blobs.set(sha, entry.content);
+          next.set(entry.path, sha);
+        } else if (entry.sha === null) next.delete(entry.path);
+        else next.set(entry.path, entry.sha!);
+      }
+      const sha = `tree-${++this.shas}`;
+      this.trees.set(sha, next);
+      return json({ sha, tree: [...next].map(([p, s]) => ({ path: p, sha: s, type: "blob" })) }, 201);
+    }
+    if (path === "/git/commits" && req.method() === "POST") {
+      const body = req.postDataJSON() as { tree: string; parents: string[] };
+      const sha = `commit-${++this.shas}`;
+      this.commits.set(sha, { tree: body.tree, parents: body.parents });
+      return json({ sha }, 201);
+    }
+    const refWrite = path.match(/^\/git\/refs\/heads\/(.+)$/);
+    if (refWrite && req.method() === "PATCH") {
+      const { sha } = req.postDataJSON() as { sha: string };
+      const head = this.refs.get(decodeURIComponent(refWrite[1]));
+      const ok = head !== undefined && this.descends(sha, head);
+      this.refWrites.push({ sha, ok });
+      if (!ok) return json({ message: "Update is not a fast forward" }, 422);
+      this.refs.set(decodeURIComponent(refWrite[1]), sha);
+      return json({ object: { sha } });
+    }
+    if (path === "/git/refs" && req.method() === "POST") {
+      const { ref: name, sha } = req.postDataJSON() as { ref: string; sha: string };
+      const branch = name.replace(/^refs\/heads\//, "");
+      const ok = !this.refs.has(branch);
+      this.refWrites.push({ sha, ok });
+      if (!ok) return json({ message: "Reference already exists" }, 422);
+      this.refs.set(branch, sha);
+      return json({ object: { sha } }, 201);
+    }
+    const dataBlob = path.match(/^\/git\/blobs\/(.+)$/);
+    if (dataBlob && this.blobs.has(dataBlob[1])) {
+      return route.fulfill({ status: 200, headers: cors, contentType: "application/octet-stream", body: this.blobs.get(dataBlob[1])! });
+    }
 
     if (url.pathname.startsWith(`${base}/git/trees/`)) {
       const tree = [...this.files].map(([path, f]) => ({ path, sha: f.sha, type: "blob" }));

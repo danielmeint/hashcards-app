@@ -48,6 +48,7 @@ ID: est-capital
 Tags: capitals
 Status: draft
 C: The capital of Estonia is [Tallinn].
+Extra: Its old town is a UNESCO World Heritage Site.
 
 ---
 
@@ -59,6 +60,8 @@ A: ![Latvia on the map](map-lva.png)
 
 - Metadata lines (`ID:`, `Tags:`, `Reverse: yes`, `Status:`) go at the top of
   a block, before `Q:` or `C:`. Separate blocks with `---`.
+- `Extra:` (optional, last) is a note shown only after the answer: context,
+  a mnemonic, a docs pointer. Never put the answer's substance there.
 - `C:` text: every `[bracketed]` part becomes its own card. Write `\[` `\]`
   for literal brackets.
 

@@ -29,6 +29,7 @@ export type CardInput = {
   text?: string;
   tags?: string[];
   reverse?: boolean;
+  extra?: string;
   status?: "active" | "draft" | "suspended";
 };
 
@@ -73,6 +74,7 @@ Options:
   --id <slug>          ID (a-z, 0-9, -; 2–64 chars). Default: a fresh random one
   --tags <a,b>         comma-separated tags
   --reverse            basic cards: also review answer -> question
+  --extra <text>       a note shown only after the answer is revealed
   --draft              Status: draft (proposed; accepted later in the app's Inbox)
   --suspended          Status: suspended
   --active             no Status line, even when run by an agent
@@ -93,6 +95,7 @@ Exit: 0 added, 2 invalid input (nothing written).`,
     id: { type: "string" },
     tags: { type: "string" },
     reverse: { type: "boolean" },
+    extra: { type: "string" },
     draft: { type: "boolean" },
     suspended: { type: "boolean" },
     active: { type: "boolean" },
@@ -172,7 +175,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 /** The cards asked for, as unvalidated values. */
 async function readInput(ctx: Context): Promise<unknown[]> {
   const v = ctx.values;
-  const flagged = ["question", "answer", "cloze", "id", "tags", "reverse"].filter((k) => v[k] !== undefined);
+  const flagged = ["question", "answer", "cloze", "id", "tags", "reverse", "extra"].filter((k) => v[k] !== undefined);
 
   if (typeof v.json === "string") {
     if (flagged.length > 0) {
@@ -212,6 +215,7 @@ async function readInput(ctx: Context): Promise<unknown[]> {
     card.tags = [...new Set(v.tags.split(",").map((t) => t.trim()).filter((t) => t !== ""))];
   }
   if (v.reverse) card.reverse = true;
+  if (v.extra !== undefined) card.extra = v.extra;
   return [card];
 }
 
@@ -224,6 +228,7 @@ export function toBlock(card: CardInput & { id: string }): string {
   if (card.type === "basic") {
     lines.push(`Q: ${card.question!.trim()}`, `A: ${card.answer!.trim()}`);
   } else lines.push(`C: ${card.text!.trim()}`);
+  if (card.extra !== undefined && card.extra.trim() !== "") lines.push(`Extra: ${card.extra.trim()}`);
   return lines.join("\n");
 }
 

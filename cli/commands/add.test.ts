@@ -28,6 +28,18 @@ describe("hc add", () => {
     expect(cards.map((c) => [c.deckName, c.status])).toEqual([["TCP", "draft"], ["TCP", "active"], ["TCP", "active"]]);
   });
 
+  it("writes an Extra section, from a flag or from JSON, and the parser reads it back", async () => {
+    const repo = makeRepo();
+    const flag = await hc(["add", "--repo", repo, "--deck", "k8s.md", "--cloze", "A [Deployment] manages a ReplicaSet.", "--extra", "See the Deployments concept page."]);
+    expect(flag.code).toBe(0);
+    const json = await hc(["add", "--repo", repo, "--json", "-", "--deck", "k8s.md"], {
+      stdin: JSON.stringify({ type: "basic", question: "Port of etcd?", answer: "2379", extra: "2380 is peer traffic." }),
+    });
+    expect(json.code).toBe(0);
+    const cards = await parseFile(read(repo, "k8s.md"), "k8s.md", "k8s");
+    expect(cards.map((c) => c.content.extra)).toEqual(["See the Deployments concept page.", "2380 is peer traffic."]);
+  });
+
   it("adds a JSON batch from stdin, answering in JSON", async () => {
     const repo = makeRepo();
     const batch = [

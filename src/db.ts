@@ -792,19 +792,6 @@ export async function revertReview(
   await tx.done;
 }
 
-/** Every card the v1 app recorded an origin for, as hash → `owner/repo`. */
-export async function getAllOrigins(): Promise<Map<string, string>> {
-  const db = await getDb();
-  const tx = db.transaction("origins");
-  const [keys, values] = await Promise.all([
-    tx.store.getAllKeys(),
-    tx.store.getAll(),
-  ]);
-  const origins = new Map<string, string>();
-  keys.forEach((key, i) => origins.set(String(key), values[i] as string));
-  return origins;
-}
-
 /** Make the next refresh replay `group` from nothing (see `ReplayMark.stale`). */
 export async function markReplayStale(group: string): Promise<void> {
   const db = await getDb();

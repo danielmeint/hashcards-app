@@ -34,6 +34,7 @@ function basicCard(n: number): Card {
     content: { type: "basic", question: `Q${n}`, answer: `A${n}` },
     hash: `hash-${n}`,
     familyHash: null,
+    id: null, key: "", tags: [], status: "active",
   };
 }
 
@@ -90,6 +91,7 @@ function clozeCard(n: number): Card {
     content: { type: "cloze", text: "The capital is Paris", start: 15, end: 19 },
     hash: `cloze-${n}`,
     familyHash: null,
+    id: null, key: "", tags: [], status: "active",
   };
 }
 

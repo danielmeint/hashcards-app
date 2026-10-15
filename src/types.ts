@@ -37,9 +37,28 @@ export type Card = {
    */
   range: [number, number];
   content: CardContent;
+  /**
+   * The v1 content hash. Still what the database, sync and drills key on until
+   * the review log moves to `key` (PLAN-1.0 M3); after that it only derives
+   * `h:` keys and maps v1 history across. Metadata lines never enter it, so
+   * stamping an ID onto a card leaves it unchanged.
+   */
   hash: string;
   familyHash: string | null;
+  /** The `ID:` line of the card's block, if it has one. */
+  id: string | null;
+  /** What the review log will call this card — see `card-key.ts`. */
+  key: string;
+  /** The file's frontmatter `tags`, then the block's own `Tags:`, deduplicated. */
+  tags: string[];
+  /**
+   * `draft` cards are proposals waiting in the Inbox, `suspended` ones are kept
+   * but not scheduled. Exposed only, for now: nothing filters on it yet.
+   */
+  status: CardStatus;
 };
+
+export type CardStatus = "active" | "draft" | "suspended";
 
 /**
  * A card as the parser produces it: everything a file can say about a card, and

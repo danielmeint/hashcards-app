@@ -1,8 +1,11 @@
-import { ParsedCard } from "./types";
+import { CardStatus, ClozeCard, ParsedCard } from "./types";
 import { hashBasicCard, hashClozeCard, hashClozeFamily } from "./hash";
+import { formatKey, isValidId } from "./card-key";
 
 type DeckMetadata = {
   name: string | null;
+  /** Every card in the file carries these, before any of its own. */
+  tags: string[];
 };
 
 function extractFrontmatter(text: string): {
@@ -13,7 +16,7 @@ function extractFrontmatter(text: string): {
 } {
   const lines = text.split("\n");
   if (lines.length === 0 || lines[0].trim() !== "---") {
-    return { metadata: { name: null }, content: text, lineOffset: 0 };
+    return { metadata: { name: null, tags: [] }, content: text, lineOffset: 0 };
   }
 
   let closingIdx = -1;
@@ -30,22 +33,108 @@ function extractFrontmatter(text: string): {
 
   const frontmatterLines = lines.slice(1, closingIdx);
   let name: string | null = null;
+  let tags: string[] = [];
   for (const line of frontmatterLines) {
     const match = line.match(/^\s*name\s*=\s*"([^"]*)"\s*$/);
     if (match) {
       name = match[1];
     }
+    const tagsMatch = line.match(/^\s*tags\s*=\s*(.*?)\s*$/);
+    if (tagsMatch) {
+      const parsed = parseStringArray(tagsMatch[1]);
+      if (parsed === null) {
+        throw new Error(
+          `Frontmatter tags must be a TOML array of strings on one line, like tags = ["geo", "europe"]. Found: ${line.trim()}`
+        );
+      }
+      tags = uniqueTags(parsed);
+    }
   }
 
   const content = lines.slice(closingIdx + 1).join("\n");
-  return { metadata: { name }, content, lineOffset: closingIdx + 1 };
+  return { metadata: { name, tags }, content, lineOffset: closingIdx + 1 };
 }
+
+/**
+ * A one-line TOML array of strings — `["geo", 'europe',]` — or null for
+ * anything else. Not a TOML parser: the frontmatter has two keys, and a whole
+ * TOML dependency for them would be most of the parser's weight. Basic-string
+ * escapes are JSON's, which covers every escape a tag could plausibly need.
+ */
+function parseStringArray(src: string): string[] | null {
+  const body = src.match(/^\[(.*)\]$/);
+  if (!body) return null;
+  const items: string[] = [];
+  let rest = body[1].trim();
+  while (rest !== "") {
+    const item = rest.match(/^"((?:[^"\\]|\\.)*)"|^'([^']*)'/);
+    if (!item) return null;
+    if (item[1] !== undefined) {
+      try {
+        items.push(JSON.parse(`"${item[1]}"`) as string);
+      } catch {
+        return null;
+      }
+    } else {
+      items.push(item[2]);
+    }
+    rest = rest.slice(item[0].length).trim();
+    if (rest.startsWith(",")) rest = rest.slice(1).trim();
+    else if (rest !== "") return null;
+  }
+  return items;
+}
+
+function uniqueTags(tags: string[]): string[] {
+  return [...new Set(tags.map((t) => t.trim()).filter((t) => t !== ""))];
+}
+
+/**
+ * A metadata line: `ID:`, `Tags:`, `Reverse:` or `Status:`. Only ever looked for
+ * at the top of a block, before its `Q:` or `C:` — once a card's text has
+ * started, nothing is metadata, so an answer can say "Status: pending" and mean
+ * it.
+ */
+// `\r?` because `.` never matches a carriage return: a CRLF file's lines all
+// end in one, and without it no line of such a file would be metadata.
+const METADATA_LINE = /^(ID|Tags|Reverse|Status):(.*)\r?$/;
+
+type MetadataKey = "ID" | "Tags" | "Reverse" | "Status";
+
+/**
+ * The metadata lines at the top of `text` (a card block as the editor holds
+ * it), by key, raw values trimmed. Blank lines before and between them are
+ * skipped; the first other line ends the run.
+ */
+export function topMetadata(text: string): Map<MetadataKey, string> {
+  const found = new Map<MetadataKey, string>();
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    const match = line.match(METADATA_LINE);
+    if (!match) break;
+    found.set(match[1] as MetadataKey, match[2].trim());
+  }
+  return found;
+}
+
+/** Everything a block's metadata lines said. Line numbers are content-relative. */
+type BlockMeta = {
+  /** The block's first metadata line: where the card's range starts. */
+  startLine: number;
+  id: { value: string; line: number } | null;
+  tags: string[];
+  /** The `Reverse: yes` line, if there was one. */
+  reverse: number | null;
+  status: CardStatus;
+  seen: Set<MetadataKey>;
+};
 
 enum LineType {
   StartQuestion,
   StartAnswer,
   StartCloze,
   Separator,
+  Metadata,
   Text,
   Eof,
 }
@@ -55,10 +144,16 @@ type Line =
   | { type: LineType.StartAnswer; text: string }
   | { type: LineType.StartCloze; text: string }
   | { type: LineType.Separator }
+  | { type: LineType.Metadata; key: MetadataKey; value: string }
   | { type: LineType.Text; text: string }
   | { type: LineType.Eof };
 
-function readLine(line: string): Line {
+/**
+ * `atBlockTop` is whether a metadata line would mean anything here. Inside a
+ * card's text it is just text, and classifying it that way up front keeps the
+ * reading states from having to know metadata exists.
+ */
+function readLine(line: string, atBlockTop: boolean): Line {
   if (line.startsWith("Q:")) {
     return { type: LineType.StartQuestion, text: line.slice(2).trim() };
   } else if (line.startsWith("A:")) {
@@ -67,47 +162,88 @@ function readLine(line: string): Line {
     return { type: LineType.StartCloze, text: line.slice(2).trim() };
   } else if (line.trim() === "---") {
     return { type: LineType.Separator };
-  } else {
-    return { type: LineType.Text, text: line };
   }
+  const meta = atBlockTop ? line.match(METADATA_LINE) : null;
+  if (meta) {
+    return { type: LineType.Metadata, key: meta[1] as MetadataKey, value: meta[2].trim() };
+  }
+  return { type: LineType.Text, text: line };
 }
 
+/**
+ * Where a card begins, carried through the states that read it. `implicit` is
+ * a card begun by the tag that ended the one before it, rather than at the top
+ * of the file or after a `---`: it has no block top, so nowhere metadata could
+ * go. `stampIds` needs to know, since an ID line put there would land in the
+ * previous card's answer.
+ */
+type Opening = { startLine: number; meta: BlockMeta | null; implicit: boolean };
+
 type State =
-  | { type: "start" }
-  | { type: "readingQuestion"; question: string; startLine: number }
-  | {
-      type: "readingAnswer";
-      question: string;
-      answer: string;
-      startLine: number;
-    }
-  | { type: "readingCloze"; text: string; startLine: number }
+  | { type: "start"; meta: BlockMeta | null }
+  | ({ type: "readingQuestion"; question: string } & Opening)
+  | ({ type: "readingAnswer"; question: string; answer: string } & Opening)
+  | ({ type: "readingCloze"; text: string } & Opening)
   | { type: "end" };
 
-/** Line numbers are 0-based and relative to the post-frontmatter content. */
-type RawCard = { startLine: number; endLine: number } & (
-  | { type: "basic"; question: string; answer: string }
-  | { type: "clozeGroup"; text: string }
-);
+/**
+ * Line numbers are 0-based and relative to the post-frontmatter content.
+ * `startLine` is the top of the block, metadata included: deleting a card in
+ * the editor must take its ID with it, or the ID would attach itself to
+ * whatever card came next.
+ */
+export type RawCard = { startLine: number; endLine: number } & Opening &
+  (
+    | { type: "basic"; question: string; answer: string }
+    | { type: "clozeGroup"; text: string }
+  );
+
+export type ScannedFile = {
+  metadata: DeckMetadata;
+  /** The file's lines, frontmatter included; `lineOffset` maps raw lines into it. */
+  lines: string[];
+  lineOffset: number;
+  cards: RawCard[];
+};
+
+/**
+ * The file read into card blocks, without hashing anything — the synchronous
+ * half of `parseFile`, and all `stampIds` needs to find where IDs go.
+ */
+export function scanFile(text: string, filePath: string): ScannedFile {
+  const { metadata, content, lineOffset } = extractFrontmatter(text);
+
+  const cards: RawCard[] = [];
+  const lines = content.split("\n");
+  const lastLine = lines.length === 0 ? 0 : lines.length - 1;
+  // Absolute and 1-based, like a card's range: what a person opening the file
+  // will look for, frontmatter and all.
+  const at = (lineNum: number) =>
+    `Location: ${filePath}:${lineOffset + lineNum + 1}`;
+
+  let state: State = { type: "start", meta: null };
+  for (let lineNum = 0; lineNum < lines.length; lineNum++) {
+    const line = readLine(lines[lineNum], state.type === "start");
+    state = parseLine(state, line, lineNum, cards, at);
+  }
+  parseLine(state, { type: LineType.Eof }, lastLine, cards, at);
+
+  return { metadata, lines: text.split("\n"), lineOffset, cards };
+}
 
 export async function parseFile(
   text: string,
   filePath: string,
   defaultDeckName: string
 ): Promise<ParsedCard[]> {
-  const { metadata, content, lineOffset } = extractFrontmatter(text);
+  const { metadata, lines: fileLines, lineOffset, cards: rawCards } = scanFile(
+    text,
+    filePath
+  );
   const deckName = metadata.name ?? defaultDeckName;
-
-  const rawCards: RawCard[] = [];
-  let state: State = { type: "start" };
-  const lines = content.split("\n");
-  const lastLine = lines.length === 0 ? 0 : lines.length - 1;
-
-  for (let lineNum = 0; lineNum < lines.length; lineNum++) {
-    const line = readLine(lines[lineNum]);
-    state = parseLine(state, line, lineNum, rawCards, filePath);
-  }
-  parseLine(state, { type: LineType.Eof }, lastLine, rawCards, filePath);
+  const lines = fileLines.slice(lineOffset);
+  const at = (lineNum: number) =>
+    `Location: ${filePath}:${lineOffset + lineNum + 1}`;
 
   /**
    * Where a card lives in the file it came from: absolute, 1-based, inclusive
@@ -124,38 +260,125 @@ export async function parseFile(
 
   const cards: ParsedCard[] = [];
   const seenHashes = new Set<string>();
+  const add = (card: ParsedCard) => {
+    if (seenHashes.has(card.hash)) return;
+    seenHashes.add(card.hash);
+    cards.push(card);
+  };
+
+  // Within this file only. Uniqueness across the collection is a question for
+  // whatever reads every file at once (`hc lint`), not for a parser handed one.
+  const idLines = new Map<string, number>();
 
   for (const raw of rawCards) {
+    const meta = raw.meta;
+    const id = meta?.id?.value ?? null;
+    if (meta?.id) {
+      const first = idLines.get(meta.id.value);
+      if (first !== undefined) {
+        throw new Error(
+          `Duplicate card ID '${meta.id.value}', already used on line ${lineOffset + first + 1}. ${at(meta.id.line)}`
+        );
+      }
+      idLines.set(meta.id.value, meta.id.line);
+    }
+    const shared = {
+      deckName,
+      filePath,
+      range: rangeOf(raw),
+      id,
+      tags: uniqueTags([...metadata.tags, ...(meta?.tags ?? [])]),
+      status: meta?.status ?? ("active" as const),
+    };
+
     if (raw.type === "basic") {
       const hash = await hashBasicCard(raw.question, raw.answer);
-      if (!seenHashes.has(hash)) {
-        seenHashes.add(hash);
-        cards.push({
-          deckName,
-          filePath,
-          range: rangeOf(raw),
-          content: { type: "basic", question: raw.question, answer: raw.answer },
-          hash,
+      add({
+        ...shared,
+        content: { type: "basic", question: raw.question, answer: raw.answer },
+        hash,
+        familyHash: null,
+        key: id ? formatKey({ kind: "basic", id }) : formatKey({ kind: "hash", hash }),
+      });
+      if (meta?.reverse != null) {
+        // The same two sides the other way round, hashed as if someone had
+        // written that card out by hand — which is what it is.
+        const reverseHash = await hashBasicCard(raw.answer, raw.question);
+        add({
+          ...shared,
+          content: { type: "basic", question: raw.answer, answer: raw.question },
+          hash: reverseHash,
           familyHash: null,
+          key: id
+            ? formatKey({ kind: "reverse", id })
+            : formatKey({ kind: "hash", hash: reverseHash }),
         });
       }
     } else {
-      const clozeCards = await parseClozeCards(
-        raw.text,
-        deckName,
-        filePath,
-        rangeOf(raw)
-      );
-      for (const card of clozeCards) {
-        if (!seenHashes.has(card.hash)) {
-          seenHashes.add(card.hash);
-          cards.push(card);
-        }
-      }
+      const deletions = await parseClozeCards(raw.text, filePath);
+      deletions.forEach((deletion, i) => {
+        add({
+          ...shared,
+          ...deletion,
+          key: id
+            ? formatKey({ kind: "cloze", id, n: i + 1 })
+            : formatKey({ kind: "hash", hash: deletion.hash }),
+        });
+      });
     }
   }
 
   return cards;
+}
+
+/** Fold one metadata line into the block's, refusing anything it cannot mean. */
+function readMetadata(
+  meta: BlockMeta | null,
+  line: { key: MetadataKey; value: string },
+  lineNum: number,
+  at: (lineNum: number) => string
+): BlockMeta {
+  const next: BlockMeta = meta ?? {
+    startLine: lineNum,
+    id: null,
+    tags: [],
+    reverse: null,
+    status: "active",
+    seen: new Set(),
+  };
+  if (next.seen.has(line.key)) {
+    throw new Error(`A card can only have one '${line.key}:' line. ${at(lineNum)}`);
+  }
+  next.seen.add(line.key);
+
+  switch (line.key) {
+    case "ID":
+      if (!isValidId(line.value)) {
+        throw new Error(
+          `Invalid card ID '${line.value}': use 2–64 lowercase letters, digits and '-', not starting with '-'. ${at(lineNum)}`
+        );
+      }
+      next.id = { value: line.value, line: lineNum };
+      break;
+    case "Tags":
+      next.tags = uniqueTags(line.value.split(","));
+      break;
+    case "Reverse":
+      if (line.value !== "yes" && line.value !== "no") {
+        throw new Error(`Reverse must be 'yes' or 'no', not '${line.value}'. ${at(lineNum)}`);
+      }
+      next.reverse = line.value === "yes" ? lineNum : null;
+      break;
+    case "Status":
+      if (line.value !== "draft" && line.value !== "suspended") {
+        throw new Error(
+          `Status must be 'draft' or 'suspended', not '${line.value}'. ${at(lineNum)}`
+        );
+      }
+      next.status = line.value;
+      break;
+  }
+  return next;
 }
 
 function parseLine(
@@ -163,131 +386,144 @@ function parseLine(
   line: Line,
   lineNum: number,
   cards: RawCard[],
-  filePath: string
+  at: (lineNum: number) => string
 ): State {
   // Whatever ends a card is itself the next card's first line — except at end
   // of file, where the card runs to the line we were handed.
   const endLine = line.type === LineType.Eof ? lineNum : lineNum - 1;
+  // A card begun by the tag that ended the previous one.
+  const implicit: Opening = { startLine: lineNum, meta: null, implicit: true };
+  const opening = (s: Opening): Opening => ({
+    startLine: s.startLine,
+    meta: s.meta,
+    implicit: s.implicit,
+  });
 
   switch (state.type) {
-    case "start":
+    case "start": {
+      const fromTop: Opening = {
+        startLine: state.meta?.startLine ?? lineNum,
+        meta: state.meta,
+        implicit: false,
+      };
       switch (line.type) {
         case LineType.StartQuestion:
-          return { type: "readingQuestion", question: line.text, startLine: lineNum };
+          return { type: "readingQuestion", question: line.text, ...fromTop };
         case LineType.StartAnswer:
-          throw new Error(
-            `Found answer tag without a question. Location: ${filePath}:${lineNum + 1}`
-          );
+          throw new Error(`Found answer tag without a question. ${at(lineNum)}`);
         case LineType.StartCloze:
-          return { type: "readingCloze", text: line.text, startLine: lineNum };
+          if (state.meta?.reverse != null) {
+            throw new Error(
+              `Reverse is for Q:/A: cards; a cloze card cannot be reversed. ${at(state.meta.reverse)}`
+            );
+          }
+          return { type: "readingCloze", text: line.text, ...fromTop };
+        case LineType.Metadata:
+          return { type: "start", meta: readMetadata(state.meta, line, lineNum, at) };
         case LineType.Separator:
+          if (state.meta) {
+            throw new Error(`Found metadata with no card after it. ${at(state.meta.startLine)}`);
+          }
+          return state;
         case LineType.Text:
-          return { type: "start" };
+          if (state.meta && line.text.trim() !== "") {
+            throw new Error(
+              `Found text between a card's metadata and its Q: or C: line. ${at(lineNum)}`
+            );
+          }
+          return state;
         case LineType.Eof:
+          if (state.meta) {
+            throw new Error(`Found metadata with no card after it. ${at(state.meta.startLine)}`);
+          }
           return { type: "end" };
       }
       break;
+    }
 
     case "readingQuestion":
       switch (line.type) {
         case LineType.StartQuestion:
-          throw new Error(
-            `New question without answer. Location: ${filePath}:${lineNum + 1}`
-          );
+          throw new Error(`New question without answer. ${at(lineNum)}`);
         case LineType.StartAnswer:
           return {
             type: "readingAnswer",
             question: state.question,
             answer: line.text,
-            startLine: state.startLine,
+            ...opening(state),
           };
         case LineType.StartCloze:
-          throw new Error(
-            `Found cloze tag while reading a question. Location: ${filePath}:${lineNum + 1}`
-          );
+          throw new Error(`Found cloze tag while reading a question. ${at(lineNum)}`);
         case LineType.Separator:
-          throw new Error(
-            `Found flashcard separator while reading a question. Location: ${filePath}:${lineNum + 1}`
-          );
+          throw new Error(`Found flashcard separator while reading a question. ${at(lineNum)}`);
+        case LineType.Metadata:
+          throw new Error("unreachable: metadata is only read at a block's top");
         case LineType.Text:
-          return {
-            type: "readingQuestion",
-            question: state.question + "\n" + line.text,
-            startLine: state.startLine,
-          };
+          return { ...state, question: state.question + "\n" + line.text };
         case LineType.Eof:
           throw new Error(
-            `File ended while reading a question without an answer. Location: ${filePath}:${lineNum + 1}`
+            `File ended while reading a question without an answer. ${at(lineNum)}`
           );
       }
       break;
 
-    case "readingAnswer":
-      switch (line.type) {
-        case LineType.StartQuestion: {
-          const q = state.question.trim();
-          const a = state.answer.trim();
-          cards.push({ type: "basic", question: q, answer: a, startLine: state.startLine, endLine });
-          return { type: "readingQuestion", question: line.text, startLine: lineNum };
-        }
-        case LineType.StartAnswer:
-          throw new Error(
-            `Found answer tag while reading an answer. Location: ${filePath}:${lineNum + 1}`
-          );
-        case LineType.StartCloze: {
-          const q = state.question.trim();
-          const a = state.answer.trim();
-          cards.push({ type: "basic", question: q, answer: a, startLine: state.startLine, endLine });
-          return { type: "readingCloze", text: line.text, startLine: lineNum };
-        }
-        case LineType.Separator: {
-          const q = state.question.trim();
-          const a = state.answer.trim();
-          cards.push({ type: "basic", question: q, answer: a, startLine: state.startLine, endLine });
-          return { type: "start" };
-        }
-        case LineType.Text:
-          return {
-            type: "readingAnswer",
-            question: state.question,
-            answer: state.answer + "\n" + line.text,
-            startLine: state.startLine,
-          };
-        case LineType.Eof: {
-          const q = state.question.trim();
-          const a = state.answer.trim();
-          cards.push({ type: "basic", question: q, answer: a, startLine: state.startLine, endLine });
-          return { type: "end" };
-        }
-      }
-      break;
-
-    case "readingCloze":
+    case "readingAnswer": {
+      const emit = () =>
+        cards.push({
+          type: "basic",
+          question: state.question.trim(),
+          answer: state.answer.trim(),
+          ...opening(state),
+          endLine,
+        });
       switch (line.type) {
         case LineType.StartQuestion:
-          cards.push({ type: "clozeGroup", text: state.text, startLine: state.startLine, endLine });
-          return { type: "readingQuestion", question: line.text, startLine: lineNum };
+          emit();
+          return { type: "readingQuestion", question: line.text, ...implicit };
         case LineType.StartAnswer:
-          throw new Error(
-            `Found answer tag while reading a cloze card. Location: ${filePath}:${lineNum + 1}`
-          );
+          throw new Error(`Found answer tag while reading an answer. ${at(lineNum)}`);
         case LineType.StartCloze:
-          cards.push({ type: "clozeGroup", text: state.text, startLine: state.startLine, endLine });
-          return { type: "readingCloze", text: line.text, startLine: lineNum };
+          emit();
+          return { type: "readingCloze", text: line.text, ...implicit };
         case LineType.Separator:
-          cards.push({ type: "clozeGroup", text: state.text, startLine: state.startLine, endLine });
-          return { type: "start" };
+          emit();
+          return { type: "start", meta: null };
+        case LineType.Metadata:
+          throw new Error("unreachable: metadata is only read at a block's top");
         case LineType.Text:
-          return {
-            type: "readingCloze",
-            text: state.text + "\n" + line.text,
-            startLine: state.startLine,
-          };
+          return { ...state, answer: state.answer + "\n" + line.text };
         case LineType.Eof:
-          cards.push({ type: "clozeGroup", text: state.text, startLine: state.startLine, endLine });
+          emit();
           return { type: "end" };
       }
       break;
+    }
+
+    case "readingCloze": {
+      const emit = () =>
+        cards.push({ type: "clozeGroup", text: state.text, ...opening(state), endLine });
+      switch (line.type) {
+        case LineType.StartQuestion:
+          emit();
+          return { type: "readingQuestion", question: line.text, ...implicit };
+        case LineType.StartAnswer:
+          throw new Error(`Found answer tag while reading a cloze card. ${at(lineNum)}`);
+        case LineType.StartCloze:
+          emit();
+          return { type: "readingCloze", text: line.text, ...implicit };
+        case LineType.Separator:
+          emit();
+          return { type: "start", meta: null };
+        case LineType.Metadata:
+          throw new Error("unreachable: metadata is only read at a block's top");
+        case LineType.Text:
+          return { ...state, text: state.text + "\n" + line.text };
+        case LineType.Eof:
+          emit();
+          return { type: "end" };
+      }
+      break;
+    }
 
     case "end":
       throw new Error("Parsed a line after the end of the file.");
@@ -359,16 +595,22 @@ function scanClozeBytes(
   }
 }
 
+/** One deletion of a cloze block: its content and its v1 identity. */
+type ClozeDeletion = {
+  content: ClozeCard;
+  hash: string;
+  familyHash: string;
+};
+
 /**
  * Every deletion in one `C:` block is a separate card, and they all share the
- * block's line range — editing any of them means editing the same lines.
+ * block's line range — editing any of them means editing the same lines. In
+ * order of appearance, which is what numbers them in their keys.
  */
 async function parseClozeCards(
   rawText: string,
-  deckName: string,
-  filePath: string,
-  range: [number, number]
-): Promise<ParsedCard[]> {
+  filePath: string
+): Promise<ClozeDeletion[]> {
   const text = rawText.trim();
   const textBytes = new TextEncoder().encode(text);
 
@@ -380,7 +622,7 @@ async function parseClozeCards(
   const cleanText = new TextDecoder().decode(new Uint8Array(cleanBytes));
 
   // Find cloze deletions
-  const cards: ParsedCard[] = [];
+  const deletions: ClozeCard[] = [];
   let start: number | null = null;
 
   scanClozeBytes(textBytes, (e) => {
@@ -388,32 +630,23 @@ async function parseClozeCards(
       start = e.cleanIndex;
     } else if (e.type === "close" && start !== null) {
       const end = e.cleanIndex;
-      // Card creation is synchronous here; we'll hash after
-      cards.push({
-        deckName,
-        filePath,
-        range,
-        content: { type: "cloze", text: cleanText, start, end: end - 1 },
-        hash: "", // filled below
-        familyHash: null, // filled below
-      });
+      deletions.push({ type: "cloze", text: cleanText, start, end: end - 1 });
       start = null;
     }
   });
 
-  // Fill in hashes (async)
-  const familyHash = cards.length > 0 ? await hashClozeFamily(cleanText) : null;
-  for (const card of cards) {
-    const c = card.content as { type: "cloze"; text: string; start: number; end: number };
-    card.hash = await hashClozeCard(c.text, c.start, c.end);
-    card.familyHash = familyHash;
-  }
-
-  if (cards.length === 0) {
+  if (deletions.length === 0) {
     throw new Error(
       `Cloze card must contain at least one cloze deletion. File: ${filePath}`
     );
   }
 
-  return cards;
+  const familyHash = await hashClozeFamily(cleanText);
+  return Promise.all(
+    deletions.map(async (content) => ({
+      content,
+      hash: await hashClozeCard(content.text, content.start, content.end),
+      familyHash,
+    }))
+  );
 }

@@ -34,6 +34,7 @@ function card(
     content: { type: "basic", question: `Q${n}`, answer: `A${n}` },
     hash: `hash-${n}`,
     familyHash: null,
+    id: null, key: "", tags: [], status: "active",
   };
 }
 

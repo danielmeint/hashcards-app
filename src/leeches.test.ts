@@ -17,6 +17,7 @@ function basic(hash: string, question = `Q ${hash}`): Card {
     content: { type: "basic", question, answer: "A" },
     hash,
     familyHash: null,
+    id: null, key: "", tags: [], status: "active",
   };
 }
 

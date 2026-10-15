@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { decodeDeckConfig, decodeDeckKind } from "./deck-config.ts";
-import { pb } from "./protobuf-writer.ts";
+import { decodeDeckConfig, decodeDeckKind } from "./deck-config";
+import { pb } from "./protobuf-writer";
 
 /** FSRS-6's default parameters, as Anki would store them after optimising. */
 const PARAMS_6 = [

@@ -6,8 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p e2e && tsc --noEmit -p tools/import-anki && tsc --noEmit -p cli",
-    "lint": "tsc --noEmit && tsc --noEmit -p e2e && tsc --noEmit -p tools/import-anki && tsc --noEmit -p cli",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p e2e && tsc --noEmit -p cli",
+    "lint": "tsc --noEmit && tsc --noEmit -p e2e && tsc --noEmit -p cli",
     "e2e": "playwright test",
     "deploy:dev": "vite build && npx wrangler pages deploy dist --project-name hashcards-app --branch dev",
     "build:cli": "vite build -c vite.cli.config.ts"

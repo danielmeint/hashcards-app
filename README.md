@@ -73,6 +73,8 @@ hc leeches [--min-lapses 3]     # cards that keep failing
 hc show <key|id>                # a card, its file:line, state and history
 hc init                         # hashcards.toml, AGENTS.md, a lint workflow for PRs
 hc migrate [--apply]            # v1 repo → 1.0: stamp IDs, history to hashcards-data (dry run by default)
+hc import anki --decks <ankictl repo> --collection <copy> [--dir cka] [--apply]
+                                # Anki notes → decks, revlog → hashcards-data (cli/anki/README.md)
 ```
 
 Every command takes `--repo <dir>` (default: the current directory) and

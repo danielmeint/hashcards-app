@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Wire, float, floats, message, readFields, shortestFloat32, varint } from "./protobuf.ts";
-import { pb } from "./protobuf-writer.ts";
+import { Wire, float, floats, message, readFields, shortestFloat32, varint } from "./protobuf";
+import { pb } from "./protobuf-writer";
 
 describe("the protobuf reader", () => {
   it("reads varints past 32 bits, as deck IDs need", () => {

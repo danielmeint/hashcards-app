@@ -14,7 +14,7 @@ import {
   TAG_PATTERN,
   toCardId,
   toTag,
-} from "./convert.ts";
+} from "./convert";
 
 /** What the app's parser makes of a `C:` block: each deletion's text. */
 async function deletions(clozeText: string): Promise<string[]> {

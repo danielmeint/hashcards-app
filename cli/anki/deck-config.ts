@@ -18,7 +18,7 @@
  *                     10 desired_retention float (a per-deck override)
  */
 
-import { type Field, floats, float, message, readFields, shortestFloat32, varint } from "./protobuf.ts";
+import { type Field, floats, float, message, readFields, shortestFloat32, varint } from "./protobuf";
 
 const CONFIG = { fsrsParams4: 3, fsrsParams5: 5, fsrsParams6: 6, desiredRetention: 37 } as const;
 const KIND = { normal: 1, filtered: 2 } as const;

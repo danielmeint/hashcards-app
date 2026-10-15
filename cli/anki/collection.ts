@@ -17,8 +17,8 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { realpathSync } from "node:fs";
-import type { RevlogRow } from "./revlog.ts";
-import { type DeckKind, type FsrsSettings, decodeDeckConfig, decodeDeckKind } from "./deck-config.ts";
+import type { RevlogRow } from "./revlog";
+import { type DeckKind, type FsrsSettings, decodeDeckConfig, decodeDeckKind } from "./deck-config";
 
 /**
  * The importer's one hard rule: never the live collection, only a copy.

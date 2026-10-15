@@ -1,0 +1,20 @@
+{
+  // Separate from the app's tsconfig: these files run under Node (native type
+  // stripping, so imports name their .ts files) and use node:sqlite. Tests pull
+  // in src/parser.ts, which is checked here too, under the same strictness.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["*.ts"]
+}

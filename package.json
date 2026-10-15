@@ -6,8 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p e2e",
-    "lint": "tsc --noEmit && tsc --noEmit -p e2e",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p e2e && tsc --noEmit -p tools/import-anki",
+    "lint": "tsc --noEmit && tsc --noEmit -p e2e && tsc --noEmit -p tools/import-anki",
     "e2e": "playwright test",
     "deploy:dev": "vite build && npx wrangler pages deploy dist --project-name hashcards-app --branch dev"
   },
@@ -20,7 +20,8 @@
     "jsdom": "^30.0.1",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "yaml": "^2.9.1"
   },
   "dependencies": {
     "idb": "^8.0.3",

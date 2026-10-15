@@ -226,7 +226,7 @@ export function createView(
               data-grade=${grade}
               @click=${() => session.grade(grade)}
             >
-              <kbd>${grade}</kbd>
+              <kbd>${grade === Grade.Good ? "3 / Space" : grade}</kbd>
               <span class="grade-text">
                 <span class="grade-label">${label}</span>
                 <span class="interval-preview">${previews[i] ?? ""}</span>
@@ -236,7 +236,7 @@ export function createView(
         </div>
         <p class="controls-hint" aria-hidden="true">
           <span class="hint-idle"
-            >${revealed ? "or swipe the card" : "or tap the card"}</span
+            >${revealed ? "tap the card for Good, or swipe" : "or tap the card"}</span
           ><span class="hint-reveal">Release to show the answer</span
           ><span class="hint-good">Release to grade Good</span
           ><span class="hint-forgot">Release to grade Forgot</span>

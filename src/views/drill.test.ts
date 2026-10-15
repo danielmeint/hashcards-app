@@ -463,8 +463,24 @@ function flick(container: HTMLElement, dx: number, ms: number, holdMs = 0): void
   pointer(target, "pointerup", 200 + dx, 300, t + ms + holdMs);
 }
 
-function press(key: string): void {
-  document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+/** A key press at a given moment, so the reveal-then-grade guard can be stepped past. */
+function pressAt(key: string, t: number, repeat = false): void {
+  const ev = new KeyboardEvent("keydown", { key, bubbles: true, repeat });
+  Object.defineProperty(ev, "timeStamp", { value: t });
+  document.dispatchEvent(ev);
+}
+
+/** A press and release without movement, then the click it produces. */
+function tapAt(el: Element, pointerType: string, t: number): void {
+  for (const type of ["pointerdown", "pointerup"]) {
+    const ev = new Event(type, { bubbles: true, cancelable: true });
+    Object.assign(ev, { pointerId: 1, pointerType, clientX: 200, clientY: 300 });
+    Object.defineProperty(ev, "timeStamp", { value: t });
+    el.dispatchEvent(ev);
+  }
+  const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+  Object.defineProperty(click, "timeStamp", { value: t + 1 });
+  el.dispatchEvent(click);
 }
 
 function isRevealed(container: HTMLElement): boolean {
@@ -765,23 +781,45 @@ describe("drill input", () => {
     expect(await getAllReviews()).toHaveLength(0);
   });
 
-  it("space reveals and never grades", async () => {
+  it("space reveals, then grades Good, but never on a held key or a double press", async () => {
     const { renderDrill, getAllReviews } = await freshDrill();
-    await renderDrill(container, [basicCard(1)], () => {});
+    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
 
-    // Space used to mean "Again" on a re-queued card, so holding it down sent
-    // the same card round the queue over and over.
-    grade(container, Grade.Forgot);
-    await waitFor(getAllReviews, (r) => r.length === 1, "the grade");
-
-    press(" ");
+    // Holding Space used to send a re-queued card round the queue over and
+    // over. A held key repeats, and a repeat must never grade.
+    pressAt(" ", 1_000);
     expect(isRevealed(container)).toBe(true);
-    press(" ");
-    press(" ");
+    pressAt(" ", 1_050, true);
+    pressAt(" ", 1_100, true);
+    // A second fresh press straight after the reveal is the tail of the
+    // first, not a verdict on an answer nobody read.
+    pressAt(" ", 1_150);
     await settle();
+    expect(await getAllReviews()).toHaveLength(0);
 
-    expect(container.querySelector(".finished")).toBeNull();
-    expect(await getAllReviews()).toHaveLength(1);
+    pressAt(" ", 2_000);
+    const reviews = await waitFor(getAllReviews, (r) => r.length === 1, "the grade");
+    expect(reviews[0].grade).toBe(Grade.Good);
+  });
+
+  it("a tap on the revealed card grades Good; a mouse click does not", async () => {
+    const { renderDrill, getAllReviews } = await freshDrill();
+    await renderDrill(container, [basicCard(1), basicCard(2)], () => {});
+    const target = container.querySelector(".card-container")!;
+
+    tapAt(target, "touch", 10_000);
+    expect(isRevealed(container)).toBe(true);
+    tapAt(target, "touch", 10_100); // a double tap: still only the reveal
+    await settle();
+    expect(await getAllReviews()).toHaveLength(0);
+
+    tapAt(target, "mouse", 11_000);
+    await settle();
+    expect(await getAllReviews()).toHaveLength(0);
+
+    tapAt(target, "touch", 12_000);
+    const reviews = await waitFor(getAllReviews, (r) => r.length === 1, "the grade");
+    expect(reviews[0].grade).toBe(Grade.Good);
   });
 });
 

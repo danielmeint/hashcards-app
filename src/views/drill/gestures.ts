@@ -100,6 +100,16 @@ function swipeAction(
     : { label: "Forgot", positive: false };
 }
 
+/**
+ * How long after a reveal a second tap or Space is taken as the tail of the
+ * first, not a grade. Without it a double tap, or a Space pressed twice in
+ * quick succession, would grade a card nobody has read the answer of.
+ */
+const GRADE_AFTER_REVEAL_MS = 300;
+
+/** A tap that lands on something with its own behaviour is not a tap on the card. */
+const OWN_BEHAVIOUR = "a, button, audio, video, input, textarea, select, summary, label";
+
 function commitSwipe(session: Session, right: boolean): void {
   // A swipe before the answer is showing means "show me", never a grade — the
   // gesture must not be able to grade a card that was never seen.
@@ -121,17 +131,34 @@ export function attachCardGestures(
   let drag: Drag | null = null;
   /** A completed swipe also produces a click; that click is not a tap. */
   let swipeAteClick = false;
+  /** The pointer behind the latest press: only a finger's tap may grade. */
+  let lastPointer = "mouse";
+  let revealedAt = 0;
 
   cardContainer.addEventListener("click", (e) => {
-    if (swipeAteClick || session.revealed) return;
-    // Links keep their own behaviour, and the click that ends a text selection
-    // is someone reading, not someone asking for the answer.
-    if ((e.target as HTMLElement).closest?.("a")) return;
+    if (swipeAteClick || session.finished) return;
+    // Links, media controls and the like keep their own behaviour, and the
+    // click that ends a text selection is someone reading, not someone
+    // answering.
+    if ((e.target as HTMLElement).closest?.(OWN_BEHAVIOUR)) return;
     if (document.getSelection()?.isCollapsed === false) return;
-    session.reveal();
+    if (!session.revealed) {
+      session.reveal();
+      revealedAt = e.timeStamp;
+      return;
+    }
+    // On the answer, a tap is "Good", as Space is on a keyboard and as in
+    // Anki: the card you knew is the common case, and it should cost one tap
+    // anywhere on the card rather than a reach for the button row. A mouse
+    // click does not grade, since on a desktop clicking is how text gets
+    // selected and links followed, and the keyboard is the fast path there.
+    if (lastPointer === "mouse") return;
+    if (e.timeStamp - revealedAt < GRADE_AFTER_REVEAL_MS) return;
+    session.grade(Grade.Good);
   });
 
   cardContainer.addEventListener("pointerdown", (e) => {
+    lastPointer = e.pointerType;
     // Mouse drags are text selection, and desktop has the keyboard.
     if (e.pointerType === "mouse" || session.finished) return;
     drag = {
@@ -238,6 +265,7 @@ export function attachKeyboard(
   actions: { onEdit?: () => void } = {}
 ): () => void {
   const controller = new AbortController();
+  let revealedAt = 0;
 
   document.addEventListener(
     "keydown",
@@ -250,7 +278,16 @@ export function attachKeyboard(
       }
       if (e.key === " " || e.key === "Spacebar") {
         e.preventDefault();
-        session.reveal(); // Reveal, and only ever reveal
+        // A held key repeats; only a fresh press may move the session on.
+        if (e.repeat) return;
+        if (!session.revealed) {
+          session.reveal();
+          revealedAt = e.timeStamp;
+        } else if (e.timeStamp - revealedAt >= GRADE_AFTER_REVEAL_MS) {
+          // Space, then Space again: show me, I knew it. The same as Anki,
+          // and the card you knew is the one you grade most.
+          session.grade(Grade.Good);
+        }
       } else if (session.revealed && e.key >= "1" && e.key <= "4") {
         session.grade(parseInt(e.key) as Grade);
       } else if (e.key === "u" || e.key === "U") {

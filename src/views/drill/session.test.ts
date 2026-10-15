@@ -33,6 +33,7 @@ function card(n: number, familyHash: string | null = null): Card {
     content: { type: "basic", question: `Q${n}`, answer: `A${n}` },
     hash: `hash-${n}`,
     familyHash,
+    id: null, key: "", tags: [], status: "active",
   };
 }
 

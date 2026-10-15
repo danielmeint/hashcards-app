@@ -28,6 +28,7 @@ const card = (n: number, question = `Q${n}`): Card => ({
   content: { type: "basic", question, answer: `A${n}` },
   hash: `hash-${n}`,
   familyHash: null,
+  id: null, key: "", tags: [], status: "active",
 });
 
 const day = (offset: number) =>

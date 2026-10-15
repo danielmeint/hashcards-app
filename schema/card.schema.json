@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/danielmeint/hashcards-app/blob/main/schema/card.schema.json",
+  "title": "Hashcards card",
+  "description": "One card as structured JSON, for tools and agents that would rather emit data than Markdown. It describes exactly one block of a deck file (CARD_FORMAT_SPEC.md, format v2); whatever writes it into the file turns it into metadata lines and Q:/A: or C:. The parser stays the authority: this schema catches the common mistakes, not every one.",
+  "type": "object",
+  "required": ["file", "type"],
+  "properties": {
+    "file": {
+      "description": "The deck file the card belongs in, relative to the collection root, with forward slashes. Created if it does not exist; its deck name then defaults to the file name.",
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$))[^\\\\]+\\.md$",
+      "examples": ["geography/europe/Europe_Nordic_Baltic.md", "cka/workloads.md"]
+    },
+    "type": {
+      "description": "basic: a question and an answer. cloze: one text with [bracketed] deletions, each of which becomes its own card.",
+      "enum": ["basic", "cloze"]
+    },
+    "id": {
+      "description": "The card's stable identity, written as its ID: line. Unique within the collection. Leave it out to have one stamped (8 characters of lowercase base32); pick a readable slug when the card has an obvious name.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,63}$",
+      "examples": ["est-capital", "cka-wl-set-image", "k8q2xv7m"]
+    },
+    "question": {
+      "description": "Basic cards: the front, as Markdown. Becomes the Q: line and the lines after it.",
+      "$ref": "#/$defs/side"
+    },
+    "answer": {
+      "description": "Basic cards: the back, as Markdown. Becomes the A: line and the lines after it.",
+      "$ref": "#/$defs/side"
+    },
+    "text": {
+      "description": "Cloze cards: Markdown with at least one [deletion]. Brackets inside image syntax ![...] are not deletions; write \\[ and \\] for literal brackets.",
+      "allOf": [
+        { "$ref": "#/$defs/side" },
+        { "pattern": "\\[[\\s\\S]*\\]" }
+      ]
+    },
+    "tags": {
+      "description": "Added to the deck file's frontmatter tags. Written as one comma-separated Tags: line, so a tag cannot contain a comma.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[^,\\n\\r]*[^,\\s][^,\\n\\r]*$"
+      },
+      "uniqueItems": true
+    },
+    "reverse": {
+      "description": "Basic cards only: also schedule the card answer-to-question, as Reverse: yes.",
+      "type": "boolean",
+      "default": false
+    },
+    "status": {
+      "description": "draft: proposed, not scheduled until accepted in the app's Inbox - what an agent should normally write. suspended: kept, not scheduled. active: scheduled; written as no Status: line at all.",
+      "enum": ["active", "draft", "suspended"],
+      "default": "active"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "basic" } } },
+      "then": {
+        "required": ["question", "answer"],
+        "not": { "required": ["text"] }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "cloze" } } },
+      "then": {
+        "required": ["text"],
+        "properties": { "reverse": { "const": false } },
+        "allOf": [
+          { "not": { "required": ["question"] } },
+          { "not": { "required": ["answer"] } }
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "side": {
+      "description": "Card text. Not blank, and no line after the first may start with Q:, A: or C:, or be a --- separator: those would end the card early.",
+      "type": "string",
+      "allOf": [
+        { "pattern": "\\S" },
+        { "pattern": "^(?![\\s\\S]*\\n(?:Q:|A:|C:|[ \\t]*---[ \\t\\r]*(?:\\n|$)))" }
+      ]
+    }
+  },
+  "examples": [
+    {
+      "file": "geography/europe/Europe_Nordic_Baltic.md",
+      "type": "basic",
+      "id": "est-capital",
+      "tags": ["capitals"],
+      "question": "What is the capital of Estonia?",
+      "answer": "Tallinn"
+    },
+    {
+      "file": "geography/europe/Europe_Central.md",
+      "type": "basic",
+      "reverse": true,
+      "question": "**Germany**",
+      "answer": "![Germany on the map](map-deu.png)",
+      "status": "draft"
+    },
+    {
+      "file": "cka/workloads.md",
+      "type": "cloze",
+      "id": "cka-deployment-owns",
+      "text": "In Kubernetes, a [Deployment] manages a [ReplicaSet].",
+      "status": "draft"
+    }
+  ]
+}

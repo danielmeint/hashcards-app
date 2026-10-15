@@ -28,3 +28,6 @@ coverage/
 # Playwright
 test-results/
 playwright-report/
+
+# hc CLI build
+dist-cli/

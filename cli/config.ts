@@ -102,16 +102,25 @@ function show(value: TomlValue): string {
   return JSON.stringify(value);
 }
 
-/** The file `hc init` writes. `exclude` is whatever is not a deck in this repo today. */
-export function renderConfig(exclude: readonly string[]): string {
+/**
+ * The file `hc init` and `hc migrate` write. `exclude` is whatever is not a
+ * deck in this repo today; `review` is the defaults unless the caller knows
+ * better (`hc migrate` reads them off the v1 state file).
+ */
+export function renderConfig(
+  exclude: readonly string[],
+  review: Partial<Config["review"]> = {}
+): string {
   const list = exclude.map((p) => JSON.stringify(p)).join(", ");
+  const { newPerDay, desiredRetention, fuzz } = { ...defaultConfig().review, ...review };
+  const pad = (s: string) => s.padEnd(29);
   return `# Hashcards collection settings. Shared by every device and by \`hc\`.
 # Device preferences (theme, haptics) stay on the device.
 
 [review]
-new_per_day = ${DEFAULT_NEW_PER_DAY}
-desired_retention = ${DEFAULT_RETENTION}     # 0.80–0.95: the recall you aim for when a card comes due
-fuzz = true                   # spread cards learned together over neighbouring days
+new_per_day = ${newPerDay}
+${pad(`desired_retention = ${desiredRetention}`)} # 0.80–0.95: the recall you aim for when a card comes due
+${pad(`fuzz = ${fuzz}`)} # spread cards learned together over neighbouring days
 
 [decks]
 # Globs. One without a "/" matches a file name at any depth.

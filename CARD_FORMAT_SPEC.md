@@ -417,6 +417,22 @@ Adding a deletion to a cloze block, or reordering its deletions, renumbers the
 ones after it. Prefer appending deletions, or splitting a block that keeps
 growing.
 
+### Where reviews of a key are kept
+
+Reviews live on the repo's orphan `hashcards-data` branch, one file per
+writer per month: `reviews/YYYY-MM.<writer>.jsonl`. A device's writer name is
+eight hex digits. Two names are reserved for tools that write history on the
+collection's behalf, so that no device ever treats their files as its own:
+
+| Writer | Written by | Holds |
+|---|---|---|
+| `v1` | `hc migrate` | the v1 state file as `baseline` events, and the v1 review logs, re-keyed to IDs |
+| `anki` | `hc import anki` | an Anki collection's review log, `src: "anki"` |
+
+History of a card that no deck has any more stays under its key (an `h:` key
+for a card that never had an ID), so a card re-added with that key or text
+picks it back up.
+
 ## Stamping IDs
 
 Stamping adds an `ID:` line with a generated ID to the top of every block that

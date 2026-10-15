@@ -366,7 +366,7 @@ into `hc` once M5 exists.
 | M3 Data branch and sync | not started | | needs M1, M2 |
 | M4 Migration | not started | | needs M3, M5 |
 | M5 `hc` CLI | not started | | needs M1, M2 |
-| M6 Anki import | prototype in progress | `v1-anki-import` | standalone until M5 |
+| M6 Anki import | prototype done | `v1-anki-import` | `tools/import-anki/`: real run maps 153/153 notes, 168/168 cards, 625 reviews (314 of deleted cards skipped). Folds into `hc` with M5; parity check needs M2 |
 | M7 Features | not started | | |
 | M8 UI 1.0 | in progress | `v1-ui` | Today and Review first |
 | M9 Ship | not started | | |

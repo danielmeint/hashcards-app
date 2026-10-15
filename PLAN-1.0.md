@@ -362,7 +362,7 @@ into `hc` once M5 exists.
 | Milestone | Status | Branch | Notes |
 |---|---|---|---|
 | M1 Format v2 and identity | in progress | `v1-format` | |
-| M2 Event log and replay | in progress | `v1-replay` | |
+| M2 Event log and replay | done, in review | `v1-replay` | `src/core/{events,schedule,replay}.ts`. Live path and replay share one step; fuzz seeded by key + review count. v1 lines assume CET/CEST. Live-path equivalence and the real v1 log reproduce exactly. App wiring (keys into fuzz, tz on writes) is M3. |
 | M3 Data branch and sync | not started | | needs M1, M2 |
 | M4 Migration | not started | | needs M3, M5 |
 | M5 `hc` CLI | not started | | needs M1, M2 |

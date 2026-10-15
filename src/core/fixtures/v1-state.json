@@ -1,0 +1,482 @@
+{
+  "version": 1,
+  "cards": {
+    "021af4eee7056e3610ec6da6190b3110c04358d1eecdcb6b5f88d4093c34be5a": {
+      "lastReviewedAt": "2026-10-13T19:14:37.619Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 8,
+      "dueDate": "2026-10-21",
+      "reviewCount": 1
+    },
+    "047e0f26356b9ac44527bab24269a638511c1359090933ddab8852e334eb6b73": {
+      "lastReviewedAt": "2026-10-13T19:18:11.747Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-15",
+      "reviewCount": 1
+    },
+    "053810e6b952dde7e050656746a777d532c93acde28c71db8fffc53f8fa7d44e": {
+      "lastReviewedAt": "2026-10-14T08:27:08.180Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 9,
+      "dueDate": "2026-10-23",
+      "reviewCount": 1
+    },
+    "0d19b84be149b85c8ec351c459b842c500c98734f7450f61048e0da51b8e2d3b": {
+      "lastReviewedAt": "2026-10-13T15:07:56.149Z",
+      "stability": 219.26458618,
+      "difficulty": 6.60882818,
+      "intervalRaw": 219.26458618,
+      "intervalDays": 211,
+      "dueDate": "2027-05-12",
+      "reviewCount": 7
+    },
+    "0dc5f053e27d136d64f5b4bb105d60066b17ea0d5340303793ee093b247cf376": {
+      "lastReviewedAt": "2026-10-13T19:14:35.535Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 7,
+      "dueDate": "2026-10-20",
+      "reviewCount": 1
+    },
+    "1df5efa8727c3abaf9a3c05f17ca1171630fa12c1101d37ebd0f08454d09033e": {
+      "lastReviewedAt": "2026-10-13T19:15:07.446Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-15",
+      "reviewCount": 1
+    },
+    "2c5c9416faf42861c1a3f978bf6919963942e91bcc96a637b4cc0dda4e292257": {
+      "lastReviewedAt": "2026-10-13T18:51:33.569Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 8,
+      "dueDate": "2026-10-21",
+      "reviewCount": 1
+    },
+    "300d969f298cb44718b5a1fe121ccbdf0357d23bb95acc2bad4434f421d2edda": {
+      "lastReviewedAt": "2026-10-13T18:51:37.369Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 8,
+      "dueDate": "2026-10-21",
+      "reviewCount": 1
+    },
+    "343b33562e0f27a60ef20e1a17121e55153c0be08b9339753ea853785f7dc7cf": {
+      "lastReviewedAt": "2026-10-13T19:14:40.403Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 9,
+      "dueDate": "2026-10-22",
+      "reviewCount": 1
+    },
+    "3fb9a2edc186144c26a270394ff86bf5a450a6784b585dddf5f9c507d2d143ac": {
+      "lastReviewedAt": "2026-10-13T19:15:29.475Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 7,
+      "dueDate": "2026-10-20",
+      "reviewCount": 1
+    },
+    "40a8f2c7aba3ea30ff2c92dfed9d3b49bf790eb83d70543893c5ea8ed4e97175": {
+      "lastReviewedAt": "2026-10-13T22:07:52.713Z",
+      "stability": 4.60224642,
+      "difficulty": 5.09241299,
+      "intervalRaw": 4.60224642,
+      "intervalDays": 4,
+      "dueDate": "2026-10-18",
+      "reviewCount": 3
+    },
+    "4eadb1d480cc6ba6d6e9bc8b5b45c115c80f65167cf2811b4aa08f0add64431d": {
+      "lastReviewedAt": "2026-10-13T18:51:57.453Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-15",
+      "reviewCount": 1
+    },
+    "50d0e94628218b7f164ddb0ef9c91852ed4df4d1dccc588a29b6b854a023799a": {
+      "lastReviewedAt": "2026-10-14T08:27:03.239Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-16",
+      "reviewCount": 1
+    },
+    "515d5ba44a9d5b15f069f2eddd19d85c43d2946f2851219f56a5240ff418c3ed": {
+      "lastReviewedAt": "2026-10-14T08:26:48.656Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 9,
+      "dueDate": "2026-10-23",
+      "reviewCount": 1
+    },
+    "534dce309799470f0305473759ad88ffcf7732d3abd961efe679de8f44960566": {
+      "lastReviewedAt": "2026-10-13T18:51:53.632Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 9,
+      "dueDate": "2026-10-22",
+      "reviewCount": 1
+    },
+    "563e117e1e00fe229f96fb878268079f36789995e274005bd1929d8ab498ea5e": {
+      "lastReviewedAt": "2026-10-13T18:51:06.373Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 8,
+      "dueDate": "2026-10-21",
+      "reviewCount": 1
+    },
+    "59376e68370b7e1ce717e4930d69518309e8f225f5f79fc61913bdeb16e278ad": {
+      "lastReviewedAt": "2026-10-13T18:51:21.644Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 8,
+      "dueDate": "2026-10-21",
+      "reviewCount": 1
+    },
+    "5a155f41cf925d1ebbdb5cfcb0ab12bd10a8872038be13d37580bf755c358408": {
+      "lastReviewedAt": "2026-10-14T08:26:50.758Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 9,
+      "dueDate": "2026-10-23",
+      "reviewCount": 1
+    },
+    "6eab7cbd821d72c964a7a0c1424003024ab933532c2f9d934c445453e09bd76a": {
+      "lastReviewedAt": "2026-10-13T19:15:26.956Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-15",
+      "reviewCount": 1
+    },
+    "72fb0055012a91375bf9f3efb710193963b7c31fc932f8572a24b648747e9233": {
+      "lastReviewedAt": "2026-10-13T19:18:07.875Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-15",
+      "reviewCount": 1
+    },
+    "74d684c64209eabd8b7170c09136f9b726cbfa5e5cccf477023c7e720e9db389": {
+      "lastReviewedAt": "2026-10-14T08:26:58.127Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 7,
+      "dueDate": "2026-10-21",
+      "reviewCount": 1
+    },
+    "771f8997f5e4fdabba8f53d28a5c33d2c30a1e83489f7bbba9638cba29011af2": {
+      "lastReviewedAt": "2026-10-13T22:08:26.104Z",
+      "stability": 0.24668919,
+      "difficulty": 6.40211507,
+      "intervalRaw": 0.24668919,
+      "intervalDays": 1,
+      "dueDate": "2026-10-15",
+      "reviewCount": 2
+    },
+    "7e703f593fb5b51b8b5598768e9167e3b634f6b3932a74987806fe8a0de35147": {
+      "lastReviewedAt": "2026-10-13T18:51:47.401Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 9,
+      "dueDate": "2026-10-22",
+      "reviewCount": 1
+    },
+    "804d7ea7eca319889f5ca41c7afeabf068eb872bd89bb86a950290894f4c8743": {
+      "lastReviewedAt": "2026-10-13T19:15:14.321Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-15",
+      "reviewCount": 1
+    },
+    "809b3991822beaafc3c040b806c733c79549d85cb81b44b8635a5a155f9c72c2": {
+      "lastReviewedAt": "2026-10-13T18:51:49.389Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 7,
+      "dueDate": "2026-10-20",
+      "reviewCount": 1
+    },
+    "88da0e9766901e0f6357ecf243172355eacfe7dec09942d90dc5ba82cbd96f66": {
+      "lastReviewedAt": "2026-10-13T22:08:00.362Z",
+      "stability": 4.60224642,
+      "difficulty": 5.09241299,
+      "intervalRaw": 4.60224642,
+      "intervalDays": 5,
+      "dueDate": "2026-10-19",
+      "reviewCount": 3
+    },
+    "98cefe9b56432d6d0ed3409fd2acfb5c3bf7c858fc45dd18363a96b93563ea6c": {
+      "lastReviewedAt": "2026-10-14T08:27:00.479Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 7,
+      "dueDate": "2026-10-21",
+      "reviewCount": 1
+    },
+    "a0b1008a14056eb2304987c5ff830f1cc893c0d0f8e3044136b293838e76581e": {
+      "lastReviewedAt": "2026-10-13T22:08:41.048Z",
+      "stability": 2.02147724,
+      "difficulty": 6.39094132,
+      "intervalRaw": 2.02147724,
+      "intervalDays": 2,
+      "dueDate": "2026-10-16",
+      "reviewCount": 3
+    },
+    "a8d1bc3fc4775030b2f8ff2b37860a49162b36f422ab18b6312f2f8983170cfb": {
+      "lastReviewedAt": "2026-10-13T18:51:31.794Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 9,
+      "dueDate": "2026-10-22",
+      "reviewCount": 1
+    },
+    "a9bf9d0f35351f55bd4c8bb8e4af9e3350778d68a4ca21cd11f0753e83186aaf": {
+      "lastReviewedAt": "2026-10-14T08:27:05.524Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-16",
+      "reviewCount": 1
+    },
+    "aa681c74e7b5c19ab405ff879044bd1268820ebb0419b65f7111e7e9426c76a9": {
+      "lastReviewedAt": "2026-10-13T22:08:04.283Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-16",
+      "reviewCount": 1
+    },
+    "ab880a3e8df35c9d1ddbc704f4129c40cc059785faacd7288599669d37384793": {
+      "lastReviewedAt": "2026-10-14T08:26:46.556Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-16",
+      "reviewCount": 1
+    },
+    "b1f20fb8a9781d6c71f898fe0e13960a09ff4aecbd53e5f1f3c8c222301b0200": {
+      "lastReviewedAt": "2026-10-13T15:07:51.474Z",
+      "stability": 16.63837325,
+      "difficulty": 8.70087381,
+      "intervalRaw": 16.63837325,
+      "intervalDays": 18,
+      "dueDate": "2026-10-31",
+      "reviewCount": 8
+    },
+    "b3906d0e508a96c8b4ab07bd276dbe2b4a17f595f2055b2a53886425d17ee8c5": {
+      "lastReviewedAt": "2026-10-13T22:07:48.935Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-16",
+      "reviewCount": 1
+    },
+    "b84e16b2b74123dd1aff9d8ce8e29fa9d60c0781fe3165f1a8b49957a152f8ec": {
+      "lastReviewedAt": "2026-10-13T18:51:29.540Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-15",
+      "reviewCount": 1
+    },
+    "bd60abd56fb1b73129c22959b7ac2bd07b6566f795160ec14f77a603f2409d40": {
+      "lastReviewedAt": "2026-10-13T18:51:51.990Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 8,
+      "dueDate": "2026-10-21",
+      "reviewCount": 1
+    },
+    "c49e8a03dfeda18b55efcd98cb4546050db716fb7056abc770971d2f90d30d2b": {
+      "lastReviewedAt": "2026-10-14T08:26:53.874Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-16",
+      "reviewCount": 1
+    },
+    "c8bf1a4d115ed569d7f5d02b8d81f26f0b938d7f848312c88359e6c08797fd2e": {
+      "lastReviewedAt": "2026-10-13T19:14:32.827Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 7,
+      "dueDate": "2026-10-20",
+      "reviewCount": 1
+    },
+    "c92475aeecd8956911ab3c39745ba106a0d5c1c9e48b3e76a5f8b6c746e0d4c4": {
+      "lastReviewedAt": "2026-10-13T22:08:06.546Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-16",
+      "reviewCount": 1
+    },
+    "d1a1ef8e7bd1667931c4e3e765df319ff932e01d30024a7a1d66c38b71015bff": {
+      "lastReviewedAt": "2026-10-14T08:27:13.119Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 7,
+      "dueDate": "2026-10-21",
+      "reviewCount": 1
+    },
+    "d52ec2fa72c97a058d9c2e9cb2090692d32d3962e41fd6909393c09d1dbf15a8": {
+      "lastReviewedAt": "2026-10-13T19:15:57.828Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-15",
+      "reviewCount": 1
+    },
+    "ddb7df58f1684826f3bb4556155ecdc0af84d8ec78aae062e50ef7ee99d663a8": {
+      "lastReviewedAt": "2026-10-13T18:51:08.873Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 8,
+      "dueDate": "2026-10-21",
+      "reviewCount": 1
+    },
+    "de7acb53659e6ce6c5289402394e10f6afe76f6e3677e00e5c26224894945a23": {
+      "lastReviewedAt": "2026-10-13T19:15:23.531Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-15",
+      "reviewCount": 1
+    },
+    "dfca7e18f003036a1beb06a70d6785a8499bc1739e6b314c7696ab13def27df8": {
+      "lastReviewedAt": "2026-10-13T18:51:24.122Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 9,
+      "dueDate": "2026-10-22",
+      "reviewCount": 1
+    },
+    "e39e208fe7cbfad7930667ec9328e0521ca075a8a36f9871d112287ea69e22a1": {
+      "lastReviewedAt": "2026-10-13T19:16:11.944Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-15",
+      "reviewCount": 1
+    },
+    "ebfc13ed0bade07df3351b6b2215b74fb1dd41afca1a2995834563e6a016ed2d": {
+      "lastReviewedAt": "2026-10-14T08:27:24.818Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-16",
+      "reviewCount": 1
+    },
+    "ec419d33830580944186a7355f61fab247f2c9c808a53f1193ee0cb9e4e2f86d": {
+      "lastReviewedAt": "2026-10-13T19:18:14.414Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-15",
+      "reviewCount": 1
+    },
+    "f0af50699a02da81de4aa49f281f2f0f6cebc44747e55637ec6703e345988b99": {
+      "lastReviewedAt": "2026-10-13T19:16:53.759Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-15",
+      "reviewCount": 1
+    },
+    "f23e93d60d084f64caa320234852d40c6dd04680f52052922538740ef4730d0f": {
+      "lastReviewedAt": "2026-10-14T08:27:11.053Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 9,
+      "dueDate": "2026-10-23",
+      "reviewCount": 1
+    },
+    "f3c8791802f4ab86ec579442388982edeacc8b4676836a9666a6b1d5a3087505": {
+      "lastReviewedAt": "2026-10-13T19:14:53.551Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-15",
+      "reviewCount": 1
+    },
+    "f773f964a3e76fa5a733d8ef971fb3471a324d46ced87283026641a41303539f": {
+      "lastReviewedAt": "2026-10-13T19:17:18.338Z",
+      "stability": 2.3065,
+      "difficulty": 2.11810397,
+      "intervalRaw": 2.3065,
+      "intervalDays": 2,
+      "dueDate": "2026-10-15",
+      "reviewCount": 1
+    },
+    "fbbc289d5ff2a5be07325815acf2da6bf7efc75139b428be2e027b111dde8c64": {
+      "lastReviewedAt": "2026-10-13T18:51:42.091Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 9,
+      "dueDate": "2026-10-22",
+      "reviewCount": 1
+    },
+    "fd6032d59f52b94e45abf1d57af1eb8f116fe62ce57847c525e51ca60405cc45": {
+      "lastReviewedAt": "2026-10-13T18:51:02.607Z",
+      "stability": 8.2956,
+      "difficulty": 1,
+      "intervalRaw": 8.2956,
+      "intervalDays": 7,
+      "dueDate": "2026-10-20",
+      "reviewCount": 1
+    }
+  }
+}

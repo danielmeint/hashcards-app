@@ -1,5 +1,5 @@
-import { FSRSAlgorithm, default_w, generatorParameters } from "ts-fsrs";
 import { Grade, Performance, ReviewedPerformance } from "./types";
+import { DEFAULT_RETENTION, step } from "./core/schedule";
 
 /**
  * Scheduling: FSRS-6, through the reference TypeScript implementation.
@@ -24,45 +24,20 @@ import { Grade, Performance, ReviewedPerformance } from "./types";
  * Stability means the same thing in both versions — the interval at which
  * recall has fallen to 90% — so states written under FSRS-5 carry over as they
  * are.
+ *
+ * The step itself lives in `src/core/schedule.ts`, shared with replay, so the
+ * live path and the review log can never compute a card differently. This file
+ * is the app's side of it: the device's clock and timezone.
  */
 
-/** FSRS-6's published defaults: 21 weights, the last of them the curve's decay. */
-export const PARAMETERS: readonly number[] = default_w;
-
-const algorithm = new FSRSAlgorithm(
-  generatorParameters({ w: [...PARAMETERS], enable_short_term: true })
-);
-
-/**
- * The forgetting curve's shape. FSRS-5 fixed it at 0.5; FSRS-6 learns it, and
- * the factor follows from it so that recall is exactly 90% at t = S.
- */
-const DECAY = -PARAMETERS[20];
-const FACTOR = Math.pow(0.9, 1 / DECAY) - 1;
-
-/**
- * The recall probability a card is scheduled to have decayed to when it comes
- * due. At 0.9 an interval equals the card's stability.
- */
-export const DEFAULT_RETENTION = 0.9;
-/**
- * Narrower than Anki's 70–97%. FSRS-6's curve is flat, so retention bites
- * hard: a new card graded Good is 2 days out at 90% but ~3 weeks at 70%, the
- * "massive interval jumps at low desired retention" the FSRS benchmark warns
- * of. At the top, Anki's own manual calls workload above 95% overwhelming.
- */
-export const MIN_RETENTION = 0.8;
-export const MAX_RETENTION = 0.95;
-
-/** Probability of recall `t` days after a review that left stability `s`. */
-export function retrievability(t: number, s: number): number {
-  return Math.pow(1 + FACTOR * (t / s), DECAY);
-}
-
-/** Days until recall falls to `rd`, for stability `s`. */
-export function interval(rd: number, s: number): number {
-  return (s / FACTOR) * (Math.pow(rd, 1 / DECAY) - 1);
-}
+export {
+  PARAMETERS,
+  DEFAULT_RETENTION,
+  MIN_RETENTION,
+  MAX_RETENTION,
+  retrievability,
+  interval,
+} from "./core/schedule";
 
 /** The local calendar day of an instant, as `YYYY-MM-DD`. */
 export function localDay(at: Date = new Date()): string {
@@ -79,24 +54,6 @@ export function todayStr(): string {
   return localDay();
 }
 
-function daysBetween(a: string, b: string): number {
-  const da = new Date(a + "T00:00:00Z");
-  const db = new Date(b + "T00:00:00Z");
-  return Math.round((db.getTime() - da.getTime()) / (1000 * 60 * 60 * 24));
-}
-
-function addDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function fuzzInterval(days: number): number {
-  if (days < 3) return days;
-  const delta = Math.max(1, Math.round(days * 0.05));
-  return days + Math.floor(Math.random() * (2 * delta + 1)) - delta;
-}
-
 export function formatInterval(days: number): string {
   if (days < 1) return "<1d";
   if (days === 1) return "1d";
@@ -111,60 +68,44 @@ export type ScheduleOptions = {
   fuzz?: boolean;
   /** Target recall at the due date; see `DEFAULT_RETENTION`. */
   retention?: number;
+  /**
+   * The card's key. With it, fuzz is seeded from the key and the review count,
+   * exactly as replay seeds it; without it, fuzz is `Math.random`.
+   */
+  key?: string;
 };
 
 export function updatePerformance(
   perf: Performance,
   grade: Grade,
   reviewedAt: string,
-  { fuzz = false, retention = DEFAULT_RETENTION }: ScheduleOptions = {}
+  { fuzz = false, retention = DEFAULT_RETENTION, key }: ScheduleOptions = {}
 ): ReviewedPerformance {
   // Days are local days, as `todayStr` — and so the due list — counts them.
   // These used to be the UTC date of the timestamp: reviewing after midnight
   // in Europe landed on the day before, and two reviews either side of local
   // midnight could count as the same day.
   const today = localDay(new Date(reviewedAt));
-  const elapsed =
-    perf.type === "new"
-      ? 0
-      : Math.max(0, daysBetween(localDay(new Date(perf.lastReviewedAt)), today));
-
-  const { stability, difficulty } = algorithm.next_state(
+  const prior =
     perf.type === "new"
       ? null
-      : { stability: perf.stability, difficulty: perf.difficulty },
-    elapsed,
-    grade
-  );
+      : {
+          stability: perf.stability,
+          difficulty: perf.difficulty,
+          lastDay: localDay(new Date(perf.lastReviewedAt)),
+          reviewCount: perf.reviewCount,
+        };
 
-  // Retention moves the due date only. Stability and difficulty are what the
-  // review taught us about the card, and they do not depend on when we chose
-  // to ask again.
-  //
-  // No cap beyond the model's own (stability tops out at 100 years). There
-  // was a 256-day one, which only ever meant a card known cold came back every
-  // eight months whether or not it needed to.
-  //
-  // A pass is never due again the same day. Only a lapse may be: that is what
-  // lets a card you failed come back in a later drill today. This was 0 for
-  // everything, and a weak card that was passed the same day kept rounding to
-  // 0 — under FSRS-5 it could not escape at all (the April "stuck card"), and
-  // under FSRS-6 a forgotten card still took seven same-day passes to leave.
-  // Anki draws the same line: minutes are for learning steps, which here is
-  // the drill bringing a card round again, and a graduated card is a day out.
-  const intervalRaw = interval(retention, stability);
-  let intervalDays = Math.round(intervalRaw);
-  if (fuzz) intervalDays = fuzzInterval(intervalDays);
-  intervalDays = Math.max(grade === Grade.Forgot ? 0 : 1, intervalDays);
+  const next = step(prior, grade, today, { fuzz, retention, key });
 
   return {
     type: "reviewed",
     lastReviewedAt: reviewedAt,
-    stability,
-    difficulty,
-    intervalRaw,
-    intervalDays,
-    dueDate: addDays(today, intervalDays),
-    reviewCount: (perf.type === "new" ? 0 : perf.reviewCount) + 1,
+    stability: next.stability,
+    difficulty: next.difficulty,
+    intervalRaw: next.intervalRaw,
+    intervalDays: next.intervalDays,
+    dueDate: next.dueDate,
+    reviewCount: next.reviewCount,
   };
 }

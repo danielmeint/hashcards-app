@@ -554,6 +554,8 @@ button.row, a.row, summary.row { cursor: pointer; }
   .welcome-view { gap: 18px; }
   .welcome-hero { padding: 12px 4px 10px; }
   .welcome-path { padding: 20px 22px; }
+  /* A full-width button across a 680px panel reads as a banner, not a control. */
+  .welcome-path .btn-block { align-self: flex-start; width: auto; min-width: 260px; }
 }
 
 /* ===== Demo ===== */

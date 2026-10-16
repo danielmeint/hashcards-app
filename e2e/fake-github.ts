@@ -83,20 +83,34 @@ export class FakeGitHub {
     this.mainCommits.push(commit.message ?? "");
   }
 
-  /** Give the app a signed-in PAT user configured for this repo. */
-  async install(page: Page): Promise<void> {
-    await page.addInitScript((repos) => {
-      // Only on the first load: a reload is the app's own state, not ours.
-      if (localStorage.getItem("repos")) return;
-      localStorage.setItem("github_pat", "fake-token");
-      localStorage.setItem("repos", JSON.stringify(repos));
-    }, [this.config]);
+  /**
+   * Give the app a signed-in PAT user configured for this repo. With
+   * `signedIn: false` only the network is faked, and the page starts signed
+   * out until `signIn` is called.
+   */
+  async install(page: Page, { signedIn = true } = {}): Promise<void> {
+    if (signedIn) {
+      await page.addInitScript((repos) => {
+        // Only on the first load: a reload is the app's own state, not ours.
+        if (localStorage.getItem("repos")) return;
+        localStorage.setItem("github_pat", "fake-token");
+        localStorage.setItem("repos", JSON.stringify(repos));
+      }, [this.config]);
+    }
     await page.route("https://api.github.com/**", (route) => this.handle(route));
     // Behaves as a private repository does: an <img> cannot authenticate.
     await page.route("https://raw.githubusercontent.com/**", (route) => {
       this.rawRequests.push(route.request().url());
       return route.fulfill({ status: 404, headers: { "access-control-allow-origin": "*" } });
     });
+  }
+
+  /** Sign in now, as the init script would have: takes effect on the next load. */
+  async signIn(page: Page): Promise<void> {
+    await page.evaluate((repos) => {
+      localStorage.setItem("github_pat", "fake-token");
+      localStorage.setItem("repos", JSON.stringify(repos));
+    }, [this.config]);
   }
 
   private async handle(route: Route): Promise<void> {

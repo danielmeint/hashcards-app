@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { test, expect, type FakeGitHub } from "./fake-github";
+import { test, expect, FakeGitHub } from "./fake-github";
 
 /**
  * The responsive tour (PLAN-1.0 M8): every screen at a phone, a small phone, an
@@ -276,6 +276,54 @@ async function tour(page: Page, github: FakeGitHub, tag: string): Promise<void> 
   await expect(page.locator(".deck-list-view")).toBeVisible();
 }
 
+/**
+ * The welcome, signed out, and the demo it leads to: the bar above every
+ * screen must not push the review's controls off the bottom.
+ */
+async function onboardingTour(page: Page, tag: string): Promise<void> {
+  await new FakeGitHub({ owner: "someone", repo: "cards", branch: "main" }).install(page, {
+    signedIn: false,
+  });
+  await page.goto("/");
+  await expect(page.locator(".welcome-view")).toBeVisible();
+  await check(
+    page,
+    `${tag}-welcome`,
+    [
+      page.locator("#settings-btn"),
+      page.locator("#demo-btn"),
+      page.locator("#template-link"),
+      page.locator("#signin-btn"),
+      page.locator("#existing-btn"),
+    ],
+    true
+  );
+
+  await page.locator("#demo-btn").click();
+  await expect(page.locator("#drill-all")).toBeVisible();
+  await check(page, `${tag}-demo-today`, [
+    page.locator(".demo-bar"),
+    page.locator("#demo-exit"),
+    page.locator("#drill-all"),
+    page.locator("#settings-btn"),
+  ]);
+  await page.locator("#drill-all").click();
+  await check(page, `${tag}-demo-question`, [
+    page.locator(".demo-bar"),
+    page.locator("#end-btn"),
+    page.locator("#reveal-btn"),
+  ]);
+  await page.locator("#reveal-btn").click();
+  await check(page, `${tag}-demo-answer`, [
+    page.locator(".demo-bar"),
+    page.locator(".card-container .card"),
+    ...(await page.locator(".grade-btn").all()),
+  ]);
+  await page.locator("#end-btn").click();
+  await page.locator("#settings-btn").click();
+  await check(page, `${tag}-demo-settings`, [page.locator("#demo-own"), page.locator("#theme")], true);
+}
+
 const today = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -297,6 +345,13 @@ for (const project of Object.keys(WIDTHS)) {
           expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(
             scheme === "dark" ? "rgb(17, 19, 23)" : "rgb(247, 247, 245)"
           );
+        });
+      }
+
+      for (const scheme of ["light", "dark"] as Scheme[]) {
+        test(`the welcome and the demo fit, ${scheme}`, async ({ page }) => {
+          await page.emulateMedia({ colorScheme: scheme });
+          await onboardingTour(page, `${project}-${width}-${scheme}`);
         });
       }
 

@@ -4,7 +4,7 @@ The plan for turning hashcards from "a phone front-end for the hashcards CLI's
 format" into a standalone spaced-repetition tool, and the one Daniel uses for
 everything, Anki included.
 
-`ROADMAP.md` is the history of how the app got here (Phases 1–6). This file is
+[`docs/history/ROADMAP.md`](docs/history/ROADMAP.md) is the history of how the app got here (Phases 1–6). This file is
 what comes next. Where they disagree, this one wins.
 
 Status lives in the [Tracker](#tracker) at the end. Update it as work lands.

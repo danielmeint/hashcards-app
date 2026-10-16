@@ -8,6 +8,7 @@ import {
   getBlobText,
   getConfig,
   getTree,
+  getRepos,
   repoKey,
   updateRef,
 } from "./github";
@@ -24,7 +25,7 @@ import {
   updatePulledFiles,
 } from "./db";
 import { ReviewLogEvent, parseFile, serializeEvent } from "./core/events";
-import { deviceId, monthFiles, parseMonthFilePath, reviewEvent } from "./review-log";
+import { deviceId, monthFiles, parseMonthFilePath, renameDevice, reviewEvent } from "./review-log";
 import { replayOptions } from "./review-state";
 import { fingerprint } from "./core/replay";
 
@@ -81,6 +82,7 @@ export async function pullDataBranch(
   }
 
   const listing = head === null ? { sha: null, entries: [] } : await getTree(config, head);
+  await checkOwnFiles(config, listing.entries);
   const device = deviceId();
   const theirs = listing.entries.filter((e) => {
     const name = e.type === "blob" ? parseMonthFilePath(e.path) : null;
@@ -133,6 +135,67 @@ export async function pullDataBranch(
   const tip: BranchTip = { head, tree: listing.sha };
   await setMeta(tipKey(repo), tip);
   return { tip, fresh, invalid };
+}
+
+/**
+ * Make sure this device is the only writer of the files under its name.
+ *
+ * A device writes its files whole, from its local log, and never reads them
+ * back. That is safe only while nothing else writes them — and two things can:
+ * a second browser carrying the same name (a restored backup, a copied
+ * profile), and this same browser after losing its IndexedDB but not its
+ * `localStorage`. Either way the next push would overwrite reviews this device
+ * has never seen.
+ *
+ * So before pulling, each of its files on the branch is compared with what it
+ * last pushed there. Only one that differs is downloaded, and if it holds a
+ * line this device neither pushed nor has, this device takes a new name. Its
+ * old files then belong to "another device": they are pulled like any other,
+ * never written again, and every review in them is kept. This device's own
+ * reviews go into files under the new name; any that were also in the old
+ * files are the same lines, which every reader applies once.
+ */
+async function checkOwnFiles(
+  config: GitHubConfig,
+  entries: { path: string; sha: string; type: string }[]
+): Promise<void> {
+  const repo = repoKey(config);
+  const device = deviceId();
+  const own = entries.filter((e) => e.type === "blob" && parseMonthFilePath(e.path)?.device === device);
+  if (own.length === 0) return;
+  const pushed = (await getMeta<Record<string, string>>(pushedKey(repo))) ?? {};
+  let mine: Set<string> | null = null;
+  for (const entry of own) {
+    const base = pushed[entry.path];
+    if (base !== undefined && (await gitBlobSha(base)) === entry.sha) continue;
+    mine ??= new Set([...(await ownFiles(repo)).values()].flatMap(lines));
+    const known = new Set([...mine, ...lines(base ?? "")]);
+    const { events } = parseFile(await getBlobText(config, entry.sha));
+    const foreign = events.map(serializeEvent).filter((line) => !known.has(line));
+    if (foreign.length === 0) continue;
+    const renamed = renameDevice();
+    console.warn(
+      `${repo} ${entry.path}: ${foreign.length} review(s) this device did not write. ` +
+        `Another writer shares the name ${device}; this device is now ${renamed}.`
+    );
+    // Nothing is pushed under the new name yet, and nothing under the old one
+    // may be touched again — including deleting a month file that "went away".
+    for (const r of getRepos()) await setMeta(pushedKey(repoKey(r)), undefined);
+    return;
+  }
+}
+
+const lines = (text: string) => text.split("\n").filter((l) => l.trim() !== "");
+
+/** Git's name for a blob with this content, to tell an unchanged file without fetching it. */
+export async function gitBlobSha(text: string): Promise<string> {
+  const body = new TextEncoder().encode(text);
+  const header = new TextEncoder().encode(`blob ${body.length}\0`);
+  const bytes = new Uint8Array(header.length + body.length);
+  bytes.set(header);
+  bytes.set(body, header.length);
+  const digest = await crypto.subtle.digest("SHA-1", bytes);
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** This device's events for this collection's log, as the files they go in. */

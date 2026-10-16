@@ -39,12 +39,17 @@ export { REVIEWS_DIR, monthOf, monthFilePath, parseMonthFilePath, monthFiles };
 
 /** A short random name for this device, made once and kept. */
 export function deviceId(): string {
-  let id = settings.deviceId.get();
-  if (!id) {
-    const bytes = crypto.getRandomValues(new Uint8Array(4));
-    id = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-    settings.deviceId.set(id);
-  }
+  return settings.deviceId.get() ?? renameDevice();
+}
+
+/**
+ * A new name for this device, for when another writer turns out to share the
+ * old one (`data-branch.ts`). Returns it.
+ */
+export function renameDevice(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(4));
+  const id = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  settings.deviceId.set(id);
   return id;
 }
 

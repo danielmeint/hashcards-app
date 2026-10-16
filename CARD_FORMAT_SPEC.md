@@ -451,6 +451,23 @@ collection's behalf, so that no device ever treats their files as its own:
 | `anki` | `hc import anki` | an Anki collection's review log, `src: "anki"` |
 | `hc` | `hc migrate`, `hc relink` | `link` events |
 
+A writer rewrites its own files whole and nobody else's. Two rules keep that
+safe when devices do not know each other's latest state:
+
+- **The same line is one event.** A line found in two files, or twice in one,
+  is applied and counted once. Two different reviews cannot serialise to the
+  same line: it would take the same card, grade, duration and millisecond.
+- **A device that finds a line under its name that it did not write takes a
+  new name.** That happens to a browser restored from a backup or copied with
+  its profile, and to one that lost its local log but kept its name. The old
+  files are then read like any other device's and never written again, so no
+  review is overwritten. Reviews the device had already pushed are written
+  again under the new name, and the first rule counts them once.
+
+Reviews are dated by the server's clock, not the device's. The app measures
+the difference on every sync and corrects by it, offline too, because review
+order and the gaps between reviews are what the schedule is computed from.
+
 ### Version 1 hashes
 
 Version 1 keyed cards by a different hash, which logs written by version 1

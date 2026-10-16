@@ -41,6 +41,8 @@ import {
 } from "./collection-settings";
 import { CONFLICT_RETRIES, migrationHint, pullV1, pushV1, v1Files } from "./compat";
 import { pullDataBranch, pushDataBranch } from "./data-branch";
+import { skewNotice } from "./clock";
+import { measureClock } from "./clock-sync";
 import { refreshStates } from "./review-state";
 import { settings } from "./settings";
 import { applyPending, pendingOps } from "./inbox-queue";
@@ -187,6 +189,12 @@ async function runSync(
   try {
     const repos = scope.all ?? [config];
     const notices: string[] = [];
+
+    // Before anything is dated: reviews graded from here on carry the
+    // corrected time, and a clock far off is said once per sync.
+    await measureClock();
+    const skew = skewNotice();
+    if (skew) notices.push(skew);
 
     // Inbox decisions made offline, or left behind by a closed app, go first:
     // they are the user's own, and the listing below then finds them landed.

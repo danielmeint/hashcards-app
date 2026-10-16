@@ -29,6 +29,7 @@ import { pendingOps } from "../inbox-queue";
 import { findDrafts } from "../draft-edits";
 import { icon } from "./icons";
 import { isDemo } from "../demo-mode";
+import { now } from "../clock";
 
 /**
  * Today: how much is due, one button to review it, and the decks as filters
@@ -410,7 +411,7 @@ export async function renderDeckList(
     }`;
     return html`<section class="hero">
       <div class="hero-text">
-        <p class="hero-date">${dateLabel(new Date())}</p>
+        <p class="hero-date">${dateLabel(now())}</p>
         <p class="hero-count">
           <span class="hero-number">${totalDue}</span>
           <span>${totalDue === 1 ? "card due" : "cards due"}</span>
@@ -438,7 +439,7 @@ export async function renderDeckList(
     const max = Math.max(1, ...model.comingUp.map((d) => d.count));
     const tomorrow = model.comingUp[0]?.count ?? 0;
     return html`<section class="hero hero-done all-caught-up">
-      <p class="hero-date">${dateLabel(new Date())}</p>
+      <p class="hero-date">${dateLabel(now())}</p>
       <div class="caught-up">
         <span class="done-badge">${icon("check", 24)}</span>
         <h1>All caught up</h1>
@@ -761,7 +762,7 @@ async function load(): Promise<Model> {
   );
 
   // Local midnight, as an instant: the review log is keyed by ISO timestamp.
-  const midnight = new Date();
+  const midnight = now();
   midnight.setHours(0, 0, 0, 0);
   const reviewedToday = new Set(
     (await getReviewsSince(midnight.toISOString())).map((r) => r.cardHash)

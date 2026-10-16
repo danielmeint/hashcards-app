@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { test as base, type Page, type Route } from "@playwright/test";
 
 export type FakeRepoConfig = { owner: string; repo: string; branch: string };
@@ -152,7 +153,11 @@ export class FakeGitHub {
       const next = new Map(body.base_tree ? this.trees.get(body.base_tree) : []);
       for (const entry of body.tree) {
         if (entry.content !== undefined) {
-          const sha = `blob-${++this.shas}`;
+          // A real blob SHA: the app compares them with its own (`gitBlobSha`).
+          const sha = createHash("sha1")
+            .update(`blob ${Buffer.byteLength(entry.content)}\0`)
+            .update(entry.content)
+            .digest("hex");
           this.blobs.set(sha, entry.content);
           next.set(entry.path, sha);
         } else if (entry.sha === null) next.delete(entry.path);

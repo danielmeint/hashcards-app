@@ -19,6 +19,7 @@ import { getConfig, getDesiredRetention, getIntervalFuzz } from "../../github";
 import { recordIntroduced } from "../../new-card-budget";
 import { syncStateOnly } from "../../sync";
 import { haptic } from "../../haptics";
+import { now } from "../../clock";
 
 /**
  * A drill in progress: the queue, the undo stack, and the writes that make each
@@ -190,7 +191,7 @@ export async function createSession(
   // correction, and a resumed drill starts with a clean one.
   const completedHashes = new Set<string>(resume?.completed ?? []);
   const undoStack: UndoEntry[] = [];
-  const startedAt = resume?.startedAt ?? new Date().toISOString();
+  const startedAt = resume?.startedAt ?? now().toISOString();
   let totalCards = resume?.totalCards ?? queue.length;
 
   const reviews: Review[] = [];
@@ -293,7 +294,7 @@ export async function createSession(
       if (!revealed) return;
       haptic();
 
-      const reviewedAt = new Date().toISOString();
+      const reviewedAt = now().toISOString();
       const card = queue.shift()!;
       const key = stateKey(card);
       const target = logTarget(card);
@@ -497,10 +498,10 @@ export async function createSession(
       const card = queue[0];
       if (!card) return [];
       const perf = cache.get(stateKey(card))!;
-      const now = new Date().toISOString();
+      const at = now().toISOString();
       return [Grade.Forgot, Grade.Hard, Grade.Good, Grade.Easy].map((grade) =>
         formatInterval(
-          updatePerformance(perf, grade, now, { retention }).intervalDays
+          updatePerformance(perf, grade, at, { retention }).intervalDays
         )
       );
     },

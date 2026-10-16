@@ -95,6 +95,21 @@ describe("reading history from the hashcards-data branch", () => {
     expect(out.new).toMatchObject({ introducedToday: 1, count: 1, perDay: 2, unseen: 3 });
   });
 
+  it("counts a line that is in two files once", async () => {
+    // A device that took a new name leaves its reviews under both names.
+    const once = v2Repo();
+    const twice = makeRepo({ "deck.md": DECK, "hashcards.toml": "[review]\nnew_per_day = 1\n" });
+    gitInit(twice);
+    makeDataBranch(twice, { "2026-10.dev1.jsonl": LOG, "2026-10.dev9.jsonl": LOG });
+    for (const args of [["stats"], ["leeches"], ["due"]]) {
+      const run = (repo: string) => hc([...args, "--json", "--repo", repo, "--date", "2026-10-30"]);
+      const [a, b] = [(await run(once)).json(), (await run(twice)).json()];
+      delete a.history;
+      delete b.history;
+      expect(b).toEqual(a);
+    }
+  });
+
   it("reads the remote branch when the local one is only behind it", async () => {
     const repo = v2Repo();
     // Another device pushed since this clone last updated its local branch.

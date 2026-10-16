@@ -1,5 +1,6 @@
 import { Grade, Performance, ReviewedPerformance } from "./types";
 import { DEFAULT_RETENTION, step } from "./core/schedule";
+import { now } from "./clock";
 
 /**
  * Scheduling: FSRS-6, through the reference TypeScript implementation.
@@ -51,7 +52,7 @@ export function localDay(at: Date = new Date()): string {
 }
 
 export function todayStr(): string {
-  return localDay();
+  return localDay(now());
 }
 
 export function formatInterval(days: number): string {

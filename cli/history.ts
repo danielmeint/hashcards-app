@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseFile as parseLog } from "../src/core/events";
+import { parseFile as parseLog, serializeEvent } from "../src/core/events";
 import type { BaselineEvent, LinkEvent, ReviewLogEvent, ScheduleEvent } from "../src/core/events";
 import { replay, resolveLinks } from "../src/core/replay";
 import type { CardState } from "../src/core/replay";
@@ -134,7 +134,17 @@ export function loadRawHistory(
       }
       return readLog(`${DATA_BRANCH}:${path}`, text);
     });
-    return { events, source: { kind: "data-branch", ref, files: paths.length }, warnings };
+    // The same line in two files is one event, applied once — as replay and
+    // the app do. A device that took a new name (`checkOwnFiles` in the app)
+    // leaves its reviews under both.
+    const seen = new Set<string>();
+    const unique = events.filter((e) => {
+      const line = serializeEvent(e);
+      if (seen.has(line)) return false;
+      seen.add(line);
+      return true;
+    });
+    return { events: unique, source: { kind: "data-branch", ref, files: paths.length }, warnings };
   }
 
   // v1: the log first, so baselines can borrow the grade of the review they

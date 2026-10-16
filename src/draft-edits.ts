@@ -7,10 +7,10 @@ import { spliceLines } from "./card-edit-text";
  *
  * A draft is a card block with a `Status: draft` line among its metadata.
  * Curating it is one of three edits to the file it sits in — keep it (the line
- * goes, and it gets an ID if it had none), discard it (the block goes), or
- * rewrite it — and each of them changes the lines of that one block and
- * nothing else. The file is someone's, often an agent's; a diff that touches
- * anything outside the block is a diff nobody wants to review.
+ * goes), discard it (the block goes), or rewrite it — and each of them changes
+ * the lines of that one block and nothing else. The file is someone's, often
+ * an agent's; a diff that touches anything outside the block is a diff nobody
+ * wants to review.
  *
  * Blocks are found by the content hashes of their cards, not by line number.
  * Hashes are what a queued change can still recognise after the file has moved

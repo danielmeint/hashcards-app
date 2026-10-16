@@ -2,6 +2,7 @@ import { getRepos } from "./github";
 import { completeSignIn } from "./auth";
 import { syncEverything, loadCachedCards } from "./sync";
 import { startAutoSync } from "./auto-sync";
+import { loadClockOffset } from "./clock-sync";
 import { adoptLegacySyncTimestamp } from "./sync-state";
 import { renderSettings } from "./views/settings";
 import { renderDeckList } from "./views/deck-list";
@@ -102,6 +103,8 @@ async function navigate(
 }
 
 async function init() {
+  // Before anything is dated or "today" decided (`clock.ts`).
+  loadClockOffset();
   // The demo and the real app cannot share a page: the demo swaps out storage
   // before anything reads it (`demo-mode.ts`). So crossing between them, by
   // the welcome's button or by editing the URL, is a reload.

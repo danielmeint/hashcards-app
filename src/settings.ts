@@ -1,6 +1,6 @@
 import type { Theme } from "./theme";
 import type { RepoConfig } from "./github";
-import { DEFAULT_RETENTION, MAX_RETENTION, MIN_RETENTION } from "./fsrs";
+import { DEFAULT_RETENTION, MAX_RETENTION, MIN_RETENTION } from "./core/schedule";
 import { keyValueStore } from "./demo-mode";
 
 /**
@@ -139,6 +139,8 @@ export const settings = {
   /** Names this device's review-log files, so no two devices write one file. */
   deviceId: setting("device_id", optionalText),
   lastPushedAt: setting("last_pushed_at", optionalText),
+  /** The server's clock minus this device's, in ms; 0 when they agree (`clock.ts`). */
+  clockOffsetMs: setting("clock_offset_ms", count(0)),
   /**
    * Collection settings changed on this device and not yet written to the
    * collection's `hashcards.toml` — by name, so a sync writes those and keeps

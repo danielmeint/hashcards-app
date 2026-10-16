@@ -25,6 +25,7 @@ import {
 import { deckNameFor, exclusive, loadCachedCards, loadCards } from "./sync";
 import { logTarget } from "./review-log";
 import { refreshStates } from "./review-state";
+import { now } from "./clock";
 
 /**
  * Editing a card in the app rather than on GitHub.
@@ -276,7 +277,7 @@ async function carryHistory(before: Card[], after: Card[]): Promise<number> {
     // Both cards are in one file, so in one log; a link across logs would
     // never be read where the history is.
     if (source.log !== target.log) continue;
-    const at = new Date().toISOString();
+    const at = now().toISOString();
     baselines.push({
       log: target.log,
       event: {

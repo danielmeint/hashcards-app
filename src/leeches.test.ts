@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Card, Grade, Review } from "./types";
-import { cardSummary, findLeeches, isRecovering } from "./leeches";
+import { cardSummary, findLeeches, isRecovering, isReverse } from "./leeches";
+import { parseFile } from "./parser";
 
 /**
  * The review log has only ever been aggregated — counts, retention, a heatmap.
@@ -153,5 +154,14 @@ describe("identifying a card in a list", () => {
       content: { type: "cloze", text, start, end },
     };
     expect(cardSummary(card)).toBe("Die […] ist wichtig.");
+  });
+});
+
+describe("isReverse", () => {
+  it("tells a reverse card from its forward card, and from a plain one", async () => {
+    const [forward, reverse] = await parseFile("Reverse: yes\nQ: la sobremesa\nA: talk after a meal\n", "es.md", "Spanish");
+    const [plain] = await parseFile("Q: a\nA: b\n", "p.md", "P");
+    const [cloze] = await parseFile("C: The [hard] one.\n", "c.md", "C");
+    expect([forward, reverse, plain, cloze].map(isReverse)).toEqual([false, true, false, false]);
   });
 });

@@ -6,6 +6,7 @@ import { typeset } from "../../typeset";
 import { attachCardGestures } from "./gestures";
 import { Session } from "./session";
 import { icon } from "../icons";
+import { formatInterval } from "../../fsrs";
 
 /**
  * The drill's DOM.
@@ -158,6 +159,9 @@ export function createView(
     // Cheap arithmetic, so computed up front rather than at reveal — by the
     // time the grades appear there is nothing left to do.
     const previews = session.previews();
+    // Which button the last grade came from, said back: the reveal button
+    // flashes its colour, and on a phone the hint line names it.
+    const graded = session.lastGraded;
 
     return html`<div class="root drill">
       <header class="drill-bar header">
@@ -215,6 +219,7 @@ export function createView(
           id="reveal-btn"
           class="btn btn-primary btn-lg reveal-btn"
           type="button"
+          data-graded=${graded ? graded.grade : nothing}
           ?hidden=${revealed}
           @click=${() => session.reveal()}
         >Show answer<kbd>Space</kbd></button>
@@ -236,7 +241,11 @@ export function createView(
         </div>
         <p class="controls-hint" aria-hidden="true">
           <span class="hint-idle"
-            >${revealed ? "tap the card for Good, or swipe" : "or tap the card"}</span
+            >${graded && !revealed
+              ? html`<span class="graded" data-grade=${graded.grade}
+                  >${GRADES.find(([g]) => g === graded.grade)![1]} · ${formatInterval(graded.intervalDays)}</span
+                >`
+              : revealed ? "tap the card for Good, or swipe" : "or tap the card"}</span
           ><span class="hint-reveal">Release to show the answer</span
           ><span class="hint-good">Release to grade Good</span
           ><span class="hint-forgot">Release to grade Forgot</span>

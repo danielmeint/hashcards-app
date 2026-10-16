@@ -1,5 +1,5 @@
 import { Card, Grade } from "./types";
-import { stateKey } from "./card-key";
+import { hashKey, stateKey } from "./card-key";
 
 /**
  * Cards that keep failing.
@@ -120,4 +120,14 @@ export function cardSummary(card: Card): string {
 
 function collapse(text: string): string {
   return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Whether this is the answer→question card a `Reverse: yes` block adds. Each
+ * direction is a card of its own, with its own schedule and history, so both
+ * can be leeches and each is listed; the reverse is marked, because its
+ * question is the block's answer and the editor opens the whole block.
+ */
+export function isReverse(card: Pick<Card, "content" | "key" | "familyHash">): boolean {
+  return card.content.type === "basic" && card.key !== hashKey(card.familyHash);
 }

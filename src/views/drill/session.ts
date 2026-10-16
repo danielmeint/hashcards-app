@@ -63,6 +63,12 @@ export type Session = {
    * rendered content, and an edit changes that without changing the key.
    */
   readonly undoTarget: string | null;
+  /**
+   * The grade just given and the interval it set, for the view to confirm
+   * which button the thumb actually hit. Null before the first grade and
+   * after an undo.
+   */
+  readonly lastGraded: { grade: Grade; intervalDays: number } | null;
 
   reveal(): void;
   grade(grade: Grade): void;
@@ -243,6 +249,8 @@ export async function createSession(
   // resumes this card set rather than reshuffling into a different one.
   savePosition();
 
+  let lastGraded: Session["lastGraded"] = null;
+
   const session: Session = {
     get current() {
       const card = queue[0] ?? null;
@@ -278,6 +286,9 @@ export async function createSession(
     },
     get writeFailed() {
       return writeFailed;
+    },
+    get lastGraded() {
+      return lastGraded;
     },
     get undoTarget() {
       const entry = undoStack[undoStack.length - 1];
@@ -361,6 +372,7 @@ export async function createSession(
       }
 
       reviews.push(review);
+      lastGraded = { grade, intervalDays: newPerf.intervalDays };
 
       const undoEntry: UndoEntry = {
         key,
@@ -397,6 +409,7 @@ export async function createSession(
       const key = entry.key;
 
       reviews.pop();
+      lastGraded = null;
 
       if (entry.grade === Grade.Forgot) {
         const idx = queue.findLastIndex((c) => stateKey(c) === key);

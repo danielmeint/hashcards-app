@@ -366,6 +366,27 @@ button.row, a.row, summary.row { cursor: pointer; }
 .controls-hint { height: 20px; font-size: 13px; line-height: 20px; text-align: center; color: var(--muted); }
 .hint-good, .hint-forgot, .hint-reveal { display: none; }
 
+/*
+ * Which button the last grade came from, said back where the thumb is, so a
+ * slip onto Easy is noticed (and undone) at once. Neither moves anything: the
+ * line replaces the hint's text, the flash is a colour on a button already there.
+ */
+.graded { font-weight: 600; }
+.graded::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 2px; background: currentColor; vertical-align: 0; }
+.graded[data-grade="1"] { color: var(--g1-fg); }
+.graded[data-grade="2"] { color: var(--g2-fg); }
+.graded[data-grade="3"] { color: var(--g3-fg); }
+.graded[data-grade="4"] { color: var(--g4-fg); }
+@keyframes graded-flash {
+  from { background: var(--flash-bg); color: var(--flash-fg); box-shadow: inset 0 0 0 2px var(--flash-line); }
+}
+.reveal-btn[data-graded] { animation: graded-flash 0.8s ease-out; }
+.reveal-btn[data-graded="1"] { --flash-bg: var(--g1-bg); --flash-fg: var(--g1-fg); --flash-line: var(--g1-line); }
+.reveal-btn[data-graded="2"] { --flash-bg: var(--g2-bg); --flash-fg: var(--g2-fg); --flash-line: var(--g2-line); }
+.reveal-btn[data-graded="3"] { --flash-bg: var(--g3-bg); --flash-fg: var(--g3-fg); --flash-line: var(--g3-line); }
+.reveal-btn[data-graded="4"] { --flash-bg: var(--g4-bg); --flash-fg: var(--g4-fg); --flash-line: var(--g4-line); }
+@media (prefers-reduced-motion: reduce) { .reveal-btn[data-graded] { animation: none; } }
+
 /* Mid-swipe: the grade it would give is the only one left standing. */
 .drill:has(.swipe-hint:not([hidden])) .hint-idle { display: none; }
 .drill:has(.revealable .swipe-hint:not([hidden])) .hint-reveal,

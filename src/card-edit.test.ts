@@ -629,6 +629,30 @@ C: The capital of [Norway] is [Oslo].
     ]);
   });
 
+  it("links a reversed block's two directions each to its own new self", async () => {
+    const text = "Reverse: yes\nQ: la sobremesa\nA: talk after a meal\n";
+    const { readCardSource, commitCardEdit, db, sync } = await freshEdit("es.md", text);
+    const before = await sync.loadCachedCards();
+    expect(before).toHaveLength(2);
+    for (const card of before) await giveHistory(card);
+    // Opened from the reverse, as the leech list does.
+    const source = await readCardSource(before[1]);
+
+    const result = await commitCardEdit(
+      before[1],
+      source,
+      "Reverse: yes\nQ: la sobremesa\nA: the talk at the table after a meal\n",
+      { keepScheduling: true }
+    );
+
+    expect(result.card).toBe(result.cards[1]);
+    const links = (await db.getLocalBaselines()).map((b) => b.event).filter((e) => e.kind === "link");
+    expect(links.map((l) => l.kind === "link" && [l.from, l.card])).toEqual([
+      [before[0].key, result.cards[0].key],
+      [before[1].key, result.cards[1].key],
+    ]);
+  });
+
   it("takes the metadata with it when the card is deleted", async () => {
     const { readCardSource, commitCardEdit, sync } = await freshEdit("v2.md", V2);
     const card = (await sync.loadCachedCards())[0];

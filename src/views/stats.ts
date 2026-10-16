@@ -8,6 +8,7 @@ import {
   Leech,
   cardSummary,
   findLeeches,
+  isReverse,
   isRecovering,
 } from "../leeches";
 import { getConfig, getDesiredRetention } from "../github";
@@ -459,6 +460,7 @@ function leechRow(
 ): TemplateResult {
   const rate = Math.round((leech.lapses / leech.reviews) * 100);
   const meta =
+    (isReverse(leech.card) ? "Reverse · " : "") +
     `${leech.lapses} of ${leech.reviews} reviews failed (${rate}%)` +
     ` · last ${formatSyncAge(leech.lastLapseAt)}` +
     (leech.streak > 0 ? ` · ${leech.streak} right since` : "");

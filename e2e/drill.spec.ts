@@ -36,6 +36,25 @@ test("revealing the answer does not move the card", async ({ page, github }) => 
   expect([await card.boundingBox(), await question.boundingBox()]).toEqual(before);
 });
 
+test("a grade is said back: which button, and the interval it set", async ({ page, github }) => {
+  github.set("Capitals.md", deck("Japan", "Peru"));
+  await page.goto("/");
+  await page.locator("#drill-all").click();
+  await page.locator("#reveal-btn").click();
+  await page.locator('.grade-btn[data-grade="4"]').click();
+
+  await expect(page.locator("#reveal-btn")).toHaveAttribute("data-graded", "4");
+  await expect(page.locator(".controls-hint .graded")).toHaveText(/^Easy · \d+d$/);
+  // Shown until the next answer is, then the usual hint.
+  await page.locator("#reveal-btn").click();
+  await expect(page.locator(".controls-hint .graded")).toHaveCount(0);
+
+  // An undo takes it back: nothing graded to confirm.
+  await page.locator("#undo-btn").click();
+  await expect(page.locator("#reveal-btn")).not.toHaveAttribute("data-graded");
+  await expect(page.locator(".controls-hint .graded")).toHaveCount(0);
+});
+
 test("ending a drill saves its reviews to the data branch", async ({ page, github }) => {
   github.set("Capitals.md", deck("Japan", "Peru"));
   await page.goto("/");

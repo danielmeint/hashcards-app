@@ -9,8 +9,8 @@ export default defineConfig({
     __COMMIT_HASH__: JSON.stringify(commitHash),
   },
   test: {
-    // `e2e/` is Playwright's (`npm run e2e`), and needs a real browser.
-    exclude: ["e2e/**", "node_modules/**"],
+    // `e2e/` and the README screenshots are Playwright's, and need a real browser.
+    exclude: ["e2e/**", "scripts/screenshots/**", "node_modules/**"],
   },
   build: {
     outDir: "dist",

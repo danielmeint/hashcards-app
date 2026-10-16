@@ -2,6 +2,7 @@ import { Card } from "./types";
 import { getAccessToken, loadCredential, recordLogin, refreshCredential } from "./auth";
 import { legacy, settings } from "./settings";
 import { mediaType } from "./media";
+import { DemoOfflineError, demoFiles, isDemo } from "./demo-mode";
 
 /**
  * Which repository to read cards from. Deliberately carries no credential: the
@@ -166,6 +167,10 @@ export function setHapticFeedback(on: boolean): void {
  * is not worth showing anyone.
  */
 async function apiFetch(path: string, options?: RequestInit): Promise<Response> {
+  // The demo's repository is in memory (`demo-mode.ts`), and the few calls it
+  // answers do so above this. Anything that reaches here in the demo is a path
+  // that forgot about it, and must not find a real repository instead.
+  if (isDemo()) throw new DemoOfflineError();
   const send = (token: string) =>
     fetch(`https://api.github.com${path}`, {
       ...options,
@@ -341,6 +346,7 @@ export async function listMdFiles(
   config: GitHubConfig,
   etag?: string | null
 ): Promise<TreeListing> {
+  if (isDemo()) return demoListing();
   const res = await apiFetch(
     `/repos/${config.owner}/${config.repo}/git/trees/${config.branch}?recursive=1`,
     etag ? { headers: { "If-None-Match": etag } } : undefined
@@ -370,6 +376,18 @@ export async function listMdFiles(
   };
 }
 
+/** The demo's files as a fresh listing: always "changed", it is never asked twice. */
+function demoListing(): TreeListing {
+  const blobs = demoFiles.list().map((path) => ({ path, sha: demoFiles.read(path)!.sha }));
+  return {
+    changed: true,
+    files: blobs.filter((f) => f.path.endsWith(".md")),
+    media: blobs.filter((f) => mediaType(f.path) !== null),
+    blobs,
+    etag: null,
+  };
+}
+
 /**
  * A file's bytes, by blob SHA. The blobs API rather than contents: it has no
  * 1 MB ceiling, and asking for the raw media type skips the base64 round trip.
@@ -378,6 +396,11 @@ export async function getBlob(
   config: GitHubConfig,
   sha: string
 ): Promise<ArrayBuffer> {
+  if (isDemo()) {
+    const file = demoFiles.list().map((p) => demoFiles.read(p)!).find((f) => f.sha === sha);
+    if (!file) throw new Error(`No blob ${sha} in the demo.`);
+    return new TextEncoder().encode(file.text).buffer as ArrayBuffer;
+  }
   const res = await apiFetch(
     `/repos/${config.owner}/${config.repo}/git/blobs/${sha}`,
     { headers: { Accept: "application/vnd.github.raw" } }
@@ -401,6 +424,11 @@ export async function readFile(
   config: GitHubConfig,
   path: string
 ): Promise<FileRead> {
+  if (isDemo()) {
+    const file = demoFiles.read(path);
+    if (!file) throw new Error(`${path} is not in the demo.`);
+    return file;
+  }
   const res = await apiFetch(
     `/repos/${config.owner}/${config.repo}/contents/${encodePath(path)}?ref=${
       config.branch
@@ -421,6 +449,7 @@ export async function readFileIfPresent(
   config: GitHubConfig,
   path: string
 ): Promise<FileRead | null> {
+  if (isDemo()) return demoFiles.read(path);
   const res = await apiFetch(
     `/repos/${config.owner}/${config.repo}/contents/${encodePath(path)}?ref=${
       config.branch
@@ -450,6 +479,11 @@ export async function writeFile(
   text: string,
   options: { sha?: string; message: string }
 ): Promise<string> {
+  if (isDemo()) {
+    const sha = demoFiles.write(path, text, options.sha);
+    if (sha === null) throw new ConflictError(`${path} changed since it was read.`);
+    return sha;
+  }
   const data = await putContents(config, encodePath(path), {
     message: options.message,
     content: encodeBase64(text),
@@ -469,6 +503,10 @@ export async function deleteFile(
   sha: string,
   message: string
 ): Promise<void> {
+  if (isDemo()) {
+    if (!demoFiles.remove(path, sha)) throw new ConflictError(`${path} changed since it was read.`);
+    return;
+  }
   const res = await apiFetch(
     `/repos/${config.owner}/${config.repo}/contents/${encodePath(path)}`,
     {

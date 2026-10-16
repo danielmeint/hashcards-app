@@ -35,7 +35,7 @@ export async function renderDrill(
   ]);
 
   /**
-   * Whether the card in front of you can be edited at all. Demo cards are in no
+   * Whether the card in front of you can be edited at all. A dry run's cards are in no
    * repository, a collection can be removed while a drill is running, and a
    * subscription is someone else's repo — in each case the button would be a
    * promise the app cannot keep, so it is not offered, by button or by key.

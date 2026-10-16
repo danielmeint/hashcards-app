@@ -27,6 +27,7 @@ import { SyncNotice, syncNotice } from "../sync-notice";
 import { pendingOps } from "../inbox-queue";
 import { findDrafts } from "../draft-edits";
 import { icon } from "./icons";
+import { isDemo } from "../demo-mode";
 
 /**
  * Today: how much is due, one button to review it, and the decks as filters
@@ -336,6 +337,7 @@ export async function renderDeckList(
       <div class="brand">
         hashcards
         <button
+          ?hidden=${isDemo()}
           id="sync-btn"
           class="sync-dot"
           data-state=${state}

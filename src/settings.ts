@@ -1,6 +1,7 @@
 import type { Theme } from "./theme";
 import type { RepoConfig } from "./github";
 import { DEFAULT_RETENTION, MAX_RETENTION, MIN_RETENTION } from "./fsrs";
+import { keyValueStore } from "./demo-mode";
 
 /**
  * Everything this app keeps in `localStorage`, in one place.
@@ -38,15 +39,20 @@ export type Setting<T> = {
   remove(): void;
 };
 
+/**
+ * Through `keyValueStore()` rather than `localStorage` itself, asked on every
+ * access: in the demo it is a map in memory, so nothing the demo changes can
+ * reach the real install's settings (`demo-mode.ts`).
+ */
 function setting<T>(key: string, codec: Codec<T>): Setting<T> {
   return {
-    get: () => codec.read(localStorage.getItem(key)),
+    get: () => codec.read(keyValueStore().getItem(key)),
     set: (value) => {
       const raw = codec.write(value);
-      if (raw === null) localStorage.removeItem(key);
-      else localStorage.setItem(key, raw);
+      if (raw === null) keyValueStore().removeItem(key);
+      else keyValueStore().setItem(key, raw);
     },
-    remove: () => localStorage.removeItem(key),
+    remove: () => keyValueStore().removeItem(key),
   };
 }
 

@@ -7,16 +7,16 @@ import { BaselineEvent, ReviewLogEvent } from "./core/events";
 import { CardState, EventOrder } from "./core/replay";
 import { localDay } from "./fsrs";
 import { logLine, v1MonthOf, v1PushedKey } from "./v1-log";
+import { databaseName } from "./demo-mode";
 
-const DB_NAME = "hashcards";
 const DB_VERSION = 8;
-
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
 function getDb(): Promise<IDBPDatabase> {
   if (!dbPromise) {
-    dbPromise = openDB(DB_NAME, DB_VERSION, {
+    // Named by `demo-mode.ts`: the real database, or the demo's own.
+    dbPromise = openDB(databaseName(), DB_VERSION, {
       upgrade(db, oldVersion, _newVersion, tx) {
         if (!db.objectStoreNames.contains("performances")) {
           db.createObjectStore("performances", { keyPath: "hash" });
@@ -542,6 +542,19 @@ async function migrateToKeys(db: IDBPDatabase): Promise<void> {
   await tx.done;
 }
 
+
+/**
+ * Add reviews in bulk, as if graded here. Only the demo does this, for the
+ * history it makes up so Today and Statistics have something to show; the
+ * replay cache is left for `refreshStates` to bring into line.
+ */
+export async function importReviews(reviews: Review[]): Promise<void> {
+  if (reviews.length === 0) return;
+  const db = await getDb();
+  const tx = db.transaction("reviews", "readwrite");
+  for (const review of reviews) tx.store.add(review);
+  await tx.done;
+}
 
 export async function getAllReviews(): Promise<Review[]> {
   const db = await getDb();

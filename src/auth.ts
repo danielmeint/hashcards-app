@@ -1,6 +1,7 @@
 import { AUTH_API, GITHUB_APP, signInAvailable } from "./github-app";
 import { legacy } from "./settings";
 import { readCredential, writeCredential, deleteCredential } from "./db";
+import { DemoOfflineError, isDemo } from "./demo-mode";
 
 /**
  * How the app proves who it is to GitHub.
@@ -247,6 +248,8 @@ async function postJson(
   path: string,
   body: Record<string, unknown>
 ): Promise<TokenResponse> {
+  // No sign-in, or token refresh, from inside the demo: it has no account.
+  if (isDemo()) throw new DemoOfflineError();
   let res: Response;
   try {
     res = await fetch(`${AUTH_API}${path}`, {

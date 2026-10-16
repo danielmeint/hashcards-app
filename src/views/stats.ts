@@ -424,7 +424,9 @@ function renderLeeches(
   ].filter(Boolean);
 
   const lead =
-    struggling.length === 1
+    struggling.length === 0
+      ? "No card keeps failing any more."
+      : struggling.length === 1
       ? "One card keeps failing."
       : `These ${struggling.length} cards keep failing.`;
 

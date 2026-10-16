@@ -11,7 +11,6 @@ import {
   setHapticFeedback,
 } from "../github";
 import { loadCredential } from "../auth";
-import { signInAvailable } from "../github-app";
 import {
   getNewCardsPerDay,
   setNewCardsPerDay,
@@ -25,6 +24,7 @@ import { getSyncStatus, onSyncStatus } from "../sync-state";
 import { renderAuthPanel } from "./auth-panel";
 import { renderCollections } from "./collections";
 import { icon } from "./icons";
+import { isDemo } from "../demo-mode";
 
 /** Presets across the range the setting allows (`MIN_RETENTION`–`MAX_RETENTION`). */
 const RETENTIONS = [0.8, 0.85, 0.9, 0.93, 0.95];
@@ -160,33 +160,32 @@ export async function renderSettings(
     const retention = getDesiredRetention();
     return html`<div class="page settings-view">
       <header class="page-head">
-        ${config
-          ? html`<button
-              type="button"
-              id="back-btn"
-              class="icon-btn"
-              aria-label="Back"
-              title="Back"
-              @click=${onDone}
-            >
-              ${icon("back")}<span class="icon-btn-label">Today</span>
-            </button>`
-          : nothing}
+        <button
+          type="button"
+          id="back-btn"
+          class="icon-btn"
+          aria-label="Back"
+          title="Back"
+          @click=${onDone}
+        >
+          ${icon("back")}<span class="icon-btn-label">${config ? "Today" : "Back"}</span>
+        </button>
         <h1>Settings</h1>
       </header>
       ${notice
         ? html`<p class="notice notice-warn settings-notice">${notice}</p>`
         : nothing}
-      ${isFirstRun ? welcome(credential !== null) : nothing}
-      <section class="group">
-        <h2 class="group-title">GitHub</h2>
-        <div id="auth-host"></div>
-        <p class="group-note" id="settings-status" role="status">${state.status}</p>
-      </section>
-      <section class="group">
-        <h2 class="group-title">Collections</h2>
-        <div id="collections-host"></div>
-      </section>
+      ${isDemo()
+        ? demoGroup()
+        : html`<section class="group">
+              <h2 class="group-title">GitHub</h2>
+              <div id="auth-host"></div>
+              <p class="group-note" id="settings-status" role="status">${state.status}</p>
+            </section>
+            <section class="group">
+              <h2 class="group-title">Collections</h2>
+              <div id="collections-host"></div>
+            </section>`}
       <section class="group" id="collection-settings">
         <h2 class="group-title">Collection</h2>
         <p class="group-caption" id="collection-caption">${collectionCaption()}</p>
@@ -307,6 +306,8 @@ export async function renderSettings(
   }
 
   paint();
+  // The demo has no account and no other collections to show.
+  if (isDemo()) return;
 
   // A working credential pointed at a repository is the moment there is
   // something to fetch, so fetch it — on a first run that is the whole
@@ -353,55 +354,24 @@ const THEMES: [Theme, string][] = [
   ["dark", "Dark"],
 ];
 
-function welcome(signedIn: boolean) {
-  const steps = signInAvailable()
-    ? html`<ol>
-        <li>
-          Create a GitHub repo with <code>.md</code> flashcard files
-          (<a
-            href="https://github.com/eudoxia0/hashcards#format"
-            target="_blank"
-            rel="noopener"
-            >card format</a
-          >)
-        </li>
-        <li>
-          ${signedIn
-            ? "Pick that repo below"
-            : "Sign in with GitHub below and pick that repo"}
-        </li>
-      </ol>`
-    : html`<ol>
-        <li>
-          Create a GitHub repo with <code>.md</code> flashcard files
-          (<a
-            href="https://github.com/eudoxia0/hashcards#format"
-            target="_blank"
-            rel="noopener"
-            >card format</a
-          >)
-        </li>
-        <li>
-          Generate a
-          <a
-            href="https://github.com/settings/personal-access-tokens/new"
-            target="_blank"
-            rel="noopener"
-            >fine-grained PAT</a
+/**
+ * In the demo, in place of GitHub and Collections: what this is, and the way
+ * out to a collection of your own. Everything below it works, in memory.
+ */
+function demoGroup() {
+  return html`<section class="group" id="demo-settings">
+    <h2 class="group-title">Demo</h2>
+    <div class="list">
+      <div class="row">
+        <span class="row-text">
+          <span class="row-title">You are trying the demo</span>
+          <span class="row-sub"
+            >Changes stay in this tab and are gone when you reload. Nothing
+            reaches GitHub.</span
           >
-          — select only your repo, grant
-          <strong>Contents: Read and write</strong>
-        </li>
-        <li>Enter your details below and click <strong>Connect</strong></li>
-      </ol>`;
-
-  return html`<div class="welcome-banner">
-    <p>
-      <strong>Hashcards</strong> is a spaced repetition flashcard app. Cards live
-      as <code>.md</code> files in a GitHub repo, and the app syncs them via the
-      GitHub API.
-    </p>
-    <p><strong>Get started:</strong></p>
-    ${steps}
-  </div>`;
+        </span>
+      </div>
+      <a class="row row-action" href="/" id="demo-own">Start your own collection${icon("chevron", 18)}</a>
+    </div>
+  </section>`;
 }

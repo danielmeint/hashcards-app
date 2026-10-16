@@ -1,0 +1,33 @@
+# Checks every deck on pull requests: parse errors, duplicate IDs, cards
+# without IDs (warnings). Written by `hc init`.
+#
+# hc is not on npm yet, so this builds it from the hashcards source. Once the
+# package is published, the last three steps become `npx --yes hashcards lint`.
+name: hashcards lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Into a hidden directory, which hc never reads decks from.
+      - uses: actions/checkout@v4
+        with:
+          repository: danielmeint/hashcards-app
+          path: .hashcards-app
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: .hashcards-app/package-lock.json
+      - run: npm ci && npm run build:cli
+        working-directory: .hashcards-app
+      - run: node .hashcards-app/dist-cli/hc.js lint

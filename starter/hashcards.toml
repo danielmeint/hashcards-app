@@ -1,0 +1,12 @@
+# Hashcards collection settings. Shared by every device and by `hc`.
+# Device preferences (theme, haptics) stay on the device.
+
+[review]
+new_per_day = 20
+desired_retention = 0.9       # 0.80–0.95: the recall you aim for when a card comes due
+fuzz = true                   # spread cards learned together over neighbouring days
+
+[decks]
+# Globs. One without a "/" matches a file name at any depth.
+include = ["**/*.md"]
+exclude = ["README.md", "AGENTS.md", "CLAUDE.md"]

@@ -29,7 +29,7 @@ agents all write to, and the app is the best place to review and curate them.**
 
 | Today | 1.0 |
 |---|---|
-| A card is the SHA-256 of its text. A typo fix resets its history. | A card has a stable **ID** written in the file. Edits, moves and rewording keep history. |
+| A card is the SHA-256 of its text, whitespace included. | A card is still **its text** (§2.7): hashed after normalising whitespace. Edits in the app keep history; other edits are carried over on request with **`link` events** (`hc relink`). No IDs in the files. |
 | `hashcards-state.json` is the synced truth; the review log is a side record. | The **review log is the truth**. Current state is FSRS replayed over it. Snapshots are caches. |
 | Review data commits land on `main` next to the cards. | Review data lives on an orphan **`hashcards-data`** branch. `main` history is content only. |
 | Settings live in each device's localStorage. | Collection settings live in **`hashcards.toml`** in the repo. Only device prefs (theme, haptics) stay local. |
@@ -40,8 +40,8 @@ agents all write to, and the app is the best place to review and curate them.**
 
 ### Drop
 
-- Format compatibility with the original hashcards CLI: hash identity, its
-  line-joining quirks, cloze family hashes.
+- Format compatibility with the original hashcards CLI: its exact hash bytes,
+  its line-joining quirks. (Identity by content stays: §2.7.)
 - `hashcards-state.json` as the thing that syncs (read once, for migration).
 - Per-deck navigation as the primary flow.
 
@@ -65,34 +65,29 @@ name = "Europe: Nordic & Baltic"
 tags = ["geo", "europe"]
 ---
 
-ID: est-capital
 Tags: capitals
 Q: What is the capital of Estonia?
 A: Tallinn
 
 ---
 
-ID: k8q2xv7m
 Reverse: yes
 Q: **Germany**
 A: ![Germany on the map](map-deu.png)
 
 ---
 
-ID: k3n9wq2p
 Status: draft
 C: In Kubernetes, a [Deployment] manages a [ReplicaSet].
 ```
 
 - **Metadata lines come first in a card block, before `Q:` / `C:`.** A line
-  matching `^(ID|Tags|Reverse|Status):` at the top of a block is metadata.
+  matching `^(Tags|Reverse|Status):` at the top of a block is metadata.
   After `Q:` / `A:` / `C:` starts, nothing is metadata, so answers can say
   anything.
-- **`ID:`** matches `[a-z0-9][a-z0-9-]{1,63}`. It must be unique within the
-  collection. People and agents may pick slugs (`cka-wl-set-image`, as
-  ankictl's keys); otherwise `hc lint --fix` or the app stamps a random
-  8-character base32 one. **A missing ID is not an error, only a warning.**
-  Agents can write cards without one.
+- **No `ID:`.** A card is its text (§2.7). An `ID:` line written by the
+  first 1.0 builds is still read (and ignored, with a lint warning) so old
+  files keep parsing; `hc migrate` removes them and carries their history.
 - **`Tags:`** is comma-separated and adds to the file's frontmatter `tags`.
 - **`Reverse: yes`** (basic cards only) also schedules answer→question.
 - **`Status:`** is `draft` (not scheduled, shown in the Inbox) or `suspended`
@@ -112,18 +107,16 @@ C: In Kubernetes, a [Deployment] manages a [ReplicaSet].
 
 | Card | Key |
 |---|---|
-| Basic | `<id>` |
-| Its reverse | `<id>:r` |
-| Cloze deletion *n* (1-based, in order of appearance) | `<id>:<n>` |
-| A card with no ID (unmigrated file, read-only subscription) | `h:<first 16 hex of the v1 content hash>` |
-| A card from a subscribed collection, as recorded in *your* log | `<owner>/<repo>/<key>` |
+| Any card | `h:<first 16 hex of its content hash>` (§2.7) |
+| A card from a subscribed collection, as recorded in *your* log | `<owner>/<repo>/h:<…>` |
 
-IDs cannot contain `/` or `:`, so keys parse unambiguously. Cloze siblings are
-`<id>:*`. Burying siblings needs no family hash any more.
+A basic card and its reverse are two hashes (question and answer swapped), so
+two keys; each cloze deletion is its own hash. Siblings (a card and its
+reverse, the deletions of one cloze) share a **family hash** and are buried
+together.
 
 **Deleting a card never deletes its history.** The events stay on the data
-branch. Re-adding the same ID picks the history back up. (This is ankictl's
-"deletion is never automatic" for free.)
+branch. Writing the same text again picks the history back up.
 
 ### 2.3 Collection layout
 
@@ -155,7 +148,10 @@ One JSON object per line, short keys (these files only grow):
   starts from the latest baseline and applies later reviews.
 - `tz` is the local UTC offset in minutes at review time. Days are local days,
   so replay must not depend on the replaying device's timezone.
-- `src` is optional provenance (`"anki"`, `"v1"`).
+- **`link`** (`{"v":2,"kind":"link","card":"h:new…","from":"h:old…","at":…}`)
+  says the card now called `card` used to be `from`: replay reads every event
+  of `from` as one of `card` (§2.7).
+- `src` is optional provenance (`"anki"`, `"v1"`, `"edit"`, `"relink"`).
 - A device only ever writes its own files. Undo before a push simply never
   appears; an undo after a push rewrites that device's current month file
   (as today). No undo events.
@@ -191,6 +187,58 @@ State is a pure function: `replay(events, params, retention) → Map<key, CardSt
 - Locally, the app caches the replay result in IndexedDB and replays
   incrementally from what it has not seen yet.
 
+### 2.7 Identity: a card is its text
+
+Decided 2026-10-16, replacing the `ID:` lines of M1. Stable IDs fixed one
+problem (an edit loses history) and brought a class of new ones: duplicate
+IDs from copied blocks, a "never reuse an ID" rule for agents, `ID:` noise in
+every file, a stamping step in every tool, and a name ("hashcards") that no
+longer described the tool. Edit detection (inferring which new card an old
+one became) was considered and dropped as too clever: history is never lost,
+so carrying it over can be a deliberate act instead.
+
+**The hash.** `normalise(s)` collapses every run of whitespace (spaces, tabs,
+newlines) to one space and trims the ends. Then:
+
+- basic: `sha256("basic\0" + normalise(Q) + "\0" + normalise(A))`; its
+  reverse swaps Q and A.
+- cloze deletion: `sha256("cloze\0" + normalise(before) + "\0" +
+  normalise(deleted) + "\0" + normalise(after))`, over the text with every
+  bracket removed. Adding or removing *another* deletion leaves it unchanged.
+- family: the forward basic hash for a basic card and its reverse;
+  `sha256("cloze\0" + normalise(text without brackets))` for a cloze block.
+
+`Tags:`, `Status:`, `Reverse:`, `Extra:`, the deck, the file and the card's
+position are outside the hash: changing them keeps history.
+
+**What carries history, and what does not:**
+
+| Change | History |
+|---|---|
+| Reorder, move to another file or deck, change tags, status or `Extra:` | kept |
+| Reflow, re-indent, trailing spaces | kept (normalised) |
+| Add or remove another cloze deletion | kept for the others |
+| Undo an edit (the old text comes back) | comes back by itself |
+| Edit in the app | kept: the app writes a `link` event |
+| Edit anywhere else (GitHub, an editor, an agent) | starts fresh, unless you run `hc relink` |
+| Reword a cloze sentence | every deletion starts fresh, unless relinked |
+| The same text twice in a collection | one card, one schedule; `hc lint` warns |
+| A subscribed deck's author fixes a typo | starts fresh (accepted for 1.0) |
+
+**Carrying it over by hand.** `hc relink` compares the cards at a revision
+(default `HEAD`) with the working tree, pairs cards that disappeared with
+cards that appeared in the same file by position (what the app does for an
+in-app edit), shows the pairs, and with `--apply` commits one `link` event per
+pair to the data branch. `hc relink <old-key> <new-key>` links one pair
+explicitly. Orphaned history stays on the data branch, so this can be done any
+time later. A "lost history" list in the app is a possible follow-up, not 1.0.
+
+**`link` in replay.** Before replaying, events are resolved through the links:
+an event of `from` counts as one of `card`, transitively. A link that would
+close a cycle (`a→b`, later `b→a`: an undone relink) replaces the older one.
+Links make an incremental replay invalid, so a group that receives one is
+replayed from scratch.
+
 ---
 
 ## 3. Milestones
@@ -200,6 +248,8 @@ Each milestone ends with tests green (`npm test`, `npm run typecheck`,
 `main` when 1.0 ships.
 
 ### M1. Format v2 and identity — *foundation*
+
+*The `ID:` half of this milestone was reversed by §2.7 and M10.*
 
 - Parser: metadata lines, `ID` / `Tags` / `Reverse` / `Status`, frontmatter
   `tags`, card keys per §2.2. v1 files (no IDs) still parse, with `h:` keys.
@@ -324,6 +374,23 @@ Each milestone ends with tests green (`npm test`, `npm run typecheck`,
 - Migrate `my-hashcards` and import Anki (M4, M6) on the real data.
 - Tag `v1.0.0`, deploy, publish the CLI to npm.
 
+### M10. Hash identity — *revisits M1, before the 1.0 tag*
+
+- Hash per §2.7 (`src/hash.ts`); keys are `h:` only; `ID:` read as legacy.
+- `link` events (`src/core/events.ts`), link resolution before every replay
+  and history read (app and `hc`).
+- In-app edits write `link` instead of a baseline. Inbox Keep, `hc add` and
+  `hc lint --fix` stop stamping IDs; `stampIds` goes.
+- `hc relink` (diff mode and explicit pair); `hc lint` warns on legacy `ID:`
+  and on duplicate text.
+- `hc migrate`: v1 repos map hashes to the new keys; repos with `ID:` lines
+  get one `link` per card and their `ID:` lines removed. The app treats a
+  legacy `ID:` as an implicit link meanwhile, so nothing looks new between
+  deploy and migration.
+- Spec, schema, `AGENTS.md`, `starter/` and the `hashcards-starter` template
+  without IDs; `my-hashcards` migrated (with Daniel's go-ahead).
+- *Exit:* migrating a copy of `my-hashcards` keeps every card's s/d/reps.
+
 ---
 
 ## 4. Order and parallelism
@@ -382,4 +449,5 @@ into `hc` once M5 exists.
 | M6 Anki import | `hc import anki` merged into `v1`; not run on real data yet | `v1-migrate` | Prototype moved to `cli/anki/` (unchanged logic, extensionless imports; `tools/import-anki/` removed). `cli/commands/import-anki.ts`: dry run by default, `--apply` commits decks on `main` and `reviews/<month>.anki.jsonl` on top of `hashcards-data` in one transaction; refuses `Anki2` paths, unmigrated repos, path/ID clashes, re-import without `--force`. Rehearsal (copy of the collection as of 1 Oct, into the migrated clone): 153 notes, 168 cards, 625 of 939 revlog rows (314 of deleted cards). Parity against Anki's due dates: 121/167 = **72.5% within a day** (−3..+3: 6/16/24/78/19/18/6), short of 90%. Cause is fuzz, not the model: stability within 1% of Anki's for 164/167, and without fuzz on either side 167/167 within a day. Anki fuzzes ±15%/10%/5% randomly and does not store the draw. Closing it means comparing unfuzzed or giving imported cards Anki's due date once; neither done. 167 CKA cards are due or overdue on import (182 due in all) (Anki unused since ~1 Oct). |
 | M7 Features | Inbox, settings wiring, leeches merged into `v1`; FSRS fit and notifications open | `v1-inbox` | **Inbox** done: Today row, keep/discard/edit/skip/undo (swipe, K/D/E/S/U), decisions queued in IndexedDB and laid over the cards, committed as one Git Data commit per collection on the content branch ("Inbox: keep 2, discard 1") on leaving, after 15s idle, or on the next sync; a change whose draft changed upstream is dropped and reported. **Settings**: pushed to `hashcards.toml` on leaving; Collection / This device sections. **Leeches** count every device's grades (`reviewHistory`). **Reverse cards**: parser keys `<id>:r`, drill buries forward/reverse as siblings, stats count them separately (tested). FSRS fit, notifications and the rest of "stats from full history" (retention, heatmap still read local reviews) not started. |
 | M8 UI 1.0 | done, merged into `v1` | `v1-ui` | Today, Review, Caught up, Stats, Settings, sheets restyled; responsive tour in e2e. Inbox waits on M7 |
+| M10 Hash identity | in progress | `v1-hash-identity` | Decision and edge cases in §2.7. |
 | M9 Ship | 1.0 app shipped to production 2026-10-16 (`v1` → `main`); onboarding on `v1-onboarding` | `main`, `v1-onboarding` | **Onboarding:** `starter/` is the sample collection (5 decks, 39 cards, 3 drafts, lint-clean under `cli/starter.test.ts`) and the root of the `danielmeint/hashcards-starter` template repo, still to be created from it. `#demo` runs the whole app on it with seeded history (`src/demo*.ts`); `demo-mode.ts` swaps localStorage, IndexedDB and GitHub for in-memory/per-session ones. Welcome screen with demo / template / existing-repo paths. README rewritten with `npm run screenshots`; `ROADMAP.md` → `docs/history/`. The lint workflow builds `hc` from this repo until it is on npm. Still open: CLI npm name and publish, `v1.0.0` tag. |

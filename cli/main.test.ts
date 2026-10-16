@@ -37,7 +37,7 @@ describe("hc", () => {
   });
 
   it("runs from source with plain node", () => {
-    const repo = makeRepo({ "a.md": "ID: one\nQ: q\nA: a\n" });
+    const repo = makeRepo({ "a.md": "Q: q\nA: a\n" });
     const entry = fileURLToPath(new URL("./hc.ts", import.meta.url));
     const out = execFileSync(process.execPath, [entry, "lint", "--json", "--repo", repo], { encoding: "utf8" });
     expect(JSON.parse(out)).toMatchObject({ ok: true, files: 1, cards: 1 });

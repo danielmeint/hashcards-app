@@ -72,6 +72,9 @@ describe("hc lint", () => {
     const repo = makeRepo({ "a.md": "A: x\n" });
     const run = await hc(["lint", "--repo", repo], { env: { GITHUB_ACTIONS: "true" } });
     expect(run.stdout).toContain("::error file=a.md,line=1::Found answer tag without a question.");
+    // Never inside --json, whose output must parse.
+    const json = await hc(["lint", "--json", "--repo", repo], { env: { GITHUB_ACTIONS: "true" } });
+    expect(json.json().ok).toBe(false);
   });
 
   it("follows hashcards.toml [decks] include and exclude", async () => {

@@ -3,7 +3,7 @@ import { replay } from "../../src/core/replay";
 import { parseFile as parseLog } from "../../src/core/events";
 import { hashBasicCard } from "../../src/hash";
 import { parseFile } from "../../src/parser";
-import { gitInit, hc, makeDataBranch, makeRepo, review, write } from "../test-helpers";
+import { git, gitInit, hc, makeDataBranch, makeRepo, review, write } from "../test-helpers";
 
 /**
  * `due`, `stats`, `leeches` and `show` over real git repos: a v2 one with a
@@ -93,6 +93,18 @@ describe("reading history from the hashcards-data branch", () => {
     makeDataBranch(repo, { "2026-10.x.jsonl": review(FRESH_A, "2026-10-15T07:00:00.000Z", 3) + "\n" });
     const out = (await hc(["due", "--json", "--repo", repo, "--date", "2026-10-15"])).json();
     expect(out.new).toMatchObject({ introducedToday: 1, count: 1, perDay: 2, unseen: 3 });
+  });
+
+  it("reads the remote branch when the local one is only behind it", async () => {
+    const repo = v2Repo();
+    // Another device pushed since this clone last updated its local branch.
+    git(repo, ["update-ref", "refs/remotes/origin/hashcards-data", "hashcards-data"]);
+    makeDataBranch(repo, { "2026-10.dev1.jsonl": LOG, "2026-10.dev2.jsonl": review(FRESH_A, "2026-10-15T07:00:00.000Z", 3) + "\n" }, "refs/remotes/origin/hashcards-data");
+    git(repo, ["update-ref", "refs/remotes/origin/hashcards-data",
+      git(repo, ["commit-tree", "refs/remotes/origin/hashcards-data^{tree}", "-p", "hashcards-data", "-m", "newer"])]);
+    const out = (await hc(["due", "--json", "--repo", repo, "--date", "2026-10-30"])).json();
+    expect(out.history.ref).toBe("refs/remotes/origin/hashcards-data");
+    expect(out.history.files).toBe(2);
   });
 
   it("reads the remote branch of a fresh clone", async () => {

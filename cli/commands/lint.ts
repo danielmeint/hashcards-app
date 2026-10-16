@@ -40,7 +40,9 @@ Exit: 0 clean, 1 errors (or warnings with --strict), 2 usage.`,
     const warnings = collection.problems.filter((p) => p.severity === "warning");
     const failed = errors.length > 0 || (ctx.values.strict === true && warnings.length > 0);
 
-    if (ctx.io.env.GITHUB_ACTIONS === "true") annotate(ctx.io.stdout, collection.problems);
+    // Annotations are lines on stdout, so not under --json, whose stdout is
+    // one JSON document.
+    if (ctx.io.env.GITHUB_ACTIONS === "true" && !ctx.json) annotate(ctx.io.stdout, collection.problems);
 
     if (ctx.json) {
       ctx.emit({

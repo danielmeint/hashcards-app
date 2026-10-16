@@ -61,12 +61,25 @@ function git(repo: string, args: string[]): string | null {
   }
 }
 
-/** The data branch's ref: local first, then the remote's, or null. */
+/**
+ * The data branch's ref: the local one, or the remote's when there is no local
+ * one or the local one is only behind it (devices push there, and a stale
+ * local branch would read old history and build commits that cannot be
+ * pushed). Null when there is neither.
+ */
 export function dataRef(repo: string): string | null {
-  for (const ref of [`refs/heads/${DATA_BRANCH}`, `refs/remotes/origin/${DATA_BRANCH}`]) {
-    if (git(repo, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]) !== null) return ref;
+  const local = `refs/heads/${DATA_BRANCH}`;
+  const remote = `refs/remotes/origin/${DATA_BRANCH}`;
+  const exists = (ref: string) => git(repo, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]) !== null;
+  const hasLocal = exists(local);
+  const hasRemote = exists(remote);
+  if (hasLocal && hasRemote) {
+    const behind =
+      git(repo, ["merge-base", "--is-ancestor", local, remote]) !== null &&
+      git(repo, ["rev-parse", local]) !== git(repo, ["rev-parse", remote]);
+    return behind ? remote : local;
   }
-  return null;
+  return hasLocal ? local : hasRemote ? remote : null;
 }
 
 const V1_HASH = /^[0-9a-f]{64}$/;

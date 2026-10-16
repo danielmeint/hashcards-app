@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /**
- * Browser-level tests (ROADMAP 3.5). Each runs the real app against a fake
+ * Browser-level tests (docs/history/ROADMAP.md 3.5). Each runs the real app against a fake
  * GitHub (`e2e/fake-github.ts`), so they need no token and no network.
  *
  * Runs on the installed Google Chrome rather than a Playwright-downloaded

@@ -1,3 +1,5 @@
+> **Archived.** This is the pre-1.0 history of the app (Phases 1–6). The current plan is [`PLAN-1.0.md`](../../PLAN-1.0.md).
+
 # Hashcards Roadmap
 
 A single prioritized backlog for the app. Supersedes the old `TODO.md` and

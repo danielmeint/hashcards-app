@@ -74,8 +74,11 @@ collection/
     clip.mp3
 ```
 
-All `.md` files in the repository are parsed as decks. Non-`.md` files are
-ignored by the parser but may be referenced as media.
+Every `.md` file is a deck, except documentation such as `README.md` and
+`AGENTS.md`. A `hashcards.toml` at the root can say exactly which files are
+decks with `include` and `exclude` globs (see the
+[README](README.md#how-it-works)). Non-`.md` files are ignored by the parser
+but may be referenced as media.
 
 ## Frontmatter (Optional)
 

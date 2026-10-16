@@ -1,7 +1,7 @@
 {
   "name": "hashcards-app",
   "version": "1.0.0",
-  "description": "PWA for spaced repetition flashcards from GitHub",
+  "description": "Spaced-repetition flashcards in Markdown, in your own GitHub repo: the app and the hc CLI",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

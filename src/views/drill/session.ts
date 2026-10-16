@@ -1,4 +1,5 @@
 import { Card, DrillSession, Grade, Performance, Review } from "../../types";
+import { utcOffsetMinutes } from "../../core/schedule";
 import { updatePerformance, todayStr, formatInterval, localDay } from "../../fsrs";
 import {
   PersistedReview,
@@ -295,7 +296,7 @@ export async function createSession(
       // The grade is the event this device will push. Its state comes from
       // replay's own step, keyed as the log keys it, in this device's zone as
       // recorded on the event — so a replay anywhere later gives the same.
-      const tz = -new Date(reviewedAt).getTimezoneOffset();
+      const tz = utcOffsetMinutes(reviewedAt);
       const durationMs = shown?.key === key ? Date.now() - shown.at : undefined;
       const event: ReviewEvent = {
         v: 2,

@@ -91,6 +91,15 @@ export function interval(
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * This device's UTC offset in minutes at `at`, east positive: what a review
+ * records as `tz`. `|| 0` because in UTC the negation is -0, which JSON writes
+ * as 0, so an event would not equal its own round trip.
+ */
+export function utcOffsetMinutes(at: string | Date): number {
+  return -new Date(at).getTimezoneOffset() || 0;
+}
+
+/**
  * The calendar day of an instant at a UTC offset of `tz` minutes (east
  * positive, so Berlin in summer is +120), as `YYYY-MM-DD`.
  *

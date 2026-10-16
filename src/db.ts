@@ -1,4 +1,5 @@
 import { openDB, IDBPDatabase } from "idb";
+import { utcOffsetMinutes } from "./core/schedule";
 import { legacy, settings } from "./settings";
 import { Card, DrillSession, ParsedCard, ReviewedPerformance, Review } from "./types";
 import { formatKey, keyInLog, stateKey } from "./card-key";
@@ -484,7 +485,7 @@ async function migrateToKeys(db: IDBPDatabase): Promise<void> {
         ...review,
         key,
         log,
-        tz: -new Date(review.reviewedAt).getTimezoneOffset(),
+        tz: utcOffsetMinutes(review.reviewedAt),
         ...(v1Pushed ? { v1Pushed } : {}),
       },
     ]);

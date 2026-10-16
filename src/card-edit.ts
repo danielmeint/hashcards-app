@@ -1,4 +1,5 @@
 import { Card } from "./types";
+import { utcOffsetMinutes } from "./core/schedule";
 import {
   GitHubConfig,
   deleteFile,
@@ -279,7 +280,7 @@ async function carryHistory(before: Card[], after: Card[]): Promise<number> {
         kind: "baseline",
         card: target.card,
         at: state.lastReviewedAt,
-        tz: -new Date(state.lastReviewedAt).getTimezoneOffset(),
+        tz: utcOffsetMinutes(state.lastReviewedAt),
         s: state.stability,
         d: state.difficulty,
         reps: state.reviewCount,

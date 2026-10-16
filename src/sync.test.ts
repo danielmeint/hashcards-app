@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "fake-indexeddb/auto";
+import { utcOffsetMinutes } from "./core/schedule";
 import { IDBFactory } from "fake-indexeddb";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -743,7 +744,7 @@ describe("the data branch", () => {
     expect(files[0][0]).toMatch(/^reviews\/\d{4}-\d{2}\.phone1\.jsonl$/);
     const [event] = lines(files[0][1]);
     expect(event).toMatchObject({ v: 2, card: "alpha", grade: 3 });
-    expect(event.tz).toBe(-new Date(event.at).getTimezoneOffset());
+    expect(event.tz).toBe(utcOffsetMinutes(event.at));
     expect(event.ms).toBeGreaterThanOrEqual(0);
     // The snapshot rides along in the same commit.
     expect(JSON.parse(repo.branchFiles().get("snapshot.json")!).cards.alpha.reps).toBe(1);

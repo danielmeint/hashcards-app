@@ -45,6 +45,10 @@ export function git(repo: string, args: string[], input?: string): string {
 /** `git init` with everything in the working tree committed to `main`. */
 export function gitInit(repo: string): void {
   git(repo, ["init", "-q", "-b", "main"]);
+  // hc itself commits (migrate, import), and runs without GIT_ENV: an identity
+  // in the repo is what lets it do so on a CI machine that has none globally.
+  git(repo, ["config", "user.name", "test"]);
+  git(repo, ["config", "user.email", "test@example.com"]);
   git(repo, ["add", "-A"]);
   git(repo, ["commit", "-q", "--allow-empty", "-m", "cards"]);
 }

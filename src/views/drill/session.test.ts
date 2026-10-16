@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "fake-indexeddb/auto";
+import { utcOffsetMinutes } from "../../core/schedule";
 import { IDBFactory } from "fake-indexeddb";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Card, Grade } from "../../types";
@@ -486,7 +487,7 @@ describe("a grade as an event", () => {
 
     const [review] = await getAllReviews();
     expect(review).toMatchObject({ key: "someone/cards/alpha", log: "someone/cards" });
-    expect(review.tz).toBe(-new Date(review.reviewedAt).getTimezoneOffset());
+    expect(review.tz).toBe(utcOffsetMinutes(review.reviewedAt));
 
     const { replay } = await import("../../core/replay");
     const { reviewEvent } = await import("../../review-log");
@@ -497,7 +498,7 @@ describe("a grade as an event", () => {
           kind: "baseline",
           card: "alpha",
           at: lastReviewedAt,
-          tz: -new Date(lastReviewedAt).getTimezoneOffset(),
+          tz: utcOffsetMinutes(lastReviewedAt),
           s: 30,
           d: 5,
           reps: 4,

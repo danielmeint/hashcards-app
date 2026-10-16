@@ -65,6 +65,9 @@ function seed(github: FakeGitHub): void {
     ].join("\n")
   );
   github.set("Reading list.md", qa([["Who wrote *Middlemarch*?", "George Eliot"]]));
+  // A deck someone broke on GitHub, with a long name: Today says so, and the
+  // panel must wrap rather than push the page sideways.
+  github.set("cs/Distributed systems reading notes from the long weekend.md", "Q: What is a quorum?\n");
   // Two drafts for the Inbox, the way an agent leaves them: one with tags and
   // an Extra note, one cloze with two deletions.
   github.set(
@@ -232,7 +235,9 @@ async function tour(page: Page, github: FakeGitHub, tag: string): Promise<void> 
   await page.goto("/");
   await expect(page.locator("#drill-all")).toBeVisible();
 
+  await expect(page.locator("#deck-problems")).toBeVisible();
   await check(page, `${tag}-today`, [
+    page.locator("#deck-problems summary"),
     page.locator("#drill-all"),
     page.locator("#new-card-btn"),
     page.locator("#stats-btn"),

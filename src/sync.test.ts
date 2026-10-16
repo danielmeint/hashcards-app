@@ -381,6 +381,48 @@ describe("card sync", () => {
     expect(cards).toHaveLength(2);
   });
 
+  it("keeps a deck's last good cards when it stops parsing, and says what is wrong", async () => {
+    repo.set("a.md", "Q: one\nA: 1\n---\nQ: two\nA: 2\n", "sha-a");
+    const sync = await freshSync();
+    await sync.syncCards(CONFIG);
+
+    // An edit on GitHub breaks line 4.
+    repo.set("a.md", "Q: one\nA: 1\n---\nA: no question\n", "sha-a2");
+    repo.retag('W/"tree-2"');
+    const cards = await sync.syncCards(CONFIG);
+
+    expect(cards.map(question)).toEqual(["one", "two"]);
+    expect(await sync.loadProblems()).toEqual([
+      { kind: "parse", repo: "someone/cards", path: "a.md", line: 4, message: "Found answer tag without a question.", keptOld: true },
+    ]);
+
+    // Fixing it brings the new cards in and the problem goes.
+    repo.set("a.md", "Q: one\nA: 1\n---\nQ: three\nA: 3\n", "sha-a3");
+    repo.retag('W/"tree-3"');
+    expect((await sync.syncCards(CONFIG)).map(question)).toEqual(["one", "three"]);
+    expect(await sync.loadProblems()).toEqual([]);
+  });
+
+  it("says so when a deck it never saw parse is broken", async () => {
+    repo.set("a.md", "C: no deletions\n", "sha-a");
+    const sync = await freshSync();
+    expect(await sync.syncCards(CONFIG)).toEqual([]);
+    expect(await sync.loadProblems()).toMatchObject([{ kind: "parse", path: "a.md", keptOld: false }]);
+  });
+
+  it("shows a card written twice once, and points at the copy", async () => {
+    repo.set("a.md", "Q: one\nA: 1\n---\nQ:  one\nA: 1\n", "sha-a");
+    repo.set("b.md", "Q: zero\nA: 0\n---\nQ: one\nA:\n1\n", "sha-b");
+    const sync = await freshSync();
+    const cards = await sync.syncCards(CONFIG);
+
+    expect(cards.map(question)).toEqual(["one", "zero"]);
+    expect((await sync.loadProblems()).map((p) => [p.kind, p.path, p.line, p.message])).toEqual([
+      ["duplicate", "a.md", 4, "The same card as line 1, so it is one card with one schedule. Delete one of them."],
+      ["duplicate", "b.md", 4, "The same card as a.md:1, so it is one card with one schedule. Delete one of them."],
+    ]);
+  });
+
   it("costs one conditional request when nothing has changed", async () => {
     repo.set("a.md", card("one"), "sha-a");
     const { syncCards } = await freshSync();

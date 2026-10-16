@@ -1,6 +1,7 @@
 import { formatKey, formerKeys } from "./card-key";
 import { ReviewLogEvent } from "./core/events";
 import { ReplayOptions, Replayed, replayAll, replayMore, resolveLinks } from "./core/replay";
+import { dayAt } from "./core/schedule";
 import {
   ReplayMark,
   StateRecord,
@@ -129,20 +130,33 @@ export async function collectEvents(): Promise<{
   return { groups, v1 };
 }
 
+/** One grade from the log, wherever it was given. */
+export type HistoryEntry = {
+  key: string;
+  reviewedAt: string;
+  /** The local day it was given on, in the timezone it was recorded in. */
+  day: string;
+  grade: 1 | 2 | 3 | 4;
+};
+
 /**
  * Every grade in the log — this device's and every other device's, as pulled
- * — keyed as the app keys cards (`owner/repo/<key>`). Baselines are left out:
- * they stand for history, they are not grades anyone gave.
+ * — keyed as the app keys cards (`owner/repo/<key>`), links resolved. Baselines
+ * are left out: they stand for history, they are not grades anyone gave. The
+ * same grade read twice (two copies of one line) counts once, as in replay.
  */
-export async function reviewHistory(): Promise<
-  { key: string; reviewedAt: string; grade: 1 | 2 | 3 | 4 }[]
-> {
+export async function reviewHistory(): Promise<HistoryEntry[]> {
   const { groups } = await collectEvents();
-  const history = [];
+  const history: HistoryEntry[] = [];
+  const seen = new Set<string>();
   for (const [group, events] of groups) {
     for (const event of resolveLinks(events)) {
       if (event.kind !== "review") continue;
-      history.push({ key: stateKeyIn(group, event.card), reviewedAt: event.at, grade: event.grade });
+      const key = stateKeyIn(group, event.card);
+      const id = `${key}\u0000${event.at}\u0000${event.grade}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      history.push({ key, reviewedAt: event.at, day: dayAt(event.at, event.tz), grade: event.grade });
     }
   }
   return history;

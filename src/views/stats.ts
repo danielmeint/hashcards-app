@@ -1,6 +1,6 @@
 import { html, nothing, render, TemplateResult } from "lit-html";
 import { Grade } from "../types";
-import { getAllReviews, getAllPerformances } from "../db";
+import { getAllPerformances, stateKey } from "../db";
 import { loadCachedCards } from "../sync";
 import { todayStr, retrievability } from "../fsrs";
 import {
@@ -19,12 +19,14 @@ export async function renderStats(
   container: HTMLElement,
   onBack: () => void
 ): Promise<void> {
-  const [reviews, performances, cards, history] = await Promise.all([
-    getAllReviews(),
+  const [allStates, cards, history] = await Promise.all([
     getAllPerformances(),
     loadCachedCards(),
     reviewHistory(),
   ]);
+  // Every device's grades, not this one's: the heatmap, the streak and the
+  // grade mix are the collection's, as due dates already are.
+  const reviews = history;
   const today = todayStr();
 
   // From the whole log, every device's grades: a card that fails on your
@@ -34,7 +36,12 @@ export async function renderStats(
   // --- Aggregate stats ---
   // Drafts are proposals in the Inbox, not cards in the collection yet.
   // Reverse cards and cloze deletions each count: each is scheduled.
-  const totalCards = cards.filter((c) => c.status !== "draft").length;
+  const counted = cards.filter((c) => c.status !== "draft");
+  const totalCards = counted.length;
+  // Only cards that still exist: a deleted card's history stays in the log
+  // (and in the replay), but it is not a card in the collection any more.
+  const keys = new Set(counted.map((c) => stateKey(c)));
+  const performances = new Map([...allStates].filter(([key]) => keys.has(key)));
   const learnedCards = performances.size;
   const newCards = totalCards - learnedCards;
 
@@ -55,7 +62,8 @@ export async function renderStats(
   // Average retention estimate
   const retentions: number[] = [];
   for (const [, perf] of performances) {
-    const lastDate = perf.lastReviewedAt.slice(0, 10);
+    // The local day of the last review, as replay counted it.
+    const lastDate = perf.lastDay;
     const daysSince = daysBetween(lastDate, today);
     if (daysSince >= 0) {
       retentions.push(retrievability(daysSince, perf.stability));
@@ -70,7 +78,7 @@ export async function renderStats(
   const startDate = addDays(today, -heatmapDays + 1);
   const reviewsByDay = new Map<string, number>();
   for (const r of reviews) {
-    const day = r.reviewedAt.slice(0, 10);
+    const day = r.day;
     if (day >= startDate && day <= today) {
       reviewsByDay.set(day, (reviewsByDay.get(day) || 0) + 1);
     }
@@ -100,7 +108,7 @@ export async function renderStats(
   const thirtyDaysAgo = addDays(today, -30);
   const gradeCounts = { forgot: 0, hard: 0, good: 0, easy: 0, total: 0 };
   for (const r of reviews) {
-    const day = r.reviewedAt.slice(0, 10);
+    const day = r.day;
     if (day >= thirtyDaysAgo && day <= today) {
       gradeCounts.total++;
       switch (r.grade) {

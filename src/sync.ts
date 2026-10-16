@@ -28,6 +28,7 @@ import {
 } from "./db";
 import { forgetMediaUrl, mediaRefs, mediaType } from "./media";
 import { parseFile } from "./parser";
+import { DeckProblem, dedupeCards, duplicate, problemOf } from "./deck-problems";
 import { recordSyncSuccess, setSyncStatus } from "./sync-state";
 import { AuthError } from "./auth";
 import { isDeckPath } from "./collection-config";
@@ -420,19 +421,35 @@ export async function syncCards(
     for (const file of stale) {
       const content = contents.get(file.path);
       if (content === undefined) continue;
-      let cards: Card[] = [];
+      const duplicates: { line: number; firstLine: number }[] = [];
       try {
-        cards = inRepo(
-          await parseFile(content, file.path, deckNameFor(file.path)),
+        const cards = inRepo(
+          await parseFile(content, file.path, deckNameFor(file.path), (dup, first) =>
+            duplicates.push({ line: dup.range[0], firstLine: first.range[0] })
+          ),
           key
         );
+        updated.push({
+          repo: key,
+          path: file.path,
+          sha: file.sha,
+          cards,
+          ...(duplicates.length > 0 ? { duplicates } : {}),
+        });
       } catch (e) {
-        // Recorded anyway, with the SHA and no cards: re-fetching the same
-        // bytes cannot parse differently, and editing the file to fix it will
-        // move the SHA and bring it back.
-        console.warn(`Failed to parse ${file.path}:`, e);
+        // Recorded with the new SHA, since fetching the same bytes again
+        // cannot parse differently, and fixing the file moves the SHA. The
+        // cards are the last ones that parsed: one bad line must not take a
+        // deck's worth of reviews off Today. Today says what is wrong.
+        const previous = stored.get(file.path);
+        updated.push({
+          repo: key,
+          path: file.path,
+          sha: file.sha,
+          cards: previous?.cards ?? [],
+          problem: problemOf(e),
+        });
       }
-      updated.push({ repo: key, path: file.path, sha: file.sha, cards });
     }
   }
 
@@ -517,11 +534,32 @@ export async function loadCards(): Promise<Card[]> {
   // every card inside it saying nothing.
   // With the Inbox's queued decisions laid over them: a kept draft is a new
   // card from the moment it is kept, not from the moment it is committed.
-  cachedCards = applyPending(
-    files.flatMap((f) => inRepo(f.cards, f.repo)),
-    await pendingOps()
+  const { cards, problems } = dedupeCards(
+    applyPending(
+      files.flatMap((f) => inRepo(f.cards, f.repo)),
+      await pendingOps()
+    )
   );
+  cachedCards = cards;
+  cachedProblems = [...fileProblems(files), ...problems];
   return cachedCards;
+}
+
+let cachedProblems: DeckProblem[] | null = null;
+
+/** What is wrong with the collection's files, as of the cards last loaded. */
+export async function loadProblems(): Promise<DeckProblem[]> {
+  if (cachedProblems === null) await loadCards();
+  return cachedProblems ?? [];
+}
+
+function fileProblems(files: DeckFile[]): DeckProblem[] {
+  return files.flatMap((f): DeckProblem[] => [
+    ...(f.problem
+      ? [{ kind: "parse" as const, repo: f.repo, path: f.path, line: f.problem.line, message: f.problem.message, keptOld: f.cards.length > 0 }]
+      : []),
+    ...(f.duplicates ?? []).map((d) => duplicate(f.repo, f.path, d.line, f.path, d.firstLine)),
+  ]);
 }
 
 /**

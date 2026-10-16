@@ -9,6 +9,7 @@ import { localDay } from "./fsrs";
 import { logLine, v1MonthOf, v1PushedKey } from "./v1-log";
 import { databaseName } from "./demo-mode";
 import { cardIdentity } from "./parser";
+import type { FileProblem } from "./deck-problems";
 
 const DB_VERSION = 8;
 
@@ -641,6 +642,13 @@ export type DeckFile = {
   path: string;
   sha: string;
   cards: Card[];
+  /**
+   * Set when the file at `sha` does not parse. `cards` are then the last
+   * version that did, if this device ever saw one (`deck-problems.ts`).
+   */
+  problem?: FileProblem;
+  /** Cards the parser left out as repeats of an earlier one in the file. */
+  duplicates?: { line: number; firstLine: number }[];
 };
 
 /**

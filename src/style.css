@@ -662,3 +662,13 @@ button.row, a.row, summary.row { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ===== Problems in the decks' files ===== */
+
+.deck-problems { display: block; }
+.deck-problems summary { cursor: pointer; font-weight: 600; }
+.deck-problems ul { margin: 8px 0 2px; padding: 0; list-style: none; display: grid; gap: 10px; }
+.deck-problem { display: grid; gap: 2px; overflow-wrap: anywhere; }
+.deck-problem-where { font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
+.deck-problem-where a { color: inherit; }
+.deck-problem-note { font-size: 13px; opacity: 0.85; }

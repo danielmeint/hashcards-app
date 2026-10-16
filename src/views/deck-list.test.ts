@@ -95,6 +95,47 @@ describe("deck list", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("says which decks do not parse, opens on them, and links to the line", async () => {
+    localStorage.setItem("repos", JSON.stringify([{ owner: "someone", repo: "cards", branch: "main" }]));
+    const { renderDeckList } = await freshDeckList();
+    await cache([card(1, "Alpha")]);
+    const { updateDeckFiles } = await import("../db");
+    await updateDeckFiles([
+      { repo: "someone/cards", path: "geo/Baltics.md", sha: "x", cards: [], problem: { message: "Found answer tag without a question.", line: 12 } },
+    ]);
+    await (await import("../sync")).loadCards();
+
+    await renderDeckList(container, () => {}, () => {}, () => {});
+
+    const panel = container.querySelector<HTMLDetailsElement>("#deck-problems")!;
+    expect(panel.open).toBe(true);
+    expect(panel.querySelector("summary")!.textContent).toBe("A deck doesn't parse");
+    expect(panel.textContent).toContain("Found answer tag without a question.");
+    expect(panel.textContent).toContain("None of its cards can be shown until it is fixed.");
+    expect(panel.querySelector("a")!.getAttribute("href")).toBe(
+      "https://github.com/someone/cards/blob/main/geo/Baltics.md#L12"
+    );
+    // The rest of Today is still there.
+    expect(deckNames(container)).toEqual(["Alpha"]);
+  });
+
+  it("folds away cards written twice, and shows nothing when all is well", async () => {
+    const { renderDeckList } = await freshDeckList();
+    await cache([card(1, "Alpha")]);
+    await renderDeckList(container, () => {}, () => {}, () => {});
+    expect(container.querySelector("#deck-problems")).toBeNull();
+
+    const { updateDeckFiles } = await import("../db");
+    await updateDeckFiles([
+      { repo: "someone/cards", path: "Beta.md", sha: "y", cards: [card(2, "Beta")], duplicates: [{ line: 7, firstLine: 1 }] },
+    ]);
+    await (await import("../sync")).loadCards();
+    await renderDeckList(container, () => {}, () => {}, () => {});
+    const panel = container.querySelector<HTMLDetailsElement>("#deck-problems")!;
+    expect(panel.open).toBe(false);
+    expect(panel.querySelector("summary")!.textContent).toBe("A card is in your decks twice");
+  });
+
   it("distinguishes a first sync in flight from an unconfigured app", async () => {
     const { renderDeckList, setSyncStatus } = await freshDeckList();
 

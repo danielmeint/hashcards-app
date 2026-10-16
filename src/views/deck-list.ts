@@ -1,7 +1,8 @@
 import { html, nothing, render, TemplateResult } from "lit-html";
 import { Card, DrillSession, ReviewedPerformance } from "../types";
-import { loadCachedCards, syncEverything } from "../sync";
-import { getConfig, getRepos, repoKey } from "../github";
+import { loadCachedCards, loadProblems, syncEverything } from "../sync";
+import { DeckProblem } from "../deck-problems";
+import { getConfig, getRepos, repoFor, repoKey } from "../github";
 import {
   getAllPerformances,
   getReviewsSince,
@@ -87,6 +88,8 @@ type Model = {
   /** Inbox decisions not yet committed, and when the oldest was made. */
   pendingEdits: number;
   oldestEditAt: string | null;
+  /** What is wrong with the decks' files (`deck-problems.ts`). */
+  problems: DeckProblem[];
 };
 
 /**
@@ -241,6 +244,7 @@ export async function renderDeckList(
     const configured = getConfig() !== null;
     return html`<div class="page deck-list-view">
       ${bar}
+      ${problemsPanel()}
       <div class="empty">
         <h1>${configured ? "No cards yet" : "No cards loaded"}</h1>
         <p>
@@ -285,6 +289,7 @@ export async function renderDeckList(
     return html`<div class="page deck-list-view">
       ${appBar(line)}
       ${banner(line)}
+      ${problemsPanel()}
       ${model.resumable.length > 0 ? resumeBanner() : nothing}
       ${totalDue > 0 ? dueHero(totalDue) : caughtUp()}
       ${model.drafts > 0 ? inboxRow() : nothing}
@@ -472,6 +477,39 @@ export async function renderDeckList(
    * Drafts waiting for a decision. Only when there are some: an empty Inbox
    * is not something to be reminded of on every visit.
    */
+  /**
+   * Files that do not parse, and cards written twice. Open when a deck is
+   * broken — its newest cards are missing from Today until it is fixed — and
+   * folded when it is only duplicates, which cost nothing but tidiness.
+   */
+  function problemsPanel(): TemplateResult | typeof nothing {
+    const problems = model.problems;
+    if (problems.length === 0) return nothing;
+    const broken = problems.filter((p) => p.kind === "parse").length;
+    const summary =
+      broken > 0
+        ? `${broken === 1 ? "A deck doesn't" : `${broken} decks don't`} parse`
+        : `${problems.length === 1 ? "A card is" : `${problems.length} cards are`} in your decks twice`;
+    return html`<details class="notice notice-${broken > 0 ? "error" : "warn"} deck-problems" id="deck-problems" ?open=${broken > 0}>
+      <summary>${summary}</summary>
+      <ul>
+        ${problems.map((p) => {
+          const where = `${model.repoNames.size > 1 ? `${p.repo}: ` : ""}${p.path}${p.line ? `:${p.line}` : ""}`;
+          const url = problemUrl(p);
+          return html`<li class="deck-problem" data-kind=${p.kind}>
+            <span class="deck-problem-where">${url ? html`<a href=${url} target="_blank" rel="noopener">${where}</a>` : where}</span>
+            <span>${p.message}</span>
+            ${p.kind === "parse"
+              ? html`<span class="deck-problem-note">${p.keptOld
+                  ? "Showing the last version of this deck that worked."
+                  : "None of its cards can be shown until it is fixed."}</span>`
+              : nothing}
+          </li>`;
+        })}
+      </ul>
+    </details>`;
+  }
+
   function inboxRow(): TemplateResult {
     const n = model.drafts;
     return html`<div class="list inbox-entry">
@@ -655,6 +693,7 @@ async function load(): Promise<Model> {
       unsynced,
       drafts: 0,
       ...pending,
+      problems: await loadProblems(),
     };
   }
 
@@ -763,5 +802,14 @@ async function load(): Promise<Model> {
       return config !== undefined && !config.readOnly;
     }).length,
     ...pending,
+    problems: await loadProblems(),
   };
+}
+
+/** The problem's line on GitHub, where the file can be fixed; null in the demo. */
+function problemUrl(p: DeckProblem): string | null {
+  const repo = repoFor(p.repo);
+  if (!repo || isDemo()) return null;
+  const path = p.path.split("/").map(encodeURIComponent).join("/");
+  return `https://github.com/${repo.owner}/${repo.repo}/blob/${repo.branch}/${path}${p.line ? `#L${p.line}` : ""}`;
 }

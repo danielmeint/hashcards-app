@@ -127,6 +127,41 @@ describe("the stats view", () => {
     return stats;
   }
 
+  it("counts every device's reviews, and only cards that still exist", async () => {
+    const stats = await freshStats();
+    await seedCards(stats, [card(1), card(2)]);
+    // This device graded card 1 yesterday; a laptop graded card 2 today and
+    // the day before, and a card since deleted.
+    const { utcOffsetMinutes: tzOf } = await import("../core/schedule");
+    await stats.importReviews([{ ...review(1, Grade.Good, -1), tz: tzOf(day(-1)) }]);
+    // In this machine's zone, so "today" here is today there.
+    const { utcOffsetMinutes } = await import("../core/schedule");
+    const at = (offset: number) => ({ at: day(offset), tz: utcOffsetMinutes(day(offset)) });
+    const events = [
+      { v: 2 as const, kind: "review" as const, card: "k2", ...at(0), grade: 1 as const },
+      { v: 2 as const, kind: "review" as const, card: "k2", ...at(-2), grade: 3 as const },
+      { v: 2 as const, kind: "review" as const, card: "gone", ...at(-3), grade: 4 as const },
+    ];
+    await stats.updatePulledFiles([{ repo: "someone/cards", path: "reviews/2026-10.laptop1.jsonl", sha: "s", events }]);
+    const { refreshStates } = await import("../review-state");
+    await refreshStates();
+
+    await stats.renderStats(container, () => {});
+
+    expect(text(container, ".grades-panel .panel-head span")).toBe("4 reviews");
+    const boxes = Object.fromEntries(
+      [...container.querySelectorAll(".stat-box")].map((box) => [
+        box.querySelector(".stat-label")?.textContent,
+        box.querySelector(".stat-value")?.textContent,
+      ])
+    );
+    // Today, yesterday (here), two days ago, three days ago: an unbroken run.
+    expect(boxes.streak).toBe("4 days");
+    // The deleted card's schedule is in the replay, but it is not a card.
+    expect(boxes.cards).toBe("2");
+    expect(boxes.learned).toBe("2");
+  });
+
   it("counts what is known, learned and due", async () => {
     const { renderStats } = await seed();
 

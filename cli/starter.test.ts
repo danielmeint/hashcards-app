@@ -49,8 +49,10 @@ describe("the starter collection", () => {
     expect(drafts.length).toBeGreaterThanOrEqual(2);
     expect(drafts.length).toBeLessThanOrEqual(3);
 
-    expect(cards.every((c) => c.id !== null)).toBe(true);
-    expect(cards.some((c) => c.key.endsWith(":r"))).toBe(true);
+    expect(cards.every((c) => c.legacyKey === null)).toBe(true);
+    // A reversed card: two basic cards of one family.
+    const families = cards.filter((c) => c.content.type === "basic").map((c) => c.familyHash);
+    expect(families.some((f, i) => families.indexOf(f) !== i)).toBe(true);
     expect(cards.some((c) => c.content.type === "cloze")).toBe(true);
     expect(cards.some((c) => c.content.extra)).toBe(true);
     expect(cards.some((c) => c.tags.length > 1)).toBe(true);
@@ -63,8 +65,8 @@ describe("the starter collection", () => {
 
   it("uses only single blanks, so each deletion stands alone", async () => {
     const { cards } = await loadCollection(STARTER);
-    const clozeKeys = cards.filter((c) => c.content.type === "cloze").map((c) => c.key);
-    expect(clozeKeys.every((key) => key.endsWith(":1"))).toBe(true);
+    const families = cards.filter((c) => c.content.type === "cloze").map((c) => c.familyHash);
+    expect(new Set(families).size).toBe(families.length);
   });
 
   it("explains itself to the person who just created it", () => {

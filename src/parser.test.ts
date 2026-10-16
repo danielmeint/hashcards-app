@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseFile } from "./parser";
-import { hashBasicCard } from "./hash";
+import { basicIdentity, hashBasicCard } from "./hash";
 
 describe("Parser", () => {
   it("parses empty string", async () => {
@@ -282,14 +282,14 @@ describe("card line ranges", () => {
  * the app still keys scheduling on it, so a stamped ID must not reset a card.
  */
 describe("card metadata", () => {
-  it("reads ID, Tags and Status from the top of a block", async () => {
+  it("reads Tags and Status from the top of a block", async () => {
     const [card] = await parseFile(
-      "ID: est-capital\nTags: capitals, europe\nStatus: draft\nQ: Capital of Estonia?\nA: Tallinn",
+      "Tags: capitals, europe\nStatus: draft\nQ: Capital of Estonia?\nA: Tallinn",
       "test.md",
       "test"
     );
-    expect(card.id).toBe("est-capital");
-    expect(card.key).toBe("est-capital");
+    expect(card.key).toBe(`h:${(await basicIdentity("Capital of Estonia?", "Tallinn")).slice(0, 16)}`);
+    expect(card.legacyKey).toBeNull();
     expect(card.tags).toEqual(["capitals", "europe"]);
     expect(card.status).toBe("draft");
     expect(card.content).toEqual({
@@ -299,33 +299,32 @@ describe("card metadata", () => {
     });
   });
 
-  it("gives a card with no metadata a hash key and the defaults", async () => {
+  it("gives a card with no metadata its key and the defaults", async () => {
     const [card] = await parseFile("Q: one\nA: two", "test.md", "test");
-    expect(card.id).toBeNull();
-    expect(card.key).toBe(`h:${card.hash.slice(0, 16)}`);
+    expect(card.key).toMatch(/^h:[0-9a-f]{16}$/);
     expect(card.tags).toEqual([]);
     expect(card.status).toBe("active");
   });
 
-  it("leaves the v1 hash alone when metadata is added", async () => {
+  it("leaves hashes and keys alone when metadata is added", async () => {
     const plain = await parseFile(
       "Q: one\nA: two\n---\nC: [Alpha] and [Beta].",
       "test.md",
       "test"
     );
-    const stamped = await parseFile(
-      "ID: k8q2xv7m\nTags: x\nQ: one\nA: two\n---\nID: k3n9wq2p\nStatus: suspended\nC: [Alpha] and [Beta].",
+    const tagged = await parseFile(
+      "ID: k8q2xv7m\nTags: x\nQ: one\nA: two\n---\nStatus: suspended\nC: [Alpha] and [Beta].",
       "test.md",
       "test"
     );
-    expect(stamped.map((c) => [c.hash, c.familyHash])).toEqual(
-      plain.map((c) => [c.hash, c.familyHash])
+    expect(tagged.map((c) => [c.hash, c.familyHash, c.key])).toEqual(
+      plain.map((c) => [c.hash, c.familyHash, c.key])
     );
   });
 
   it("starts a card's range at its first metadata line", async () => {
     const cards = await parseFile(
-      '---\nname = "D"\n---\nQ: one\nA: two\n\n---\n\nID: ab\nTags: t\nQ: three\nA: four\n',
+      '---\nname = "D"\n---\nQ: one\nA: two\n\n---\n\nStatus: draft\nTags: t\nQ: three\nA: four\n',
       "test.md",
       "test"
     );
@@ -333,34 +332,26 @@ describe("card metadata", () => {
     expect(cards[1].range).toEqual([9, 12]);
   });
 
-  it("numbers a cloze block's deletions in order of appearance", async () => {
-    const cards = await parseFile(
-      "ID: k3n9wq2p\nC: A [Deployment] manages a [ReplicaSet] of [Pods].",
-      "test.md",
-      "test"
-    );
-    expect(cards.map((c) => c.key)).toEqual(["k3n9wq2p:1", "k3n9wq2p:2", "k3n9wq2p:3"]);
-    expect(cards.every((c) => c.id === "k3n9wq2p")).toBe(true);
-  });
-
-  it("gives cloze deletions without an ID a hash key each", async () => {
+  it("gives every cloze deletion its own key, and the block one family", async () => {
     const cards = await parseFile("C: [Alpha] and [Beta].", "test.md", "test");
-    expect(cards.map((c) => c.key)).toEqual(cards.map((c) => `h:${c.hash.slice(0, 16)}`));
+    expect(cards).toHaveLength(2);
+    expect(new Set(cards.map((c) => c.key)).size).toBe(2);
+    expect(cards[0].familyHash).toBe(cards[1].familyHash);
   });
 
   it("allows blank lines between metadata and the card", async () => {
-    const [card] = await parseFile("ID: ab\n\nTags: t\n\nQ: one\nA: two", "test.md", "test");
-    expect(card.id).toBe("ab");
+    const [card] = await parseFile("Status: draft\n\nTags: t\n\nQ: one\nA: two", "test.md", "test");
+    expect(card.status).toBe("draft");
     expect(card.tags).toEqual(["t"]);
   });
 
   it("reads metadata from files with CRLF line endings", async () => {
     const [card] = await parseFile(
-      "ID: ab\r\nStatus: suspended\r\nQ: one\r\nA: two\r\n",
+      "Tags: t\r\nStatus: suspended\r\nQ: one\r\nA: two\r\n",
       "test.md",
       "test"
     );
-    expect(card.id).toBe("ab");
+    expect(card.tags).toEqual(["t"]);
     expect(card.status).toBe("suspended");
   });
 
@@ -372,28 +363,28 @@ describe("card metadata", () => {
       "test"
     );
     expect(card.content).toMatchObject({ answer: "It says\nStatus: Running\nID: none" });
-    expect(card.id).toBeNull();
+    expect(card.legacyKey).toBeNull();
     expect(card.status).toBe("active");
   });
 
   it("only reads metadata where a block begins, not between cards with no separator", async () => {
-    const cards = await parseFile("Q: one\nA: two\nID: ab\nQ: three\nA: four", "test.md", "test");
-    expect(cards[0].content).toMatchObject({ answer: "two\nID: ab" });
-    expect(cards[1].id).toBeNull();
+    const cards = await parseFile("Q: one\nA: two\nTags: t\nQ: three\nA: four", "test.md", "test");
+    expect(cards[0].content).toMatchObject({ answer: "two\nTags: t" });
+    expect(cards[1].tags).toEqual([]);
   });
 
   it("errors on metadata with no card after it", async () => {
-    await expect(parseFile("ID: ab\n---\nQ: x\nA: y", "test.md", "test")).rejects.toThrow(
+    await expect(parseFile("Tags: t\n---\nQ: x\nA: y", "test.md", "test")).rejects.toThrow(
       /metadata with no card/
     );
-    await expect(parseFile("Q: x\nA: y\n---\nID: ab\n", "test.md", "test")).rejects.toThrow(
+    await expect(parseFile("Q: x\nA: y\n---\nTags: t\n", "test.md", "test")).rejects.toThrow(
       /metadata with no card/
     );
   });
 
   it("errors on text between metadata and the card", async () => {
     await expect(
-      parseFile("ID: ab\nsome note\nQ: x\nA: y", "test.md", "test")
+      parseFile("Tags: t\nsome note\nQ: x\nA: y", "test.md", "test")
     ).rejects.toThrow(/between a card's metadata/);
   });
 
@@ -419,13 +410,88 @@ describe("card metadata", () => {
   });
 });
 
-describe("card IDs", () => {
+/**
+ * A card is its text (PLAN-1.0 §2.7): what the key is made of, and what it is
+ * not.
+ */
+describe("card identity", () => {
+  const keyOf = async (text: string) => (await parseFile(text, "t.md", "t")).map((c) => c.key);
+
+  it("ignores how the text is laid out: runs of whitespace, line breaks, indentation", async () => {
+    const one = await keyOf("Q: What is the capital of Estonia?\nA: Tallinn");
+    expect(await keyOf("Q:   What is the capital\n  of Estonia?  \n\nA:\nTallinn\n")).toEqual(one);
+    expect(await keyOf("Q: What is the capital of Estonia?\r\nA: Tallinn\r\n")).toEqual(one);
+    expect(await keyOf("Q: What is the capital of Estonia?\nA: Tallinn.")).not.toEqual(one);
+  });
+
+  it("does not let text move between question and answer", async () => {
+    expect(await keyOf("Q: ab\nA: c")).not.toEqual(await keyOf("Q: a\nA: bc"));
+    expect(await keyOf("Q: a b\nA: c")).not.toEqual(await keyOf("Q: a\nA: b c"));
+  });
+
+  it("is the same card in any file, deck or position", async () => {
+    const [a] = await parseFile("Q: one\nA: two", "a.md", "A");
+    const cards = await parseFile('---\nname = "B"\n---\nQ: zero\nA: z\n---\nQ: one\nA: two', "x/b.md", "B");
+    expect(cards[1].key).toBe(a.key);
+  });
+
+  it("keeps a cloze deletion's key when another deletion is added or removed", async () => {
+    const two = await keyOf("C: The [first] and the second.");
+    const both = await keyOf("C: The [first] and the [second].");
+    expect(both[0]).toBe(two[0]);
+    expect(both[1]).not.toBe(both[0]);
+  });
+
+  it("changes every deletion's key when the sentence changes", async () => {
+    const before = await keyOf("C: The [first] and the [second].");
+    const after = await keyOf("C: The [first] and then the [second].");
+    expect(after.filter((k) => before.includes(k))).toEqual([]);
+  });
+
+  it("tells a deletion from the same words unbracketed elsewhere", async () => {
+    const [a] = await keyOf("C: [a] a");
+    const [b] = await keyOf("C: a [a]");
+    expect(a).not.toBe(b);
+  });
+
+  it("keeps the first of two identical cards in a file, and says so", async () => {
+    const seen: [number, number][] = [];
+    const cards = await parseFile("Q: a\nA: b\n---\nQ:  a\nA: b \n---\nQ: c\nA: d", "t.md", "t", (dup, first) =>
+      seen.push([dup.range[0], first.range[0]])
+    );
+    expect(cards.map((c) => c.range[0])).toEqual([1, 7]);
+    expect(seen).toEqual([[4, 1]]);
+  });
+});
+
+/**
+ * `ID:` lines, as early 1.0 builds wrote them (§2.7): still read, never the
+ * card's identity, only a record of the key its history was filed under.
+ */
+describe("legacy ID lines", () => {
   const withId = (id: string) => parseFile(`ID: ${id}\nQ: x\nA: y`, "test.md", "test");
+
+  it("records the key an ID gave each card of its block", async () => {
+    const basic = await parseFile("ID: deu\nReverse: yes\nQ: a\nA: b", "t.md", "t");
+    expect(basic.map((c) => c.legacyKey)).toEqual(["deu", "deu:r"]);
+    const cloze = await parseFile("ID: k3n9wq2p\nC: A [Deployment] manages a [ReplicaSet] of [Pods].", "t.md", "t");
+    expect(cloze.map((c) => c.legacyKey)).toEqual(["k3n9wq2p:1", "k3n9wq2p:2", "k3n9wq2p:3"]);
+  });
+
+  it("does not change the card's key", async () => {
+    const [plain] = await parseFile("Q: x\nA: y", "t.md", "t");
+    expect((await withId("ab"))[0].key).toBe(plain.key);
+  });
+
+  it("allows the same ID twice: it names nothing any more", async () => {
+    const cards = await parseFile("ID: ab\nQ: x\nA: y\n---\nID: ab\nQ: z\nA: w", "test.md", "test");
+    expect(cards).toHaveLength(2);
+  });
 
   it.each(["ab", "est-capital", "k8q2xv7m", "0a", "a-", "a".repeat(64)])(
     "accepts %s",
     async (id) => {
-      expect((await withId(id))[0].id).toBe(id);
+      expect((await withId(id))[0].legacyKey).toBe(id);
     }
   );
 
@@ -435,18 +501,12 @@ describe("card IDs", () => {
       await expect(withId(id)).rejects.toThrow(/Invalid card ID/);
     }
   );
-
-  it("errors on the same ID twice in a file, naming both lines", async () => {
-    await expect(
-      parseFile("ID: ab\nQ: x\nA: y\n---\nID: ab\nQ: z\nA: w", "test.md", "test")
-    ).rejects.toThrow(/Duplicate card ID 'ab', already used on line 1\. Location: test\.md:5/);
-  });
 });
 
 describe("reverse cards", () => {
   it("also emits the card the other way round", async () => {
     const cards = await parseFile(
-      "ID: deu\nTags: map\nReverse: yes\nQ: **Germany**\nA: ![Germany](map-deu.png)",
+      "Tags: map\nReverse: yes\nQ: **Germany**\nA: ![Germany](map-deu.png)",
       "test.md",
       "test"
     );
@@ -457,18 +517,15 @@ describe("reverse cards", () => {
       question: "![Germany](map-deu.png)",
       answer: "**Germany**",
     });
-    expect(reverse.key).toBe("deu:r");
     expect(reverse.hash).toBe(await hashBasicCard("![Germany](map-deu.png)", "**Germany**"));
-    expect(reverse.hash).not.toBe(forward.hash);
-    // Same block, same lines, same metadata.
+    expect(reverse.key).not.toBe(forward.key);
+    // The card it would be if written out by hand.
+    const [byHand] = await parseFile("Q: ![Germany](map-deu.png)\nA: **Germany**", "t.md", "t");
+    expect(reverse.key).toBe(byHand.key);
+    // Same block, same lines, same metadata, one family.
     expect(reverse.range).toEqual(forward.range);
     expect(reverse.tags).toEqual(["map"]);
-    expect(reverse.id).toBe("deu");
-  });
-
-  it("keys the reverse of a card with no ID by its own hash", async () => {
-    const [, reverse] = await parseFile("Reverse: yes\nQ: a\nA: b", "test.md", "test");
-    expect(reverse.key).toBe(`h:${reverse.hash.slice(0, 16)}`);
+    expect(reverse.familyHash).toBe(forward.familyHash);
   });
 
   it("treats Reverse: no as no reverse", async () => {
@@ -514,8 +571,8 @@ describe("frontmatter tags", () => {
 
 /**
  * Every combination of metadata a block can carry, on both card types: the
- * fields come out as written, keys follow §2.2, and the hashes are the ones the
- * same card had with no metadata at all.
+ * fields come out as written, and the hashes and keys are the ones the same
+ * card has with no metadata at all.
  */
 describe("every metadata combination", () => {
   const ids = [null, "combo-id"];
@@ -551,26 +608,22 @@ describe("every metadata combination", () => {
     const cards = await parseFile(text, "t.md", "t");
     const plain = await parseFile(bodies[type], "t.md", "t");
 
-    expect(cards.slice(0, plain.length).map((c) => c.hash)).toEqual(plain.map((c) => c.hash));
+    expect(cards.slice(0, plain.length).map((c) => [c.hash, c.key])).toEqual(plain.map((c) => [c.hash, c.key]));
     for (const card of cards) {
-      expect(card.id).toBe(id);
+      expect(card.legacyKey === null).toBe(id === null);
       expect(card.tags).toEqual(tags ? ["deck", "a", "b"] : ["deck"]);
       expect(card.status).toBe(status ?? "active");
       expect(card.range).toEqual([4, 4 + header.length + (type === "basic" ? 1 : 0)]);
     }
 
-    const keys = cards.map((c) => c.key);
+    const legacy = cards.map((c) => c.legacyKey);
     if (type === "cloze") {
-      expect(keys).toEqual(
-        id ? [`${id}:1`, `${id}:2`] : cards.map((c) => `h:${c.hash.slice(0, 16)}`)
-      );
+      expect(legacy).toEqual(id ? [`${id}:1`, `${id}:2`] : [null, null]);
     } else if (reverse === "yes") {
       expect(cards).toHaveLength(2);
-      expect(keys).toEqual(
-        id ? [id, `${id}:r`] : cards.map((c) => `h:${c.hash.slice(0, 16)}`)
-      );
+      expect(legacy).toEqual(id ? [id, `${id}:r`] : [null, null]);
     } else {
-      expect(keys).toEqual([id ?? `h:${cards[0].hash.slice(0, 16)}`]);
+      expect(legacy).toEqual([id]);
     }
   });
 });
@@ -582,8 +635,8 @@ describe("every metadata combination", () => {
  */
 describe("the Extra section", () => {
   const variants = (extra: string) => ({
-    basic: `ID: ab\nReverse: yes\nQ: question\nA: answer${extra}`,
-    cloze: `ID: ab\nC: The [first] and the [second].${extra}`,
+    basic: `Reverse: yes\nQ: question\nA: answer${extra}`,
+    cloze: `C: The [first] and the [second].${extra}`,
   });
 
   it.each(["basic", "cloze"] as const)("reads it on a %s card, multi-line", async (type) => {
@@ -592,7 +645,7 @@ describe("the Extra section", () => {
       "t.md",
       "t"
     );
-    const own = cards.filter((c) => c.id === "ab");
+    const own = cards.slice(0, 2);
     expect(own.length).toBe(2);
     for (const card of own) expect(card.content.extra).toBe("a note\n\n- with a list");
     // The section ends at the separator, like an answer.
@@ -639,7 +692,7 @@ describe("the Extra section", () => {
   it.each([
     ["before A:", "Q: a\nExtra: c\nA: b", /Extra: before the card's A: line.*t\.md:2/],
     ["with no card", "Extra: c\nQ: a\nA: b", /Extra: without a card before it/],
-    ["as metadata", "ID: ab\nExtra: c\nQ: a\nA: b", /Extra: without a card before it/],
+    ["as metadata", "Tags: t\nExtra: c\nQ: a\nA: b", /Extra: without a card before it/],
     ["twice", "Q: a\nA: b\nExtra: c\nExtra: d", /only have one Extra: section.*t\.md:4/],
     ["empty", "Q: a\nA: b\nExtra:\n\n---\nQ: c\nA: d", /Extra: with nothing after it.*t\.md:3/],
     ["empty at the end", "C: [a] b\nExtra:   ", /Extra: with nothing after it/],

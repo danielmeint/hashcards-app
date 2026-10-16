@@ -3,11 +3,12 @@ import { utcOffsetMinutes } from "./core/schedule";
 import { legacy, settings } from "./settings";
 import { Card, DrillSession, ParsedCard, ReviewedPerformance, Review } from "./types";
 import { formatKey, keyInLog, stateKey } from "./card-key";
-import { BaselineEvent, ReviewLogEvent } from "./core/events";
+import { BaselineEvent, LinkEvent, ReviewLogEvent } from "./core/events";
 import { CardState, EventOrder } from "./core/replay";
 import { localDay } from "./fsrs";
 import { logLine, v1MonthOf, v1PushedKey } from "./v1-log";
 import { databaseName } from "./demo-mode";
+import { cardIdentity } from "./parser";
 
 const DB_VERSION = 8;
 
@@ -92,6 +93,7 @@ function getDb(): Promise<IDBPDatabase> {
       await seedOrigins(db);
       await migrateDeckFiles(db);
       await migrateToKeys(db);
+      await migrateToHashIdentity(db);
       return db;
     });
   }
@@ -323,18 +325,20 @@ function seedRecord(key: string, perf: ReviewedPerformance): StateRecord {
 
 // --- Local events ----------------------------------------------------------------
 
-/** A baseline this device wrote, and which collection's log it goes in. */
-export type LocalBaseline = { log: string; event: BaselineEvent };
+/**
+ * An event this device wrote that is not a grade — a baseline, or the link an
+ * in-app edit leaves behind (PLAN-1.0 §2.7) — and which collection's log it
+ * goes in. Kept in the `baselines` store, the name it had when baselines were
+ * the only kind.
+ */
+export type LocalBaseline = { log: string; event: BaselineEvent | LinkEvent };
 
 export async function getLocalBaselines(): Promise<LocalBaseline[]> {
   const db = await getDb();
   return db.getAll("baselines");
 }
 
-/**
- * Record baselines — a card's state carried onto a key it did not have before
- * (an edit of a card with no ID). Appended like reviews, never edited.
- */
+/** Record baselines and links. Appended like reviews, never edited. */
 export async function addBaselines(baselines: LocalBaseline[]): Promise<void> {
   if (baselines.length === 0) return;
   const db = await getDb();
@@ -434,7 +438,6 @@ async function migrateToKeys(db: IDBPDatabase): Promise<void> {
     }
     const cards = file.cards.map((card) => ({
       ...card,
-      id: card.id ?? null,
       key: card.key || formatKey({ kind: "hash", hash: card.hash }),
       tags: card.tags ?? [],
       status: card.status ?? ("active" as const),
@@ -542,6 +545,60 @@ async function migrateToKeys(db: IDBPDatabase): Promise<void> {
   await tx.done;
 }
 
+
+/**
+ * Re-key cached cards for PLAN-1.0 §2.7, once: a card is its text again.
+ *
+ * Every cached card gets the key and family its content gives now, and the key
+ * its `ID:` line gave it (if any) as `legacyKey` — exactly what parsing its
+ * file again would give, so nothing needs fetching. Every replay is marked
+ * stale: the same events now resolve to different keys.
+ */
+async function migrateToHashIdentity(db: IDBPDatabase): Promise<void> {
+  if (await db.get("meta", "hash_identity")) return;
+  const files = (await db.getAll("deckFiles")) as DeckFile[];
+  const renamed = new Map<string, string>();
+  const updated: DeckFile[] = [];
+  for (const file of files) {
+    const cards: Card[] = [];
+    /** A basic card's family, by its block's first line: its forward card's. */
+    const forward = new Map<number, string>();
+    for (const card of file.cards) {
+      const old = card as Card & { id?: string | null };
+      const { key, familyHash } = await cardIdentity(card.content);
+      const legacyKey = old.id && !old.key.startsWith("h:") ? old.key : null;
+      // A reverse card comes right after its forward card, in the same lines.
+      const family =
+        card.content.type === "basic" ? (forward.get(card.range[0]) ?? familyHash) : familyHash;
+      if (card.content.type === "basic" && !forward.has(card.range[0])) forward.set(card.range[0], familyHash);
+      const { id: _, ...rest } = old;
+      void _;
+      cards.push({ ...rest, key, familyHash: family, legacyKey });
+      renamed.set(stateKey(card), stateKey({ ...card, key }));
+    }
+    updated.push({ ...file, cards });
+  }
+  const session = (await db.get("session", SESSION_KEY)) as DrillSession | undefined;
+  const marks = (await db.getAllKeys("meta")).filter((k) => String(k).startsWith("replay:"));
+
+  const tx = db.transaction(["deckFiles", "session", "meta"], "readwrite");
+  for (const file of updated) tx.objectStore("deckFiles").put(file);
+  for (const mark of marks) tx.objectStore("meta").delete(mark);
+  if (session) {
+    const toKey = (key: string) => renamed.get(key) ?? key;
+    tx.objectStore("session").put(
+      {
+        ...session,
+        queue: session.queue.map(toKey),
+        completed: session.completed.map(toKey),
+        gradedNew: session.gradedNew.map(toKey),
+      },
+      SESSION_KEY
+    );
+  }
+  tx.objectStore("meta").put(true, "hash_identity");
+  await tx.done;
+}
 
 /**
  * Add reviews in bulk, as if graded here. Only the demo does this, for the

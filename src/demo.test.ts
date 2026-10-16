@@ -66,7 +66,15 @@ describe("the demo", () => {
     // Nothing on or after today: the visitor's own reviews are the first of it.
     expect(reviews.every((r) => new Date(r.reviewedAt) < new Date(2026, 9, 16))).toBe(true);
     // The Welcome deck is left new: the demo's first review is its tutorial.
-    expect(reviews.some((r) => r.key.includes("/welcome-"))).toBe(false);
+    const welcome = new Set(cards.filter((c) => c.filePath === "Welcome.md").map((c) => `${c.repo}/${c.key}`));
+    expect(welcome.size).toBeGreaterThan(0);
+    expect(reviews.some((r) => welcome.has(r.key))).toBe(false);
+
+    // A leech for Statistics to show: the reverse of *la sobremesa*.
+    const { findLeeches } = await import("./leeches");
+    const { reviewHistory } = await import("./review-state");
+    const leeches = findLeeches(cards, await reviewHistory());
+    expect(leeches.map((l) => l.card.content.type === "basic" && l.card.content.answer)).toContain("**la sobremesa**");
 
     const states = await db.getAllPerformances();
     const due = [...states.values()].filter((s) => s.dueDate <= "2026-10-16");
@@ -146,8 +154,9 @@ describe("the demo", () => {
     await commit.saveInbox();
     expect(await queue.pendingOps()).toEqual([]);
     const text = (await github.readFile(mode.DEMO_REPO, first.path)).text;
-    expect(text).not.toContain(`ID: ${first.cards[0].id}\nStatus: draft`);
-    const kept = (await sync.loadCachedCards()).find((c) => c.id === first.cards[0].id);
+    expect(edits.findDrafts(await sync.loadCachedCards(), () => true)).toHaveLength(2);
+    expect(text).toContain((first.cards[0].content as { question?: string; text?: string }).question ?? "");
+    const kept = (await sync.loadCachedCards()).find((c) => c.key === first.cards[0].key);
     expect(kept?.status).toBe("active");
   });
 });

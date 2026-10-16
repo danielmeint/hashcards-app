@@ -22,6 +22,11 @@ import { dayAt } from "./schedule";
 export const MIGRATED_DEVICE = "v1";
 /** `hc import anki`: the Anki collection's review log. */
 export const ANKI_DEVICE = "anki";
+/**
+ * `hc migrate` and `hc relink`: the `link` events they write (PLAN-1.0 §2.7).
+ * Unlike the others, appended to: each run adds to the month's file.
+ */
+export const HC_DEVICE = "hc";
 
 /** Where the data branch keeps review files. */
 export const REVIEWS_DIR = "reviews";

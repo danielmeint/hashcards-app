@@ -17,8 +17,6 @@ export type InboxDeps = {
   enqueue(ops: InboxOp[]): Promise<void>;
   /** Take queued decisions back out. */
   drop(ids: string[]): Promise<void>;
-  /** A fresh ID for a kept block that has none. */
-  newCardId(): string;
   /** A fresh op ID. */
   newOpId(): string;
   /** The time, for `InboxOp.at`. */
@@ -104,12 +102,7 @@ export function createInboxSession(drafts: DraftBlock[], deps: InboxDeps): Inbox
     await exclusive(async () => {
       const item = queue[0];
       if (!item) return;
-      const hasId = item.cards.some((c) => c.id !== null);
-      const queued = op(
-        item,
-        decision,
-        decision === "keep" && !hasId ? { stampId: deps.newCardId() } : {}
-      );
+      const queued = op(item, decision);
       await deps.enqueue([queued]);
       queue.shift();
       record({ decision, item, ops: [queued], advanced: true });

@@ -1,6 +1,6 @@
 import { Card, ParsedCard } from "./types";
 import { parseFile, topMetadata } from "./parser";
-import { keepId, sliceLines, spliceLines } from "./card-edit-text";
+import { spliceLines } from "./card-edit-text";
 
 /**
  * What the Inbox does to a card file, as text (PLAN-1.0 M7).
@@ -20,7 +20,6 @@ import { keepId, sliceLines, spliceLines } from "./card-edit-text";
 
 /** A line that ends its block's run of metadata as a draft. */
 const DRAFT_LINE = /^Status:\s*draft\s*\r?$/;
-const ID_LINE = /^ID:/;
 const SEPARATOR = /^---\s*\r?$/;
 const blank = (line: string | undefined) => line !== undefined && line.trim() === "";
 
@@ -87,29 +86,20 @@ export async function locateBlock(
 
 /**
  * The block at `range` (1-based, inclusive, as `Card.range`) with its
- * `Status: draft` line taken out, and — if the block has no `ID:` — an ID in
- * its place. Replacing the line rather than adding one keeps the diff to a
- * single changed line. Throws if the block is not a draft: the caller located
+ * `Status: draft` line taken out: a one-line diff. Throws if the block is not a draft: the caller located
  * it as one, so that would be a bug, not a conflict.
  */
-export function keepDraft(text: string, range: [number, number], id: string | null): string {
+export function keepDraft(text: string, range: [number, number]): string {
   const lines = text.split("\n");
   const [start, end] = [range[0] - 1, range[1] - 1];
   let draftAt = -1;
-  let hasId = false;
   for (let i = start; i <= end; i++) {
     if (blank(lines[i])) continue;
     if (DRAFT_LINE.test(lines[i])) draftAt = i;
-    else if (ID_LINE.test(lines[i])) hasId = true;
     else if (topMetadata(lines[i]).size === 0) break;
   }
   if (draftAt === -1) throw new Error(`No 'Status: draft' line in lines ${range[0]}–${range[1]}`);
-  if (hasId || id === null) {
-    lines.splice(draftAt, 1);
-  } else {
-    const eol = lines[draftAt].endsWith("\r") ? "\r" : "";
-    lines[draftAt] = `ID: ${id}${eol}`;
-  }
+  lines.splice(draftAt, 1);
   return lines.join("\n");
 }
 
@@ -178,15 +168,12 @@ export function frontmatterEnd(text: string): number {
 }
 
 /**
- * The block at `range` rewritten to `replacement`, keeping its ID if the
- * rewrite dropped it (as the card editor does — see `keepId`). An empty
- * replacement is a discard, and takes the separator with it.
+ * The block at `range` rewritten to `replacement`. An empty replacement is a
+ * discard, and takes the separator with it.
  */
 export function rewriteBlock(text: string, range: [number, number], replacement: string): string {
-  const original = sliceLines(text, range);
-  const next = keepId(original, replacement);
-  if (next.trim() === "") return discardBlock(text, range);
-  return spliceLines(text, range, next);
+  if (replacement.trim() === "") return discardBlock(text, range);
+  return spliceLines(text, range, replacement);
 }
 
 /** One queued change to a file, as far as applying it needs to know. */
@@ -194,8 +181,6 @@ export type FileOp = {
   action: "keep" | "discard" | "edit";
   /** The hashes of the block's cards when the change was made. */
   block: string[];
-  /** keep: the ID to give a block that has none. */
-  stampId?: string;
   /** edit: the block's new text. */
   text?: string;
 };
@@ -222,7 +207,7 @@ export async function applyOps<T extends FileOp>(
       continue;
     }
     let next: string;
-    if (op.action === "keep") next = keepDraft(text, at.range, op.stampId ?? null);
+    if (op.action === "keep") next = keepDraft(text, at.range);
     else if (op.action === "discard") next = discardBlock(text, at.range);
     else next = rewriteBlock(text, at.range, op.text ?? "");
     // A rewrite was checked against the file as it was when it was typed; the

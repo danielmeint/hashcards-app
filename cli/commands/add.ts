@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { randomId } from "../../src/card-ids";
 import { parseFile } from "../../src/parser";
 import { defaultDeckName, isDeckPath, loadCollection } from "../collection";
 import { CommandError, EXIT, UsageError } from "../command";
@@ -12,10 +11,10 @@ import { plural } from "../format";
  * Append cards to deck files: from flags, or as JSON in the shape of
  * `schema/card.schema.json` (one object or an array of them).
  *
- * All or nothing. Every card is validated against the schema, every ID checked
- * against the collection and the batch, and every file it would write parsed
- * again with the new block in it — and only if all of that passes is anything
- * written. A half-applied batch is the worst outcome for an agent, which
+ * All or nothing. Every card is validated against the schema, every file it
+ * would write parsed again with the new block in it, and every new card checked
+ * against the collection and the batch (the same text is the same card,
+ * PLAN-1.0 §2.7) — and only if all of that passes is anything written. A half-applied batch is the worst outcome for an agent, which
  * would retry it and duplicate the half that landed.
  */
 
@@ -23,7 +22,6 @@ import { plural } from "../format";
 export type CardInput = {
   file: string;
   type: "basic" | "cloze";
-  id?: string;
   question?: string;
   answer?: string;
   text?: string;
@@ -62,7 +60,7 @@ export const add: Command = {
   hc add --deck <file.md> --cloze <text with [deletions]> [options]
   hc add --json <file|->                 one card object or an array (schema/card.schema.json)
 
-Appends each card as a new block with an ID, after a --- separator. Creates the
+Appends each card as a new block, after a --- separator. Creates the
 deck file, with frontmatter, if it does not exist. Validates everything first
 and writes nothing if any card is invalid.
 
@@ -71,7 +69,6 @@ Options:
   -q, --question <md>  basic card front
   -a, --answer <md>    basic card back
   --cloze <md>         cloze card; each [bracketed] part becomes its own card
-  --id <slug>          ID (a-z, 0-9, -; 2–64 chars). Default: a fresh random one
   --tags <a,b>         comma-separated tags
   --reverse            basic cards: also review answer -> question
   --extra <text>       a note shown only after the answer is revealed
@@ -92,7 +89,6 @@ Exit: 0 added, 2 invalid input (nothing written).`,
     question: { type: "string", short: "q" },
     answer: { type: "string", short: "a" },
     cloze: { type: "string" },
-    id: { type: "string" },
     tags: { type: "string" },
     reverse: { type: "boolean" },
     extra: { type: "string" },
@@ -159,7 +155,7 @@ async function addCards(ctx: Context): Promise<number> {
     ctx.emit({ ok: true, dryRun, added: plan.added, created: plan.files.filter((f) => f.created).map((f) => f.path) });
   } else {
     for (const a of plan.added) {
-      ctx.say(`${dryRun ? "would add" : "added"} ${a.id} (${a.status}) ${a.file}:${a.line}  keys: ${a.keys.join(" ")}`);
+      ctx.say(`${dryRun ? "would add" : "added"} ${a.file}:${a.line} (${a.status})  keys: ${a.keys.join(" ")}`);
     }
     for (const f of plan.files.filter((f) => f.created)) ctx.say(`${dryRun ? "would create" : "created"} ${f.path}`);
     if (dryRun) for (const f of plan.files) ctx.say(`\n--- ${f.path} (new text) ---\n${f.text.slice(f.from)}`);
@@ -175,7 +171,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 /** The cards asked for, as unvalidated values. */
 async function readInput(ctx: Context): Promise<unknown[]> {
   const v = ctx.values;
-  const flagged = ["question", "answer", "cloze", "id", "tags", "reverse", "extra"].filter((k) => v[k] !== undefined);
+  const flagged = ["question", "answer", "cloze", "tags", "reverse", "extra"].filter((k) => v[k] !== undefined);
 
   if (typeof v.json === "string") {
     if (flagged.length > 0) {
@@ -210,7 +206,6 @@ async function readInput(ctx: Context): Promise<unknown[]> {
     if (v.question !== undefined) card.question = v.question;
     if (v.answer !== undefined) card.answer = v.answer;
   } else card.text = v.cloze;
-  if (v.id !== undefined) card.id = v.id;
   if (typeof v.tags === "string") {
     card.tags = [...new Set(v.tags.split(",").map((t) => t.trim()).filter((t) => t !== ""))];
   }
@@ -220,8 +215,8 @@ async function readInput(ctx: Context): Promise<unknown[]> {
 }
 
 /** One card's block, metadata first, as CARD_FORMAT_SPEC.md writes it. */
-export function toBlock(card: CardInput & { id: string }): string {
-  const lines = [`ID: ${card.id}`];
+export function toBlock(card: CardInput): string {
+  const lines: string[] = [];
   if (card.tags && card.tags.length > 0) lines.push(`Tags: ${card.tags.join(", ")}`);
   if (card.reverse) lines.push("Reverse: yes");
   if (card.status && card.status !== "active") lines.push(`Status: ${card.status}`);
@@ -232,10 +227,10 @@ export function toBlock(card: CardInput & { id: string }): string {
   return lines.join("\n");
 }
 
-type Added = { id: string; keys: string[]; file: string; line: number; status: string };
+type Added = { keys: string[]; file: string; line: number; status: string };
 type PlannedFile = { path: string; text: string; created: boolean; from: number };
 
-/** Decide every ID and every file's new text; throw `AddFailed` if any of it is wrong. */
+/** Decide every file's new text; throw `AddFailed` if any of it is wrong. */
 async function planWrites(
   repo: string,
   cards: CardInput[],
@@ -243,7 +238,8 @@ async function planWrites(
 ): Promise<{ added: Added[]; files: PlannedFile[] }> {
   const collection = await loadCollection(repo);
   const errors: AddError[] = [];
-  const taken = new Set(collection.ids.keys());
+  const known = new Map(collection.cards.map((c) => [c.key, c]));
+  const inBatch = new Map<string, number>();
 
   cards.forEach((card, i) => {
     if (!isDeckPath(card.file, collection.config.config)) {
@@ -253,29 +249,11 @@ async function planWrites(
         message: `${card.file} is not a deck file here (README-style names and hashcards.toml [decks] excludes are not read as decks)`,
       });
     }
-    if (card.id !== undefined) {
-      const at = collection.ids.get(card.id)?.[0];
-      if (at) errors.push({ card: i, path: "/id", message: `ID '${card.id}' is already used at ${at.file}:${at.line}` });
-      else if (taken.has(card.id)) errors.push({ card: i, path: "/id", message: `ID '${card.id}' appears twice in this batch` });
-      taken.add(card.id);
-    }
   });
   if (errors.length > 0) throw new AddFailed(errors);
 
-  const fresh = () => {
-    for (let i = 0; i < 100; i++) {
-      const id = randomId();
-      if (!taken.has(id)) {
-        taken.add(id);
-        return id;
-      }
-    }
-    throw new CommandError("could not generate an unused card ID");
-  };
-  const withIds = cards.map((card) => ({ ...card, id: card.id ?? fresh() }));
-
-  const byFile = new Map<string, { card: (typeof withIds)[number]; index: number }[]>();
-  withIds.forEach((card, index) => byFile.set(card.file, [...(byFile.get(card.file) ?? []), { card, index }]));
+  const byFile = new Map<string, { card: CardInput; index: number }[]>();
+  cards.forEach((card, index) => byFile.set(card.file, [...(byFile.get(card.file) ?? []), { card, index }]));
 
   const files: PlannedFile[] = [];
   const added: Added[] = new Array(cards.length);
@@ -318,13 +296,22 @@ async function planWrites(
       continue;
     }
     for (const { card, index } of entries) {
-      const keys = parsed.filter((c) => c.id === card.id).map((c) => c.key);
+      const keys = parsed.filter((c) => c.range[0] === lineOf.get(index)).map((c) => c.key);
       if (keys.length === 0) {
         // The parser drops a block whose text is already in the file.
         errors.push({ card: index, path: "", message: `${path} already has a card with exactly this text` });
       }
+      for (const key of keys) {
+        const there = known.get(key);
+        const twice = inBatch.get(key);
+        if (there && there.filePath !== path) {
+          errors.push({ card: index, path: "", message: `${there.filePath}:${there.range[0]} already has a card with exactly this text` });
+        } else if (twice !== undefined && twice !== index) {
+          errors.push({ card: index, path: "", message: `card ${twice + 1} of this batch has exactly this text` });
+        }
+        inBatch.set(key, index);
+      }
       added[index] = {
-        id: card.id,
         keys,
         file: path,
         line: lineOf.get(index)!,

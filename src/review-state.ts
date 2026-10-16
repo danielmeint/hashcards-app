@@ -1,6 +1,6 @@
-import { formatKey } from "./card-key";
+import { formatKey, formerKeys } from "./card-key";
 import { ReviewLogEvent } from "./core/events";
-import { ReplayOptions, Replayed, replayAll, replayMore } from "./core/replay";
+import { ReplayOptions, Replayed, replayAll, replayMore, resolveLinks } from "./core/replay";
 import {
   ReplayMark,
   StateRecord,
@@ -12,6 +12,7 @@ import {
   getPulledFiles,
   getStateRecords,
   groupOf,
+  SUBSCRIBED_GROUP,
   replayMarkKey,
   stateKeyIn,
   writeReplay,
@@ -50,6 +51,9 @@ export function replayOptions(): ReplayOptions {
 }
 
 const V1_HASH = /^[0-9a-f]{64}$/;
+
+/** When an implicit link from a key a card used to have is dated: before any real one. */
+const LEGACY_LINK_AT = "1970-01-01T00:00:00.000Z";
 
 /** Every event this device knows, by group, cards spelled as their logs spell them. */
 export async function collectEvents(): Promise<{
@@ -104,6 +108,24 @@ export async function collectEvents(): Promise<{
       }
     }
   }
+
+  // A card may have history under keys it no longer has (PLAN-1.0 §2.7):
+  // the key its `ID:` line gave it, while files had them, and the `h:` key
+  // of its v1 hash, which is what it was before 1.0. Until `hc migrate`
+  // writes links for real, those are links — dated at the epoch, so any real
+  // link wins.
+  for (const file of await getAllDeckFiles()) {
+    for (const card of file.cards) {
+      for (const from of formerKeys(card)) {
+        const link = (group: string, prefix: string): void =>
+          add(group, { v: 2, kind: "link", card: prefix + card.key, from: prefix + from, at: LEGACY_LINK_AT });
+        // Your own cards are in their collection's log, bare; a subscribed
+        // collection's are in yours, qualified with its repo.
+        if (groups.has(file.repo)) link(file.repo, "");
+        if (groups.has(SUBSCRIBED_GROUP)) link(SUBSCRIBED_GROUP, `${file.repo}/`);
+      }
+    }
+  }
   return { groups, v1 };
 }
 
@@ -118,7 +140,7 @@ export async function reviewHistory(): Promise<
   const { groups } = await collectEvents();
   const history = [];
   for (const [group, events] of groups) {
-    for (const event of events) {
+    for (const event of resolveLinks(events)) {
       if (event.kind !== "review") continue;
       history.push({ key: stateKeyIn(group, event.card), reviewedAt: event.at, grade: event.grade });
     }

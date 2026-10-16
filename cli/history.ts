@@ -2,10 +2,11 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseFile as parseLog } from "../src/core/events";
-import type { BaselineEvent, ReviewLogEvent } from "../src/core/events";
-import { replay } from "../src/core/replay";
+import type { BaselineEvent, LinkEvent, ReviewLogEvent, ScheduleEvent } from "../src/core/events";
+import { replay, resolveLinks } from "../src/core/replay";
 import type { CardState } from "../src/core/replay";
 import type { ParsedCard } from "../src/types";
+import { formerKeys } from "../src/card-key";
 import type { Config } from "./config";
 
 /**
@@ -38,8 +39,11 @@ export type HistorySource =
   | { kind: "none" };
 
 export type History = {
-  /** Every event, keys mapped to v2 keys where the card is known. */
-  events: ReviewLogEvent[];
+  /**
+   * Every event that schedules, under the key its card has now: v1 hashes
+   * mapped to keys, and `link` events (PLAN-1.0 §2.7) applied and left out.
+   */
+  events: ScheduleEvent[];
   source: HistorySource;
   /** Lines and entries that could not be read. Never fatal. */
   warnings: string[];
@@ -67,7 +71,28 @@ export function dataRef(repo: string): string | null {
 
 const V1_HASH = /^[0-9a-f]{64}$/;
 
+/**
+ * A card may have history under keys it no longer has (PLAN-1.0 §2.7): the
+ * key its `ID:` line gave it, while files had them, and the `h:` key of its v1
+ * hash. Until `hc migrate` writes links for real, those are links — dated at
+ * the epoch, so any real link wins. The app does the same (`formerKeys`).
+ */
+export function legacyLinks(cards: readonly ParsedCard[]): LinkEvent[] {
+  return cards.flatMap((card) =>
+    formerKeys(card).map((from): LinkEvent => ({ v: 2, kind: "link", card: card.key, from, at: "1970-01-01T00:00:00.000Z" }))
+  );
+}
+
 export function loadHistory(repo: string, cards: readonly ParsedCard[]): History {
+  const raw = loadRawHistory(repo, cards);
+  return { ...raw, events: resolveLinks([...raw.events, ...legacyLinks(cards)]) };
+}
+
+/** The history as the files have it: links not applied, legacy IDs not read. */
+export function loadRawHistory(
+  repo: string,
+  cards: readonly ParsedCard[]
+): Omit<History, "events"> & { events: ReviewLogEvent[] } {
   const warnings: string[] = [];
   // A v1 hash names a card by its content. The card's key is what replay and
   // every command use, so translate; a hash no card has any more keeps its

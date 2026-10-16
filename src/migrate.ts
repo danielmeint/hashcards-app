@@ -1,14 +1,16 @@
-import { randomId, stampIds } from "./card-ids";
-import { formatKey } from "./card-key";
-import { parseFile, scanFile } from "./parser";
+import { formatKey, formerKeys } from "./card-key";
+import { parseFile } from "./parser";
 import {
   BaselineEvent,
+  LinkEvent,
   ReviewEvent,
   ReviewLogEvent,
   fallbackTz,
   parseFile as parseLog,
 } from "./core/events";
 import { CardState, replay } from "./core/replay";
+import { stripIds } from "./card-ids";
+import { ParsedCard } from "./types";
 import {
   DEFAULT_RETENTION,
   FORGOT,
@@ -26,19 +28,18 @@ import { MIGRATED_DEVICE, monthFiles } from "./core/month-files";
  * file system, no git. `hc migrate` reads the repo, hands it here, shows the
  * plan, and commits it; tests (the app's among them) feed it fixtures.
  *
- * A v1 collection keys everything by content hash: the state file says where
- * each card was at its last review, and each device's monthly log says what it
- * graded. 1.0 keys by ID. So the migration is three steps:
+ * A v1 collection keys everything by its v1 content hash: the state file says
+ * where each card was at its last review, and each device's monthly log says
+ * what it graded. 1.0 keys by a whitespace-normalised hash (PLAN-1.0 §2.7). So
+ * the migration is two steps, and a check:
  *
- * 1. **Stamp IDs** into every deck (`stampIds`, unique across the whole
- *    collection). Stamping leaves each card's v1 hash alone, which is what
- *    lets the old history be found again under the new keys.
+ * 1. **Map hashes to keys.** Every deck is parsed, which gives each card both
+ *    its v1 hash and its key. The deck files themselves do not change.
  * 2. **Re-key the history.** Each state-file entry becomes a `baseline`, each
  *    log line a v2 review, both under the card's new key and with the `tz`
  *    that v1 never wrote down made explicit (`fallbackTz`, the guess replay
  *    already makes for v1 lines). A hash no card has any more (a deck archived
- *    or deleted) keeps its `h:` key: a card re-added with the same text has
- *    exactly that key, and picks its history back up.
+ *    or deleted) keeps its v1 `h:` key.
  * 3. **Check** that replaying the new events lands every card where the state
  *    file says it was. See `checkMigration`.
  *
@@ -70,8 +71,6 @@ export type MigrationInput = {
   state: string | null;
   /** Every `hashcards-reviews/*.jsonl`, as `{ path, text }`. */
   logs: { path: string; text: string }[];
-  /** For tests: where new IDs come from. */
-  generate?: () => string;
 };
 
 export type ReviewSettings = { retention: number; fuzz: boolean };
@@ -115,8 +114,6 @@ export type CheckRow = {
 };
 
 export type MigrationPlan = {
-  /** Decks that gained IDs: their new text, and how many. */
-  stamped: { path: string; text: string; ids: number }[];
   /** Files for the data branch, by path. */
   files: Map<string, string>;
   /** Every v1 hash a deck has, and the key(s) it now goes by. */
@@ -129,8 +126,6 @@ export type MigrationPlan = {
     unknownHashes: number;
     unknownBaselines: number;
     unknownReviews: number;
-    /** Hashes two or more cards share; their history is given to each. */
-    sharedHashes: number;
   };
   settings: { retention: Inferred<number>; fuzz: Inferred<boolean> };
   check: CheckSummary;
@@ -244,64 +239,29 @@ export function inferSettings(entries: Map<string, V1Entry>): {
 
 // --- The plan ---------------------------------------------------------------
 
-/**
- * A generator of IDs that are not in `taken`, adding each one it hands out:
- * `stampIds` only knows the IDs of the file it is stamping, and an ID must be
- * unique across the collection.
- */
-function uniqueIds(taken: Set<string>, generate: () => string): () => string {
-  return () => {
-    for (let i = 0; i < 100; i++) {
-      const id = generate();
-      if (!taken.has(id)) {
-        taken.add(id);
-        return id;
-      }
-    }
-    throw new Error("could not generate an unused card ID in 100 attempts");
-  };
-}
-
 export async function planMigration(
   input: MigrationInput,
   override: Partial<ReviewSettings> = {}
 ): Promise<MigrationPlan> {
   const warnings: string[] = [];
 
-  // 1. IDs. Every ID already written anywhere is taken before any is made.
-  const taken = new Set<string>();
-  for (const deck of input.decks) {
-    for (const block of scanFile(deck.text, deck.path).cards) {
-      if (block.meta?.id) taken.add(block.meta.id.value);
-    }
-  }
-  const next = uniqueIds(taken, input.generate ?? randomId);
-  const stamped: MigrationPlan["stamped"] = [];
+  // 1. Hashes to keys.
   const keysByHash = new Map<string, string[]>();
-  /** New key -> the key the card had before, for the due-date comparison. */
+  /**
+   * Key -> the key the app and `hc` replay the card under before migrating:
+   * the same key, since both read a v1 collection's history under 1.0 keys
+   * already. So fuzz, seeded by the key, moves nothing.
+   */
   const previousKey = new Map<string, string>();
   let cards = 0;
   for (const deck of input.decks) {
-    let ids = 0;
-    const text = stampIds(
-      deck.text,
-      () => {
-        ids++;
-        return next();
-      },
-      deck.path
-    );
-    if (text !== deck.text) stamped.push({ path: deck.path, text, ids });
     const name = deck.path.slice(deck.path.lastIndexOf("/") + 1).replace(/\.md$/, "");
-    // Stamping adds metadata lines and nothing else, so both parses give the
-    // same cards in the same order.
-    const before = await parseFile(deck.text, deck.path, name);
-    const after = await parseFile(text, deck.path, name);
-    after.forEach((card, i) => previousKey.set(card.key, before[i].key));
-    for (const card of after) {
+    for (const card of await parseFile(deck.text, deck.path, name)) {
+      previousKey.set(card.key, card.key);
       cards++;
+      // The same text in two files is one card (§2.7), so one key.
       const keys = keysByHash.get(card.hash) ?? [];
-      keys.push(card.key);
+      if (!keys.includes(card.key)) keys.push(card.key);
       keysByHash.set(card.hash, keys);
     }
   }
@@ -382,7 +342,6 @@ export async function planMigration(
   const dueShift = compareDue(events, previousKey, options);
 
   return {
-    stamped,
     files,
     keysByHash,
     counts: {
@@ -392,7 +351,6 @@ export async function planMigration(
       unknownHashes: unknown.size,
       unknownBaselines,
       unknownReviews,
-      sharedHashes: [...keysByHash.values()].filter((k) => k.length > 1).length,
     },
     settings,
     check,
@@ -566,5 +524,138 @@ function checkRow(
     ...row,
     verdict: "other",
     why: `state file interval ${v1Interval} days, outside fuzz of ${lo}–${hi}`,
+  };
+}
+
+// --- Removing IDs (PLAN-1.0 §2.7) -------------------------------------------
+
+/**
+ * Moving a collection off the `ID:` lines the first 1.0 builds wrote. Its
+ * history is filed under ID keys (`est-capital`, `est-capital:r`, …); a card is
+ * its text again, so each of those keys gets a `link` to the card's content
+ * key, and the `ID:` lines come out of the files.
+ *
+ * History is never deleted, so keys no current card has (a card deleted, or
+ * an archived deck, still under a v1 `h:` key) are looked up in earlier
+ * versions of the deck files: a card found there is linked to the key its
+ * text gives now, so re-adding it picks the history back up.
+ */
+export type IdRemovalInput = {
+  decks: { path: string; text: string }[];
+  /** Earlier versions of deck files, newest first: the first one found wins. */
+  history: { path: string; text: string }[];
+  /** Every event on the data branch, as written. */
+  events: ReviewLogEvent[];
+  /** When the links are dated. */
+  at: string;
+  tz: number;
+};
+
+export type IdRemovalPlan = {
+  /** Decks whose `ID:` lines come out: their new text, and how many. */
+  stripped: { path: string; text: string; ids: number }[];
+  links: LinkEvent[];
+  counts: {
+    cards: number;
+    /** Links for cards in the decks now. */
+    current: number;
+    /** Links found in earlier versions of the decks. */
+    recovered: number;
+    /** Keys with history that no link reaches and no card has. */
+    orphans: number;
+  };
+  /**
+   * Every card with history, before (what the app shows now, `ID:` lines read
+   * as links) against after (the links written, the lines gone). Identical
+   * unless something is wrong.
+   */
+  check: { same: number; changed: { key: string; before: string; after: string }[] };
+};
+
+const deckName = (path: string) => path.slice(path.lastIndexOf("/") + 1).replace(/\.md$/, "");
+
+async function tryParse(path: string, text: string): Promise<ParsedCard[] | null> {
+  try {
+    return await parseFile(text, path, deckName(path));
+  } catch {
+    return null;
+  }
+}
+
+export async function planIdRemoval(
+  input: IdRemovalInput,
+  options: ReviewSettings
+): Promise<IdRemovalPlan> {
+  const link = (from: string, card: string): LinkEvent => ({
+    v: 2,
+    kind: "link",
+    card,
+    from,
+    at: input.at,
+    tz: input.tz,
+    src: "migrate",
+  });
+  const withHistory = new Set(input.events.flatMap((e) => (e.kind === "link" ? [e.from] : [e.card])));
+
+  const stripped: IdRemovalPlan["stripped"] = [];
+  const current: ParsedCard[] = [];
+  for (const deck of input.decks) {
+    const cards = await parseFile(deck.text, deck.path, deckName(deck.path));
+    current.push(...cards);
+    const text = stripIds(deck.text, deck.path);
+    if (text !== deck.text) {
+      const ids = deck.text.split("\n").length - text.split("\n").length;
+      stripped.push({ path: deck.path, text, ids });
+    }
+  }
+  const inUse = new Set(current.map((c) => c.key));
+
+  const links: LinkEvent[] = [];
+  const linked = new Set<string>();
+  const add = (from: string | null, to: string): boolean => {
+    if (!from || from === to || inUse.has(from) || linked.has(from) || !withHistory.has(from)) return false;
+    linked.add(from);
+    links.push(link(from, to));
+    return true;
+  };
+  let currentLinks = 0;
+  for (const card of current) {
+    for (const from of formerKeys(card)) if (add(from, card.key)) currentLinks++;
+  }
+  let recovered = 0;
+  for (const old of input.history) {
+    for (const card of (await tryParse(old.path, old.text)) ?? []) {
+      if (add(card.legacyKey, card.key)) recovered++;
+      if (add(hashKey(card.hash), card.key)) recovered++;
+    }
+  }
+
+  // The check: replay as the app does now (every former key read as a link),
+  // and as it will (the links written, the ID lines gone).
+  const implicit = (cards: ParsedCard[]) =>
+    cards.flatMap((c) => formerKeys(c).map((from) => ({ ...link(from, c.key), at: "1970-01-01T00:00:00.000Z" })));
+  const before = replay([...input.events, ...implicit(current)], options);
+  const after = replay(
+    [...input.events, ...links, ...implicit(current.map((c) => ({ ...c, legacyKey: null })))],
+    options
+  );
+  const check: IdRemovalPlan["check"] = { same: 0, changed: [] };
+  const describe = (st: CardState | undefined) =>
+    st ? `due ${st.dueDate}, s ${st.stability.toFixed(4)}, d ${st.difficulty.toFixed(4)}, reps ${st.reviewCount}` : "no history";
+  for (const key of [...inUse].sort()) {
+    const b = before.get(key);
+    const a = after.get(key);
+    if (!a && !b) continue;
+    if (describe(a) === describe(b)) check.same++;
+    else check.changed.push({ key, before: describe(b), after: describe(a) });
+  }
+
+  const reached = new Set([...inUse, ...linked]);
+  const orphans = [...withHistory].filter((k) => !reached.has(k) && !k.includes("/")).length;
+  return {
+    stripped,
+    links,
+    counts: { cards: current.length, current: currentLinks, recovered, orphans },
+    check,
   };
 }

@@ -11,7 +11,7 @@ import {
   writeFile,
 } from "./github";
 import { parseFile } from "./parser";
-import { keepId, sliceLines, spliceLines } from "./card-edit-text";
+import { sliceLines, spliceLines } from "./card-edit-text";
 import {
   LocalBaseline,
   addBaselines,
@@ -34,11 +34,11 @@ import { refreshStates } from "./review-state";
  * way back. Everything needed to do it here already existed: cards carry
  * `filePath` and an absolute line `range`, and the credential is write-scoped.
  *
- * The part that only works here is scheduling. A card with an ID keeps its key
- * through any edit, and its history with it. One without an ID is keyed by a
- * hash of its content, so an edit makes it a new card and strands the old
- * one's history — see 1.7. An edit made in the app is the one moment both keys
- * are known at once, so it is the one place that history can follow the card.
+ * The part that only works here is scheduling. A card is keyed by a hash of its
+ * content (PLAN-1.0 §2.7), so an edit makes it a new card and strands the old
+ * one's history. An edit made in the app is the one moment both keys are known
+ * at once, so it is the one place that history follows the card by itself:
+ * the edit writes a `link` event. Anywhere else it takes `hc relink`.
  */
 
 export type CardSource = {
@@ -63,7 +63,7 @@ export async function readCardSource(card: Card): Promise<CardSource> {
   return { file: text, sha, text: sliceLines(text, card.range) };
 }
 
-export { keepId, sliceLines, spliceLines };
+export { sliceLines, spliceLines };
 
 export type EditResult = {
   /** What the edited lines parse into now — empty if the edit removed them. */
@@ -140,7 +140,6 @@ async function runEdit(
   replacement: string,
   options: { keepScheduling: boolean }
 ): Promise<EditResult> {
-  replacement = keepId(source.text, replacement);
   const before = cardsInRange(await loadCachedCards(), card.filePath, card.range);
   const updated = spliceLines(source.file, card.range, replacement);
   const deck = deckNameFor(card.filePath);
@@ -255,12 +254,12 @@ function cardsInRange(
  * cards you were editing anyway, which is the same thing that happens today
  * with no pairing at all.
  *
- * A card whose key survived the edit (it has an ID) needs nothing: its events
- * already name it. One whose key changed gets a baseline event under the new
- * key — the old card's state as it stands — which is what a baseline is for:
- * history that is not available under this name. The log is append-only, and
- * other devices hold the old card's events too; this is the one way to carry
- * it that every device replays the same.
+ * A card whose key survived the edit (only its tags, status or `Extra:`
+ * changed) needs nothing: its events already name it. One whose key changed
+ * gets a `link` event from the old key to the new one, so every device reads
+ * the old card's whole history — not just where it ended up — as the new
+ * card's. The log is append-only, and other devices hold the old card's events
+ * too; a link is the one way to carry them that every device replays the same.
  */
 async function carryHistory(before: Card[], after: Card[]): Promise<number> {
   const performances = await getAllPerformances();
@@ -273,26 +272,28 @@ async function carryHistory(before: Card[], after: Card[]): Promise<number> {
     migrated++;
     if (from === stateKey(after[i])) continue;
     const target = logTarget(after[i]);
+    const source = logTarget(before[i]);
+    // Both cards are in one file, so in one log; a link across logs would
+    // never be read where the history is.
+    if (source.log !== target.log) continue;
+    const at = new Date().toISOString();
     baselines.push({
       log: target.log,
       event: {
         v: 2,
-        kind: "baseline",
+        kind: "link",
         card: target.card,
-        at: state.lastReviewedAt,
-        tz: utcOffsetMinutes(state.lastReviewedAt),
-        s: state.stability,
-        d: state.difficulty,
-        reps: state.reviewCount,
-        ...(state.lastGrade !== null && state.lastGrade !== undefined ? { grade: state.lastGrade } : {}),
+        from: source.card,
+        at,
+        tz: utcOffsetMinutes(at),
         src: "edit",
       },
     });
   }
   if (baselines.length > 0) {
     await addBaselines(baselines);
-    // Dated when the old card was last reviewed, so behind the watermark:
-    // those groups are replayed whole.
+    // A link renames history already replayed: those groups are replayed
+    // whole.
     for (const { log, event } of baselines) await markReplayStale(groupOf(log, event.card));
     await refreshStates();
   }

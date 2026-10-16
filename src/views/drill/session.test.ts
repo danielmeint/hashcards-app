@@ -33,8 +33,8 @@ function card(n: number, familyHash: string | null = null): Card {
     range: [n, n + 1],
     content: { type: "basic", question: `Q${n}`, answer: `A${n}` },
     hash: `hash-${n}`,
-    familyHash,
-    id: null, key: "", tags: [], status: "active",
+    familyHash: familyHash ?? `family-${n}`,
+    legacyKey: null, key: "", tags: [], status: "active",
   };
 }
 
@@ -465,7 +465,7 @@ describe("a grade as an event", () => {
 
   it("records the key, the log and the timezone, and schedules as replay does", async () => {
     const { createSession, getAllReviews, getAllPerformances } = await fresh();
-    const alpha: Card = { ...card(1), id: "alpha", key: "alpha" };
+    const alpha: Card = { ...card(1), key: "alpha" };
     const lastReviewedAt = "2026-09-01T08:00:00.000Z";
     // Far enough on that fuzz has days to move the interval by.
     const prior = {
@@ -515,8 +515,8 @@ describe("a grade as an event", () => {
 
   it("buries a card's reverse with it, as cloze siblings are", async () => {
     const { createSession } = await fresh();
-    const forward: Card = { ...card(1), id: "pair", key: "pair" };
-    const reverse: Card = { ...card(2), id: "pair", key: "pair:r" };
+    const forward: Card = { ...card(1, "pair"), key: "h:forward" };
+    const reverse: Card = { ...card(2, "pair"), key: "h:reverse" };
 
     const session = await createSession([forward, reverse]);
 
@@ -526,35 +526,35 @@ describe("a grade as an event", () => {
     expect(session.finished).toBe(true);
   });
 
-  it("schedules a reverse card under its own :r key", async () => {
+  it("schedules a reverse card under its own key", async () => {
     const { createSession, getAllReviews, getAllPerformances } = await fresh();
     const { parseFile } = await import("../../parser");
     const [forward, reverse] = (
-      await parseFile("ID: est\nReverse: yes\nQ: Estonia\nA: Tallinn\n", "c.md", "c")
+      await parseFile("Reverse: yes\nQ: Estonia\nA: Tallinn\n", "c.md", "c")
     ).map((c) => ({ ...c, repo: "someone/cards" }));
-    expect([forward.key, reverse.key]).toEqual(["est", "est:r"]);
+    expect(forward.key).not.toBe(reverse.key);
 
     // A card and its reverse are siblings: one direction a day.
     const first = await createSession([forward, reverse]);
     expect(first.total).toBe(1);
     first.reveal();
-    first.grade(first.current!.key === "est" ? Grade.Good : Grade.Forgot);
+    first.grade(first.current!.key === forward.key ? Grade.Good : Grade.Forgot);
     await first.close();
     await settle();
-    const other = (await getAllReviews())[0].key.endsWith(":r") ? forward : reverse;
+    const other = (await getAllReviews())[0].key.endsWith(reverse.key) ? forward : reverse;
     const second = await createSession([other]);
     second.reveal();
-    second.grade(other.key === "est" ? Grade.Good : Grade.Forgot);
+    second.grade(other.key === forward.key ? Grade.Good : Grade.Forgot);
     await settle();
 
     const reviews = await getAllReviews();
     expect(reviews.map((r) => [r.key, r.grade]).sort()).toEqual([
-      ["someone/cards/est", Grade.Good],
-      ["someone/cards/est:r", Grade.Forgot],
-    ]);
+      [`someone/cards/${forward.key}`, Grade.Good],
+      [`someone/cards/${reverse.key}`, Grade.Forgot],
+    ].sort());
     const states = await getAllPerformances();
     // Two cards, scheduled apart: knowing one direction says nothing of the other.
-    expect(states.get("someone/cards/est")!.dueDate).not.toBe(states.get("someone/cards/est:r")!.dueDate);
+    expect(states.get(`someone/cards/${forward.key}`)!.dueDate).not.toBe(states.get(`someone/cards/${reverse.key}`)!.dueDate);
   });
 });
 

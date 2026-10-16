@@ -1,6 +1,12 @@
-import { CardStatus, ClozeCard, ParsedCard } from "./types";
-import { hashBasicCard, hashClozeCard, hashClozeFamily } from "./hash";
-import { formatKey, isValidId } from "./card-key";
+import { CardContent, CardStatus, ClozeCard, ParsedCard } from "./types";
+import {
+  basicIdentity,
+  clozeFamilyIdentity,
+  clozeIdentity,
+  hashBasicCard,
+  hashClozeCard,
+} from "./hash";
+import { formatKey, hashKey, isValidId } from "./card-key";
 
 type DeckMetadata = {
   name: string | null;
@@ -135,7 +141,7 @@ function uniqueTags(tags: string[]): string[] {
 }
 
 /**
- * A metadata line: `ID:`, `Tags:`, `Reverse:` or `Status:`. Only ever looked for
+ * A metadata line: `Tags:`, `Reverse:`, `Status:`, or a legacy `ID:`. Only ever looked for
  * at the top of a block, before its `Q:` or `C:` — once a card's text has
  * started, nothing is metadata, so an answer can say "Status: pending" and mean
  * it.
@@ -223,8 +229,7 @@ function readLine(line: string, atBlockTop: boolean): Line {
  * Where a card begins, carried through the states that read it. `implicit` is
  * a card begun by the tag that ended the one before it, rather than at the top
  * of the file or after a `---`: it has no block top, so nowhere metadata could
- * go. `stampIds` needs to know, since an ID line put there would land in the
- * previous card's answer.
+ * go: a metadata line put there would land in the previous card's answer.
  */
 type Opening = { startLine: number; meta: BlockMeta | null; implicit: boolean };
 
@@ -268,7 +273,7 @@ export type ScannedFile = {
 
 /**
  * The file read into card blocks, without hashing anything — the synchronous
- * half of `parseFile`, and all `stampIds` needs to find where IDs go.
+ * half of `parseFile`, and all `stripIds` needs to find the `ID:` lines.
  */
 export function scanFile(text: string, filePath: string): ScannedFile {
   const { metadata, content, lineOffset } = extractFrontmatter(text, filePath);
@@ -291,10 +296,16 @@ export function scanFile(text: string, filePath: string): ScannedFile {
   return { metadata, lines: text.split("\n"), lineOffset, cards };
 }
 
+/**
+ * The cards in a file. A card whose text an earlier card in the file already
+ * has is the same card (§2.7), and is dropped; `onDuplicate` hears about it,
+ * for `hc lint` to warn.
+ */
 export async function parseFile(
   text: string,
   filePath: string,
-  defaultDeckName: string
+  defaultDeckName: string,
+  onDuplicate?: (card: ParsedCard, first: ParsedCard) => void
 ): Promise<ParsedCard[]> {
   const { metadata, lines: fileLines, lineOffset, cards: rawCards } = scanFile(
     text,
@@ -302,8 +313,6 @@ export async function parseFile(
   );
   const deckName = metadata.name ?? defaultDeckName;
   const lines = fileLines.slice(lineOffset);
-  const at = (lineNum: number) =>
-    `Location: ${filePath}:${lineOffset + lineNum + 1}`;
 
   /**
    * Where a card lives in the file it came from: absolute, 1-based, inclusive
@@ -319,62 +328,53 @@ export async function parseFile(
   }
 
   const cards: ParsedCard[] = [];
-  const seenHashes = new Set<string>();
+  const seenKeys = new Map<string, ParsedCard>();
   const add = (card: ParsedCard) => {
-    if (seenHashes.has(card.hash)) return;
-    seenHashes.add(card.hash);
+    const first = seenKeys.get(card.key);
+    if (first) {
+      onDuplicate?.(card, first);
+      return;
+    }
+    seenKeys.set(card.key, card);
     cards.push(card);
   };
 
-  // Within this file only. Uniqueness across the collection is a question for
-  // whatever reads every file at once (`hc lint`), not for a parser handed one.
-  const idLines = new Map<string, number>();
-
   for (const raw of rawCards) {
     const meta = raw.meta;
+    // A legacy `ID:` line (§2.7): no longer the card's identity, only a record
+    // of the key it had while IDs existed, so its history can follow it.
     const id = meta?.id?.value ?? null;
-    if (meta?.id) {
-      const first = idLines.get(meta.id.value);
-      if (first !== undefined) {
-        throw new Error(
-          `Duplicate card ID '${meta.id.value}', already used on line ${lineOffset + first + 1}. ${at(meta.id.line)}`
-        );
-      }
-      idLines.set(meta.id.value, meta.id.line);
-    }
     const shared = {
       deckName,
       filePath,
       range: rangeOf(raw),
-      id,
       tags: uniqueTags([...metadata.tags, ...(meta?.tags ?? [])]),
       status: meta?.status ?? ("active" as const),
     };
 
     if (raw.type === "basic") {
-      const hash = await hashBasicCard(raw.question, raw.answer);
       // Extra stays out of every hash and key: it is a note about the card,
       // not the card, so rewriting it must not cost the card its history.
       const extra = raw.extra === null ? {} : { extra: raw.extra };
+      const forward = await basicIdentity(raw.question, raw.answer);
       add({
         ...shared,
         content: { type: "basic", question: raw.question, answer: raw.answer, ...extra },
-        hash,
-        familyHash: null,
-        key: id ? formatKey({ kind: "basic", id }) : formatKey({ kind: "hash", hash }),
+        hash: await hashBasicCard(raw.question, raw.answer),
+        familyHash: forward,
+        key: hashKey(forward),
+        legacyKey: id ? formatKey({ kind: "basic", id }) : null,
       });
       if (meta?.reverse != null) {
         // The same two sides the other way round, hashed as if someone had
         // written that card out by hand — which is what it is.
-        const reverseHash = await hashBasicCard(raw.answer, raw.question);
         add({
           ...shared,
           content: { type: "basic", question: raw.answer, answer: raw.question, ...extra },
-          hash: reverseHash,
-          familyHash: null,
-          key: id
-            ? formatKey({ kind: "reverse", id })
-            : formatKey({ kind: "hash", hash: reverseHash }),
+          hash: await hashBasicCard(raw.answer, raw.question),
+          familyHash: forward,
+          key: hashKey(await basicIdentity(raw.answer, raw.question)),
+          legacyKey: id ? formatKey({ kind: "reverse", id }) : null,
         });
       }
     } else {
@@ -385,9 +385,7 @@ export async function parseFile(
           ...deletion,
           content:
             raw.extra === null ? deletion.content : { ...deletion.content, extra: raw.extra },
-          key: id
-            ? formatKey({ kind: "cloze", id, n: i + 1 })
-            : formatKey({ kind: "hash", hash: deletion.hash }),
+          legacyKey: id ? formatKey({ kind: "cloze", id, n: i + 1 }) : null,
         });
       });
     }
@@ -701,11 +699,12 @@ function scanClozeBytes(
   }
 }
 
-/** One deletion of a cloze block: its content and its v1 identity. */
+/** One deletion of a cloze block: its content, its key and its v1 hash. */
 type ClozeDeletion = {
   content: ClozeCard;
   hash: string;
   familyHash: string;
+  key: string;
 };
 
 /**
@@ -747,12 +746,42 @@ async function parseClozeCards(
     );
   }
 
-  const familyHash = await hashClozeFamily(cleanText);
+  const familyHash = await clozeFamilyIdentity(cleanText);
   return Promise.all(
     deletions.map(async (content) => ({
       content,
       hash: await hashClozeCard(content.text, content.start, content.end),
       familyHash,
+      key: hashKey(await clozeDeletionIdentity(content)),
     }))
   );
+}
+
+/**
+ * A card's key and family from its content alone, as `parseFile` gives them —
+ * except a reverse card's family, which only the block knows. For re-keying
+ * cards that are cached without their file.
+ */
+export async function cardIdentity(
+  content: CardContent
+): Promise<{ key: string; familyHash: string }> {
+  if (content.type === "basic") {
+    const hash = await basicIdentity(content.question, content.answer);
+    return { key: hashKey(hash), familyHash: hash };
+  }
+  return {
+    key: hashKey(await clozeDeletionIdentity(content)),
+    familyHash: await clozeFamilyIdentity(content.text),
+  };
+}
+
+/**
+ * A deletion's identity (§2.7) from its content alone: the clean text split
+ * at the deletion. `start` and `end` are byte offsets, inclusive, and fall on
+ * character boundaries — brackets are ASCII, and they are what set them.
+ */
+export function clozeDeletionIdentity(content: ClozeCard): Promise<string> {
+  const bytes = new TextEncoder().encode(content.text);
+  const decode = (from: number, to?: number) => new TextDecoder().decode(bytes.subarray(from, to));
+  return clozeIdentity(decode(0, content.start), decode(content.start, content.end + 1), decode(content.end + 1));
 }

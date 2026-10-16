@@ -69,7 +69,7 @@ A: A
     expect(cards[0].deckName).toBe("CKA: Storage");
     expect(cards[0].tags).toEqual(["storage", "cka/type/syntax-pattern"]);
     // The cloze Extra field is the card's Extra section, on every deletion.
-    expect(cards.filter((c) => c.id === "pv-binding").map((c) => c.content.extra)).toEqual(
+    expect(cards.filter((c) => c.legacyKey?.startsWith("pv-binding:")).map((c) => c.content.extra)).toEqual(
       Array(3).fill("`k describe pvc` [events]")
     );
   });

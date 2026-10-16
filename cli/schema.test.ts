@@ -12,7 +12,7 @@ describe("validateCard", () => {
     [{ ...basic, answer: undefined }, "", /missing "answer"/],
     [{ ...basic, type: "cloze", text: "a [b]" }, "", /must not have "question"/],
     [{ file: "x.md", type: "cloze", text: "a [b]", reverse: true }, "/reverse", /must be false/],
-    [{ ...basic, id: "Bad_ID" }, "/id", /is not valid: "Bad_ID"\. The card's stable identity/],
+    [{ ...basic, id: "est-capital" }, "", /"id"/],
     [{ ...basic, status: "done" }, "/status", /one of "active", "draft", "suspended"/],
     [{ ...basic, tags: ["a,b"] }, "/tags/0", /is not valid/],
     [{ ...basic, tags: ["a", "a"] }, "/tags", /repeat/],

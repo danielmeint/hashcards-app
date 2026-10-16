@@ -43,19 +43,19 @@ review to fix the one in front of you. Each change is saved here as a commit.
 **On GitHub.** Edit any `.md` file, or add a new one: each file is a deck.
 
 ```markdown
-ID: capital-peru
 Q: What is the capital of Peru?
 A: Lima
 
 ---
 
-ID: water-formula
 C: The chemical formula of water is [H₂O].
 Extra: Two hydrogen atoms, one oxygen.
 ```
 
-Separate cards with `---`. Give each card an `ID:` that never changes: it is
-what keeps a card's history when you reword it. The full format is in the
+Separate cards with `---`. A card is its text: reorder cards, move them
+between files or change their tags freely. Rewording one outside the app makes
+it a new card; `hc relink` carries the old one's history over (edits in the
+app do that by themselves). The full format is in the
 [card format spec](https://github.com/danielmeint/hashcards-app/blob/main/CARD_FORMAT_SPEC.md).
 
 **With an AI agent.** Point Claude Code, Codex or another coding agent at a

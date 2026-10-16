@@ -6,12 +6,6 @@ import { replay } from "./core/replay";
 import { interval } from "./core/schedule";
 import { V1Entry, fuzzWindow, inferSettings, planMigration } from "./migrate";
 
-/** IDs `a1`, `a2`, … so a test can say which card got which. */
-function counter(prefix = "id") {
-  let n = 0;
-  return () => `${prefix}${++n}`;
-}
-
 async function hashes(text: string): Promise<string[]> {
   return (await parseFile(text, "deck.md", "deck")).map((c) => c.hash);
 }
@@ -38,12 +32,10 @@ const v1Line = (card: string, at: string, grade: number) =>
   JSON.stringify({ card, at, grade, s: 3, d: 5, ms: 1000 });
 
 const DECK_A = "Q: one\nA: 1\n\n---\n\nC: The [two] and [three].\n";
-const DECK_B = "ID: taken\nQ: four\nA: 4\n\n---\n\nQ: five\nA: 5\n";
+const DECK_B = "Q: four\nA: 4\n\n---\n\nQ: five\nA: 5\n";
 
 describe("planMigration", () => {
-  it("stamps an ID into every card without one, unique across every deck", async () => {
-    // The generator offers `taken` (an ID in another file) first: it must be skipped.
-    const ids = ["taken", "fresh1", "fresh1", "fresh2", "fresh3"];
+  it("leaves the decks alone, and maps every card's v1 hash to its key", async () => {
     const plan = await planMigration({
       decks: [
         { path: "a.md", text: DECK_A },
@@ -51,40 +43,33 @@ describe("planMigration", () => {
       ],
       state: null,
       logs: [],
-      generate: () => ids.shift()!,
     });
-    expect(plan.stamped.map((d) => [d.path, d.ids])).toEqual([
-      ["a.md", 2],
-      ["b.md", 1],
-    ]);
-    expect(plan.stamped[0].text).toBe("ID: fresh1\nQ: one\nA: 1\n\n---\n\nID: fresh2\nC: The [two] and [three].\n");
-    expect(plan.stamped[1].text).toContain("ID: fresh3\nQ: five");
-    expect([...plan.keysByHash.values()].flat().sort()).toEqual(
-      ["fresh1", "fresh2:1", "fresh2:2", "fresh3", "taken"].sort()
-    );
+    expect(plan).not.toHaveProperty("stamped");
+    const cards = [...(await parseFile(DECK_A, "a.md", "a")), ...(await parseFile(DECK_B, "b.md", "b"))];
+    expect(plan.keysByHash).toEqual(new Map(cards.map((c) => [c.hash, [c.key]])));
   });
 
   it("turns the state file into baselines and the log into reviews, under the new keys", async () => {
     const [h1, , h3] = await hashes(DECK_A);
+    const [k1, , k3] = (await parseFile(DECK_A, "a.md", "a")).map((c) => c.key);
     const at = "2026-10-13T19:14:37.619Z";
     const plan = await planMigration({
       decks: [{ path: "a.md", text: DECK_A }],
       state: state({ [h1]: entry(at, 8.2956, 1), [h3]: entry("2026-01-10T08:00:00.000Z", 3, 4) }),
       logs: [{ path: "hashcards-reviews/2026-10.dev.jsonl", text: v1Line(h1, at, 4) + "\n" }],
-      generate: counter(),
     });
 
     expect([...plan.files.keys()]).toEqual(["reviews/2026-01.v1.jsonl", "reviews/2026-10.v1.jsonl"]);
     const october = parseLog(plan.files.get("reviews/2026-10.v1.jsonl")!).events;
     expect(october).toEqual([
       // No `src` on the review: a device's own copy of it must be the same line.
-      { v: 2, kind: "review", card: "id1", at, tz: 120, grade: 4, ms: 1000 },
+      { v: 2, kind: "review", card: k1, at, tz: 120, grade: 4, ms: 1000 },
       // The grade comes from the review the baseline was taken at.
-      { v: 2, kind: "baseline", card: "id1", at, tz: 120, s: 8.2956, d: 5, reps: 1, grade: 4, src: "v1" },
+      { v: 2, kind: "baseline", card: k1, at, tz: 120, s: 8.2956, d: 5, reps: 1, grade: 4, src: "v1" },
     ]);
     // Winter: CET, made explicit; no review at that instant, so no grade.
     expect(parseLog(plan.files.get("reviews/2026-01.v1.jsonl")!).events).toEqual([
-      { v: 2, kind: "baseline", card: "id2:2", at: "2026-01-10T08:00:00.000Z", tz: 60, s: 3, d: 5, reps: 4, src: "v1" },
+      { v: 2, kind: "baseline", card: k3, at: "2026-01-10T08:00:00.000Z", tz: 60, s: 3, d: 5, reps: 4, src: "v1" },
     ]);
     expect(plan.counts).toMatchObject({ cards: 3, baselines: 2, reviews: 1, unknownHashes: 0 });
   });
@@ -97,7 +82,6 @@ describe("planMigration", () => {
       decks: [{ path: "a.md", text: DECK_A }],
       state: null,
       logs: [{ path: "l.jsonl", text: v1Line(h1, at, 3) + "\n" }],
-      generate: counter(),
     });
     expect([...plan.files.keys()]).toEqual(["reviews/2026-10.v1.jsonl"]);
   });
@@ -108,14 +92,13 @@ describe("planMigration", () => {
       decks: [{ path: "a.md", text: DECK_A }],
       state: state({ [gone]: entry("2026-10-01T08:00:00.000Z", 5, 2) }),
       logs: [{ path: "l.jsonl", text: v1Line(gone, "2026-10-01T08:00:00.000Z", 3) + "\n" }],
-      generate: counter(),
     });
     expect(plan.counts).toMatchObject({ unknownHashes: 1, unknownBaselines: 1, unknownReviews: 1, baselines: 0 });
     expect(plan.events.every((e) => e.card === `h:${"ab".repeat(8)}`)).toBe(true);
     expect(plan.check.rows[0]).toMatchObject({ key: `h:${"ab".repeat(8)}`, known: false, verdict: "exact" });
   });
 
-  it("gives a hash two identical cards share to both of them", async () => {
+  it("gives two identical cards one key, and its history once", async () => {
     const twice = "Q: same\nA: s\n";
     const [h] = await hashes(twice);
     const plan = await planMigration({
@@ -125,10 +108,9 @@ describe("planMigration", () => {
       ],
       state: state({ [h]: entry("2026-10-01T08:00:00.000Z", 5, 2) }),
       logs: [],
-      generate: counter(),
     });
-    expect(plan.counts.sharedHashes).toBe(1);
-    expect(plan.events.map((e) => e.card).sort()).toEqual(["id1", "id2"]);
+    const [card] = await parseFile(twice, "a.md", "a");
+    expect(plan.events.map((e) => e.card)).toEqual([card.key]);
   });
 
   it("reports and skips state entries it cannot read", async () => {
@@ -152,7 +134,6 @@ describe("the before/after check", () => {
       decks: [{ path: "a.md", text: DECK_A }],
       state: state({ [h1]: e }),
       logs: [{ path: "l.jsonl", text: log.map((at) => v1Line(h1, at, 3)).join("\n") + "\n" }],
-      generate: counter(),
     });
     return plan.check.rows[0];
   }
@@ -201,7 +182,7 @@ describe("the before/after check", () => {
     // 38 days at 85%, where 90% gives 20.
     expect(Math.round(raw)).toBe(38);
     const plan = await planMigration(
-      { decks: [{ path: "a.md", text: DECK_A }], state: state({ [h1]: { ...e, dueDate: "2026-11-08" } }), logs: [], generate: counter() },
+      { decks: [{ path: "a.md", text: DECK_A }], state: state({ [h1]: { ...e, dueDate: "2026-11-08" } }), logs: [] },
       { retention: 0.9 }
     );
     expect(plan.check.rows[0]).toMatchObject({ verdict: "retention" });
@@ -247,7 +228,6 @@ describe("the v1 fixture repo (my-hashcards)", () => {
       path: `hashcards-reviews/${name}`,
       text: read(`hashcards-reviews/${name}`),
     })),
-    generate: counter("c"),
   });
 
   it("migrates every card with nothing the check cannot explain", async () => {
@@ -259,7 +239,6 @@ describe("the v1 fixture repo (my-hashcards)", () => {
       unknownHashes: 87,
       unknownBaselines: 87,
       unknownReviews: 2,
-      sharedHashes: 0,
     });
     expect(plan.settings.retention.value).toBe(0.9);
     expect(plan.settings.fuzz.value).toBe(true);

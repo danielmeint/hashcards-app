@@ -118,7 +118,6 @@ const GEO = `---
 name = "Capitals"
 ---
 
-ID: est-capital
 Status: draft
 Q: Capital of Estonia?
 A: Tallinn
@@ -186,7 +185,6 @@ async function decide(
     path: block.path,
     action,
     block: block.cards.map((c) => c.hash),
-    ...(action === "keep" && !block.cards[0].id ? { stampId: "stamp" + Math.random().toString(36).slice(2, 5) } : {}),
     at: new Date().toISOString(),
     ...extra,
   };
@@ -198,13 +196,16 @@ async function decide(
 const drafts = (cards: Card[]) => cards.filter((c) => c.status === "draft");
 
 describe("the queue, laid over the cards", () => {
-  it("makes a kept draft a new card under the key its stamped ID will give it", async () => {
+  it("makes a kept draft an active card, under the key it already had", async () => {
     const m = await setup({ "me/cards": { "k8s.md": K8S } });
-    const op = await decide(m, "Deployment", "keep");
+    const before = (await m.sync.loadCachedCards()).find(
+      (c) => c.content.type === "basic" && c.content.question.includes("Deployment")
+    )!;
+    await decide(m, "Deployment", "keep");
     const cards = await m.sync.loadCachedCards();
     const kept = cards.find((c) => c.content.type === "basic" && c.content.question.includes("Deployment"))!;
     expect(kept.status).toBe("active");
-    expect(kept.key).toBe(op.stampId);
+    expect(kept.key).toBe(before.key);
     expect(drafts(cards)).toHaveLength(1);
   });
 
@@ -216,16 +217,16 @@ describe("the queue, laid over the cards", () => {
     expect(drafts(await m.sync.loadCards())).toHaveLength(2);
   });
 
-  it("gives every deletion of a kept cloze its numbered key", async () => {
-    const m = await setup({ "me/cards": { "c.md": "Status: draft\nC: [a] and [b]\n" } });
-    await decide(m, "and", "keep", { stampId: "clz00000" });
-    expect((await m.sync.loadCachedCards()).map((c) => c.key)).toEqual(["clz00000:1", "clz00000:2"]);
-  });
-
-  it("keys a kept reverse card :r", async () => {
-    const m = await setup({ "me/cards": { "r.md": "Status: draft\nReverse: yes\nQ: Estonia\nA: Tallinn\n" } });
-    await decide(m, "Estonia", "keep", { stampId: "rev00000" });
-    expect((await m.sync.loadCachedCards()).map((c) => c.key)).toEqual(["rev00000", "rev00000:r"]);
+  it("keeps every card of a block: each cloze deletion, a card and its reverse", async () => {
+    const m = await setup({
+      "me/cards": { "c.md": "Status: draft\nC: [a] and [b]\n", "r.md": "Status: draft\nReverse: yes\nQ: Estonia\nA: Tallinn\n" },
+    });
+    const before = (await m.sync.loadCachedCards()).map((c) => c.key);
+    await decide(m, "and", "keep");
+    await decide(m, "Estonia", "keep");
+    const after = await m.sync.loadCachedCards();
+    expect(after.map((c) => c.key)).toEqual(before);
+    expect(after.map((c) => c.status)).toEqual(["active", "active", "active", "active"]);
   });
 });
 
@@ -241,7 +242,7 @@ describe("commitMessage", () => {
 describe("committing the queue", () => {
   it("commits every file's changes in one commit, and nothing else", async () => {
     const m = await setup({ "me/cards": { "k8s.md": K8S, "geo/capitals.md": GEO } });
-    const keep = await decide(m, "Deployment", "keep", { stampId: "dep10000" });
+    await decide(m, "Deployment", "keep");
     await decide(m, "Service", "discard");
     await decide(m, "Estonia", "keep");
 
@@ -254,7 +255,6 @@ A: The smallest deployable unit.
 
 ---
 
-ID: ${keep.stampId}
 Q: What does a Deployment manage?
 A: A ReplicaSet.
 `);
@@ -350,10 +350,10 @@ A: A ReplicaSet.
       .filter((c) => c.content.type === "basic" && c.content.question.includes("own"));
     await decide(m, "Deployment", "edit", { text, cards: edited });
     expect(drafts(await m.sync.loadCachedCards()).some((c) => c.content.type === "basic" && c.content.question.includes("own"))).toBe(true);
-    await decide(m, "own", "keep", { stampId: "own00000" });
+    await decide(m, "own", "keep");
     await m.commit.flushInbox();
     expect(repos.get("me/cards")!.log).toEqual(["Inbox: keep 1, edit 1"]);
-    expect(repos.get("me/cards")!.files()["k8s.md"]).toContain("ID: own00000\nQ: What does a Deployment own?\nA: ReplicaSets.\n");
+    expect(repos.get("me/cards")!.files()["k8s.md"]).toContain("---\n\nQ: What does a Deployment own?\nA: ReplicaSets.\n");
   });
 });
 

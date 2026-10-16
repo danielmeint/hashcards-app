@@ -61,19 +61,16 @@ name = "Europe"
 tags = ["geography"]
 ---
 
-ID: capital-estonia
 Q: What is the capital of Estonia?
 A: Tallinn
 Extra: Called *Reval* until 1918.
 
 ---
 
-ID: longest-river-europe
 C: The longest river in Europe is the [Volga].
 
 ---
 
-ID: es-biblioteca
 Reverse: yes
 Status: draft
 Q: **la biblioteca**
@@ -81,9 +78,11 @@ A: the library
 ```
 
 Basic cards are `Q:` and `A:`; cloze cards are `C:` with each `[blank]` its
-own card. Metadata lines open a card: a stable `ID:` (history follows it, so
-rewording a card keeps its schedule), `Tags:`, `Reverse: yes` and
+own card. Metadata lines open a card: `Tags:`, `Reverse: yes` and
 `Status: draft` or `suspended`. `Extra:` is a note shown after the answer.
+**A card is its text**: no IDs to write. Moving a card or changing its tags or
+note keeps its history; edits made in the app keep it too, and `hc relink`
+carries it over edits made anywhere else.
 Markdown, code blocks, tables, LaTeX (`$…$`, `$$…$$`), images and audio all
 work. The full definition is in [CARD_FORMAT_SPEC.md](CARD_FORMAT_SPEC.md),
 with a JSON Schema for one card in [`schema/card.schema.json`](schema/card.schema.json).
@@ -94,7 +93,7 @@ with a JSON Schema for one card in [`schema/card.schema.json`](schema/card.schem
 and reads review history from the `hashcards-data` branch with plain `git`.
 Card repos made from the template, and any repo after `hc init`, carry an
 [`AGENTS.md`](cli/templates/AGENTS.md) that tells a coding agent the format
-and the rules: write drafts, never change an ID, finish with `hc lint`. When
+and the rules: write drafts, leave existing cards alone, finish with `hc lint`. When
 an agent runs `hc add`, cards default to `Status: draft`.
 
 `hc` is not on npm yet. Build it from this repository:
@@ -106,14 +105,15 @@ node dist-cli/hc.js lint --repo ~/my-cards
 ```
 
 ```bash
-hc lint [--fix]                 # parse errors, duplicate IDs; --fix stamps missing IDs
+hc lint                         # parse errors; the same card twice
 hc add --deck net/tcp.md --draft -q "Question?" -a "Answer"
 hc add --deck net/tcp.md --cloze "TCP opens with a [SYN]."
 hc add --json cards.json        # one card or an array, as schema/card.schema.json
 hc due [--date tomorrow]        # reviews due, new cards within new_per_day
 hc stats                        # totals, maturity, retention, 14-day forecast
 hc leeches [--min-lapses 3]     # cards that keep failing
-hc show <key|id>                # a card, its file and line, state and history
+hc show <file:line|key>         # a card, its file and line, state and history
+hc relink [--apply]             # carry history over cards edited outside the app
 hc init                         # hashcards.toml, AGENTS.md and a lint workflow, for an existing repo
 hc migrate [--apply]            # an original-format repo → 1.0 (dry run by default)
 hc import anki --decks <dir> --collection <copy> [--apply]   # see cli/anki/README.md
@@ -125,9 +125,8 @@ has the details.
 
 **An existing repo:** `hc init` adds `hashcards.toml`, `AGENTS.md` and a GitHub
 workflow that runs `hc lint` on every push and pull request. **A repo in the
-original hashcards format** (cards without IDs, `hashcards-state.json` on
-`main`): `hc migrate` stamps IDs into every deck and moves the review history
-to `hashcards-data`, keeping every card's schedule. Until then the app reads
+original hashcards format** (`hashcards-state.json` on `main`): `hc migrate`
+moves the review history to `hashcards-data`, keeping every card's schedule. Until then the app reads
 such a repo as it is and says what to run.
 
 ## Self-hosting

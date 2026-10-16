@@ -25,16 +25,16 @@ in the hashcards repo; `hc add --help` lists every flag):
 [
   {"file": "k8s/workloads.md", "type": "cloze", "status": "draft", "tags": ["deploy"],
    "text": "`kubectl rollout [undo] deploy/web` returns to the previous revision."},
-  {"file": "k8s/workloads.md", "type": "basic", "status": "draft", "id": "k8s-deploy-vs-sts",
+  {"file": "k8s/workloads.md", "type": "basic", "status": "draft",
    "question": "Deployment vs StatefulSet: what does a StatefulSet add?",
    "answer": "Stable pod **names** and **per-pod volumes**, created and removed **in order**."}
 ]
 ```
 
-`id` is optional (see the rules below). `hc add` validates everything, writes
-nothing if any card is wrong, appends each card after a `---` with a fresh ID,
-and creates the deck file if needed (`--name "Deck name"` sets its title).
-Add `--dry-run` to preview.
+`hc add` validates everything, writes nothing if any card is wrong (or is
+already in the collection), appends each card after a `---`, and creates the
+deck file if needed (`--name "Deck name"` sets its title). Add `--dry-run` to
+preview.
 
 ## The format, if you edit files by hand
 
@@ -44,7 +44,6 @@ name = "Europe: Baltics"
 tags = ["geo"]
 ---
 
-ID: est-capital
 Tags: capitals
 Status: draft
 C: The capital of Estonia is [Tallinn].
@@ -58,8 +57,10 @@ Q: **Latvia**
 A: ![Latvia on the map](map-lva.png)
 ```
 
-- Metadata lines (`ID:`, `Tags:`, `Reverse: yes`, `Status:`) go at the top of
-  a block, before `Q:` or `C:`. Separate blocks with `---`.
+- Metadata lines (`Tags:`, `Reverse: yes`, `Status:`) go at the top of a
+  block, before `Q:` or `C:`. Separate blocks with `---`.
+- A card is its text: there are no IDs. Moving a card or changing its tags,
+  status or `Extra:` keeps its review history; rewording it makes a new card.
 - `Extra:` (optional, last) is a note shown only after the answer: context,
   a mnemonic, a docs pointer. Never put the answer's substance there.
 - `C:` text: every `[bracketed]` part becomes its own card. Write `\[` `\]`
@@ -70,10 +71,11 @@ A: ![Latvia on the map](map-lva.png)
 1. **Write `Status: draft`** (`--draft`, `"status": "draft"`) for anything you
    propose. The owner accepts drafts in the app's Inbox. `hc` run by an agent
    defaults to draft anyway.
-2. **IDs**: leave them out (`hc` stamps a random one) or pick a short slug
-   (`est-capital`: lowercase, digits, `-`). **Never change or reuse an
-   existing ID**: review history follows it.
-3. **Don't reword or delete existing non-draft cards** unless asked.
+2. **Don't reword or delete existing non-draft cards** unless asked. After
+   rewording some, run `hc relink`: it pairs each old card with its new text,
+   so its review history can follow. Report what it proposes; `hc relink
+   --apply` (which commits to the data branch) only when you may commit.
+3. Fixing a draft's wording is free: drafts have no history yet.
 4. Check what exists first and skip facts already covered:
    `grep -ril '<topic>' --include='*.md' --exclude=AGENTS.md --exclude=README.md .`
 5. Finish with `hc lint`. It must report 0 errors.

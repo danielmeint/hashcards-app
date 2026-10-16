@@ -5,27 +5,37 @@ import { parseFile } from "../../src/parser";
 import { hc, makeRepo, read } from "../test-helpers";
 
 describe("hc add", () => {
-  it("appends a basic card after a separator, with a fresh ID", async () => {
-    const repo = makeRepo({ "net.md": "---\nname = \"Net\"\n---\n\nID: old\nQ: a\nA: b\n\n\n" });
+  it("appends a basic card after a separator", async () => {
+    const repo = makeRepo({ "net.md": "---\nname = \"Net\"\n---\n\nQ: a\nA: b\n\n\n" });
     const run = await hc(["add", "--repo", repo, "--deck", "net.md", "-q", "Port of SSH?", "-a", "22", "--tags", "ssh, ports"]);
     expect(run.code).toBe(0);
     const text = read(repo, "net.md");
-    expect(text).toMatch(/^---\nname = "Net"\n---\n\nID: old\nQ: a\nA: b\n\n---\n\nID: ([0-9a-z]{8})\nTags: ssh, ports\nQ: Port of SSH\?\nA: 22\n$/);
-    expect(run.stdout).toMatch(/added [0-9a-z]{8} \(active\) net\.md:11/);
+    expect(text).toBe('---\nname = "Net"\n---\n\nQ: a\nA: b\n\n---\n\nTags: ssh, ports\nQ: Port of SSH?\nA: 22\n');
     const cards = await parseFile(text, "net.md", "net");
+    expect(run.stdout).toContain(`added net.md:10 (active)  keys: ${cards[1].key}`);
     expect(cards.map((c) => c.tags)).toEqual([[], ["ssh", "ports"]]);
   });
 
   it("creates a missing deck with frontmatter, and writes cloze, reverse and draft", async () => {
     const repo = makeRepo();
-    const a = await hc(["add", "--repo", repo, "--deck", "net/tcp.md", "--name", "TCP", "--cloze", "TCP opens with [SYN].", "--draft", "--id", "tcp-syn"]);
+    const a = await hc(["add", "--repo", repo, "--deck", "net/tcp.md", "--name", "TCP", "--cloze", "TCP opens with [SYN].", "--draft"]);
     expect(a.code).toBe(0);
     const b = await hc(["add", "--repo", repo, "--deck", "net/tcp.md", "-q", "TCP", "-a", "Transmission Control Protocol", "--reverse"]);
     expect(b.code).toBe(0);
     const text = read(repo, "net/tcp.md");
-    expect(text).toMatch(/^---\nname = "TCP"\n---\n\nID: tcp-syn\nStatus: draft\nC: TCP opens with \[SYN\]\.\n\n---\n\nID: \w{8}\nReverse: yes\nQ: TCP\nA: Transmission Control Protocol\n$/);
+    expect(text).toBe('---\nname = "TCP"\n---\n\nStatus: draft\nC: TCP opens with [SYN].\n\n---\n\nReverse: yes\nQ: TCP\nA: Transmission Control Protocol\n');
     const cards = await parseFile(text, "net/tcp.md", "tcp");
     expect(cards.map((c) => [c.deckName, c.status])).toEqual([["TCP", "draft"], ["TCP", "active"], ["TCP", "active"]]);
+  });
+
+  it("refuses an id: there are none", async () => {
+    const repo = makeRepo();
+    expect((await hc(["add", "--repo", repo, "--deck", "a.md", "-q", "q", "-a", "a", "--id", "x1"])).code).toBe(2);
+    const json = await hc(["add", "--repo", repo, "--json", "-", "--deck", "a.md"], {
+      stdin: JSON.stringify({ type: "basic", question: "q", answer: "a", id: "x1" }),
+    });
+    expect(json.code).toBe(2);
+    expect(json.json().errors[0].message).toMatch(/"id"/);
   });
 
   it("writes an Extra section, from a flag or from JSON, and the parser reads it back", async () => {
@@ -43,16 +53,17 @@ describe("hc add", () => {
   it("adds a JSON batch from stdin, answering in JSON", async () => {
     const repo = makeRepo();
     const batch = [
-      { file: "a.md", type: "basic", question: "1?", answer: "1", id: "one" },
+      { file: "a.md", type: "basic", question: "1?", answer: "1" },
       { type: "cloze", text: "[two] and [three]", status: "suspended" },
     ];
     const run = await hc(["add", "--repo", repo, "--json", "-", "--deck", "b.md"], { stdin: JSON.stringify(batch) });
     expect(run.code).toBe(0);
     const out = run.json();
     expect(out).toMatchObject({ ok: true, dryRun: false, created: ["a.md", "b.md"] });
-    expect(out.added[0]).toEqual({ id: "one", keys: ["one"], file: "a.md", line: 5, status: "active" });
-    expect(out.added[1]).toMatchObject({ file: "b.md", status: "suspended" });
-    expect(out.added[1].keys).toEqual([`${out.added[1].id}:1`, `${out.added[1].id}:2`]);
+    const [one] = await parseFile(read(repo, "a.md"), "a.md", "a");
+    const cloze = await parseFile(read(repo, "b.md"), "b.md", "b");
+    expect(out.added[0]).toEqual({ keys: [one.key], file: "a.md", line: 5, status: "active" });
+    expect(out.added[1]).toEqual({ keys: cloze.map((c) => c.key), file: "b.md", line: 5, status: "suspended" });
   });
 
   it("reads a JSON file relative to the working directory", async () => {
@@ -63,12 +74,11 @@ describe("hc add", () => {
   });
 
   it("validates every card and writes nothing if any is wrong", async () => {
-    const repo = makeRepo({ "a.md": "ID: taken\nQ: x\nA: y\n" });
+    const repo = makeRepo({ "a.md": "Q: x\nA: y\n" });
     const batch = [
       { file: "a.md", type: "basic", question: "fine", answer: "fine" },
       { file: "a.md", type: "basic", question: "no answer" },
       { file: "a.md", type: "cloze", text: "x [y]", question: "?" },
-      { file: "a.md", type: "basic", question: "q", answer: "a", id: "taken" },
     ];
     const run = await hc(["add", "--repo", repo, "--json", "-"], { stdin: JSON.stringify(batch) });
     expect(run.code).toBe(2);
@@ -79,15 +89,22 @@ describe("hc add", () => {
         { card: 2, path: "(card)", message: 'must not have "question" on a cloze card' },
       ],
     });
-    expect(read(repo, "a.md")).toBe("ID: taken\nQ: x\nA: y\n");
+    expect(read(repo, "a.md")).toBe("Q: x\nA: y\n");
+  });
 
-    // Schema-valid, but the ID is already used.
-    const dup = await hc(["add", "--repo", repo, "--json", "-"], { stdin: JSON.stringify(batch[3]) });
-    expect(dup.json().errors).toEqual([{ card: 0, path: "/id", message: "ID 'taken' is already used at a.md:1" }]);
-    const twice = [{ ...batch[0], id: "same" }, { ...batch[0], question: "other", id: "same" }];
-    const inBatch = await hc(["add", "--repo", repo, "--json", "-"], { stdin: JSON.stringify(twice) });
-    expect(inBatch.json().errors).toEqual([{ card: 1, path: "/id", message: "ID 'same' appears twice in this batch" }]);
-    expect(read(repo, "a.md")).toBe("ID: taken\nQ: x\nA: y\n");
+  it("refuses a card the collection already has, in any file, or twice in one batch", async () => {
+    const repo = makeRepo({ "a.md": "Q: x\nA: y\n" });
+    const elsewhere = await hc(["add", "--repo", repo, "--json", "-"], {
+      stdin: JSON.stringify({ file: "b.md", type: "basic", question: "x", answer: "  y" }),
+    });
+    expect(elsewhere.json().errors).toEqual([{ card: 0, path: "", message: "a.md:1 already has a card with exactly this text" }]);
+    const twice = [
+      { file: "b.md", type: "basic", question: "new", answer: "n" },
+      { file: "c.md", type: "basic", question: "new", answer: "n" },
+    ];
+    const batch = await hc(["add", "--repo", repo, "--json", "-"], { stdin: JSON.stringify(twice) });
+    expect(batch.json().errors).toEqual([{ card: 1, path: "", message: "card 1 of this batch has exactly this text" }]);
+    expect(read(repo, "a.md")).toBe("Q: x\nA: y\n");
   });
 
   it("refuses bad JSON, files that are not decks, and broken decks", async () => {
@@ -132,7 +149,7 @@ describe("hc add", () => {
   });
 
   it("refuses a card whose text is already in the file", async () => {
-    const repo = makeRepo({ "a.md": "ID: one\nQ: q\nA: a\n" });
+    const repo = makeRepo({ "a.md": "Q: q\nA: a\n" });
     const run = await hc(["add", "--repo", repo, "--deck", "a.md", "-q", "q", "-a", "a"]);
     expect(run.code).toBe(2);
     expect(run.stderr).toMatch(/already has a card with exactly this text/);

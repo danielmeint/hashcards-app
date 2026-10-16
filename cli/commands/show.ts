@@ -1,4 +1,4 @@
-import type { ReviewLogEvent } from "../../src/core/events";
+import type { ScheduleEvent } from "../../src/core/events";
 import type { ParsedCard } from "../../src/types";
 import { EXIT, UsageError } from "../command";
 import type { Command } from "../command";
@@ -22,11 +22,12 @@ export function sides(card: ParsedCard): { front: string; back: string } {
 export const show: Command = {
   name: "show",
   summary: "one card: its text, file:line, state and review history",
-  help: `Usage: hc show <key|id|hash-prefix>
+  help: `Usage: hc show <file:line|key|hash-prefix>
 
-  <key>    a card key: est-capital, k8q2xv7m:r, cka-deploy:2, h:0123abcd…
-  <id>     every card of that ID (a reverse card, every cloze deletion)
-  <hash>   6+ hex digits of a card's v1 content hash
+  <file:line>  every card of the block at that line (a reverse card, every
+               cloze deletion): geo/baltics.md:12
+  <key>        a card key, h:0123abcd… (as hc due and hc add print them)
+  <hash>       6+ hex digits of a card's key, or of its v1 content hash
 
 History of a card that has been deleted is still shown: it is never removed.
 
@@ -35,18 +36,25 @@ Exit: 0 found, 1 no such card or history.`,
   positionals: 1,
   async run(ctx) {
     const query = ctx.positionals[0];
-    if (!query) throw new UsageError("which card? give a key or an ID");
+    if (!query) throw new UsageError("which card? give file:line or a key");
     const { collection, history, states, today } = await openWorkspace(ctx);
     const byCard = eventsByCard(history.events);
 
     const isHash = /^[0-9a-f]{6,64}$/.test(query);
+    const at = /^(.+\.md):(\d+)$/.exec(query);
     const cards = collection.cards.filter(
-      (c) => c.key === query || c.id === query || (isHash && c.hash.startsWith(query))
+      (c) =>
+        c.key === query ||
+        (isHash && (c.key.startsWith(`h:${query}`) || c.hash.startsWith(query))) ||
+        (at !== null && c.filePath === at[1] && c.range[0] <= Number(at[2]) && c.range[1] >= Number(at[2]))
     );
-    // History whose card is gone: an exact key, or every key of an ID.
+    // History whose card is gone: by its exact key, or a prefix of it.
     const shown = new Set(cards.map((c) => c.key));
     const orphans = [...byCard.keys()].filter(
-      (k) => !shown.has(k) && (k === query || k.startsWith(`${query}:`)) && !collection.cards.some((c) => c.key === k)
+      (k) =>
+        !shown.has(k) &&
+        (k === query || (isHash && k.startsWith(`h:${query}`))) &&
+        !collection.cards.some((c) => c.key === k)
     );
 
     const entries = [
@@ -110,7 +118,7 @@ function indent(text: string): string {
   return text.replace(/\n/g, "\n     ");
 }
 
-function historyRow(e: ReviewLogEvent): string[] {
+function historyRow(e: ScheduleEvent): string[] {
   const src = e.src ? `(${e.src})` : "";
   if (e.kind === "baseline") {
     return [eventDay(e), "baseline", `s=${e.s.toFixed(1)} d=${e.d.toFixed(2)} reps=${e.reps}`, src];

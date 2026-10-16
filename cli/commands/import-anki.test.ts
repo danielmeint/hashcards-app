@@ -1,5 +1,6 @@
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { parseFile } from "../../src/parser";
 import { describe, expect, it } from "vitest";
 import { DECK, makeCollection } from "../anki/test-collection";
 import { placement } from "./import-anki";
@@ -26,7 +27,7 @@ function sources(): { decks: string; collection: string } {
 /** A migrated card repo: IDs, hashcards.toml, a data branch with one device's file. */
 function v2Repo(): string {
   const repo = makeRepo({
-    "geo.md": "ID: own-card\nQ: q\nA: a\n",
+    "geo.md": "Q: q\nA: a\n",
     "hashcards.toml": '[decks]\ninclude = ["**/*.md"]\nexclude = ["README.md"]\n',
   });
   gitInit(repo);
@@ -83,13 +84,16 @@ describe("hc import anki", () => {
       "reviews/2026-10.abcd1234.jsonl",
       "reviews/2026-10.anki.jsonl",
     ]);
+    // Cards by their text (PLAN-1.0 §2.7): no ID lines, reviews under content keys.
+    expect(read(repo, "cka/storage.md")).not.toMatch(/^ID:/m);
+    const [reclaim] = await parseFile(read(repo, "cka/storage.md"), "cka/storage.md", "storage");
     const october = git(repo, ["show", "hashcards-data:reviews/2026-10.anki.jsonl"]);
     expect(october.split("\n").map((l) => JSON.parse(l))).toContainEqual(
-      expect.objectContaining({ card: "pv-reclaim", src: "anki", tz: 60 })
+      expect.objectContaining({ card: reclaim.key, src: "anki", tz: 60 })
     );
 
-    expect((await hc(["lint", "--json", "--repo", repo])).json()).toMatchObject({ ok: true, errors: [] });
-    const show = (await hc(["show", "pv-reclaim", "--json", "--repo", repo], { now: NOW })).json();
+    expect((await hc(["lint", "--json", "--repo", repo])).json()).toMatchObject({ ok: true, errors: [], warnings: [] });
+    const show = (await hc(["show", reclaim.key, "--json", "--repo", repo], { now: NOW })).json();
     expect(show.cards[0].state.reviewCount).toBe(3);
     expect(read(repo, "cka/storage.md")).toContain('name = "CKA: Storage"');
   });
@@ -122,7 +126,7 @@ describe("hc import anki", () => {
     expect(git(repo, ["show", "hashcards-data:reviews/2026-10.anki.jsonl"])).toBe(before);
   });
 
-  it("refuses a repo that is not migrated, a dirty one, and IDs or files it already has", async () => {
+  it("refuses a repo that is not migrated, a dirty one, and cards or files it already has", async () => {
     const src = sources();
     const v1 = makeRepo({ "a.md": "Q: q\nA: a\n", "hashcards-state.json": "{}" });
     gitInit(v1);
@@ -132,14 +136,18 @@ describe("hc import anki", () => {
     write(dirty, "scratch.txt", "x");
     expect((await importAnki(dirty, src, "--apply")).code).toBe(2);
 
+    // The first card the import writes, already in another file.
+    const scratch = v2Repo();
+    await importAnki(scratch, src, "--apply");
+    const first = read(scratch, "cka/storage.md").split("\n---\n")[1].trim().replace(/^Tags: .*\n/, "");
     const clash = v2Repo();
-    write(clash, "other.md", "ID: pv-reclaim\nQ: mine\nA: mine\n");
-    write(clash, "cka/storage.md", "ID: unrelated\nQ: q\nA: a\n");
+    write(clash, "other.md", first + "\n");
+    write(clash, "cka/storage.md", "Q: q\nA: a\n");
     git(clash, ["add", "-A"]);
     git(clash, ["commit", "-qm", "clash"]);
     const blockers: string[] = (await importAnki(clash, src, "--json")).json().blockers;
     expect(blockers).toContainEqual(expect.stringContaining("cka/storage.md already exists"));
-    expect(blockers).toContainEqual(expect.stringContaining("already in the repo: pv-reclaim"));
+    expect(blockers).toContainEqual(expect.stringContaining("1 card already in the repo: other.md:1"));
   });
 
   it("never reads a collection inside Anki's profile directory", async () => {

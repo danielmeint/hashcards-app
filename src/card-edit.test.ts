@@ -119,16 +119,22 @@ A: Eleven nines
 C: The capital of [France] is [Paris]
 `;
 
-const performance = {
-  type: "reviewed" as const,
-  lastReviewedAt: "2026-01-01T00:00:00.000Z",
-  stability: 3,
-  difficulty: 5,
-  intervalRaw: 3,
-  intervalDays: 3,
-  dueDate: "2026-02-01",
-  reviewCount: 7,
-};
+/**
+ * Give `card` seven reviews of history the way the app has any: as events in
+ * its collection's log, replayed into the cache.
+ */
+async function giveHistory(card: { repo: string; key: string }) {
+  const db = await import("./db");
+  await db.addBaselines([
+    {
+      log: card.repo,
+      event: { v: 2, kind: "baseline", card: card.key, at: "2026-01-01T00:00:00.000Z", tz: 60, s: 3, d: 5, reps: 7 },
+    },
+  ]);
+  await db.markReplayStale(card.repo);
+  const { refreshStates } = await import("./review-state");
+  await refreshStates();
+}
 
 describe("splicing a card back into its file", () => {
   const file = "one\ntwo\nthree\nfour\n";
@@ -186,10 +192,10 @@ C: The capital of [France] is [Paris]
     );
   });
 
-  it("carries the card's scheduling onto the key its new text gives it", async () => {
+  it("carries the card's history onto the key its new text gives it, by a link", async () => {
     const { readCardSource, commitCardEdit, db, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    await db.importState({ [db.stateKey(card)]: performance });
+    await giveHistory(card);
     const source = await readCardSource(card);
 
     const result = await commitCardEdit(
@@ -201,38 +207,37 @@ C: The capital of [France] is [Paris]
 
     expect(result.migrated).toBe(1);
     const fresh = result.cards[0];
-    // No ID, so the key is the content's, and the edit moved it.
+    // A card is its text, so the edit moved its key.
     expect(db.stateKey(fresh)).not.toBe(db.stateKey(card));
     // Seven reviews of work, still attached to the card it belongs to — by a
-    // baseline event under the new key, which every device replays the same.
-    expect((await db.getAllPerformances()).get(db.stateKey(fresh))?.reviewCount).toBe(7);
-    const [baseline] = await db.getLocalBaselines();
-    expect(baseline).toMatchObject({
-      log: "someone/cards",
-      event: { kind: "baseline", card: fresh.key, s: 3, d: 5, reps: 7, src: "edit" },
-    });
+    // link from the old key, which every device replays the same.
+    const states = await db.getAllPerformances();
+    expect(states.get(db.stateKey(fresh))?.reviewCount).toBe(7);
+    expect(states.has(db.stateKey(card))).toBe(false);
+    const events = (await db.getLocalBaselines()).map((b) => b.event);
+    expect(events.at(-1)).toMatchObject({ kind: "link", card: fresh.key, from: card.key, src: "edit" });
   });
 
-  it("needs nothing to carry when the card has an ID", async () => {
-    const withId = "ID: s3-durability\nQ: What is the default S3 durability?\nA: Eleven nines\n";
-    const { readCardSource, commitCardEdit, db, sync } = await freshEdit("b.md", withId);
+  it("needs nothing to carry when only the metadata changed", async () => {
+    const text = "Q: What is the default S3 durability?\nA: Eleven nines\n";
+    const { readCardSource, commitCardEdit, db, sync } = await freshEdit("b.md", text);
     const [card] = await sync.loadCachedCards();
-    await db.importState({ [db.stateKey(card)]: performance });
+    await giveHistory(card);
     const source = await readCardSource(card);
 
-    const result = await commitCardEdit(card, source, "ID: s3-durability\nQ: How durable is S3?\nA: 99.999999999%", {
+    const result = await commitCardEdit(card, source, "Tags: aws\nQ: What is the default  S3 durability?\nA: Eleven nines", {
       keepScheduling: true,
     });
 
     expect(db.stateKey(result.cards[0])).toBe(db.stateKey(card));
     expect(result.migrated).toBe(1);
-    expect(await db.getLocalBaselines()).toEqual([]);
+    expect((await db.getLocalBaselines()).map((b) => b.event.kind)).toEqual(["baseline"]);
   });
 
   it("starts the card over when the user asks it to", async () => {
     const { readCardSource, commitCardEdit, db, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    await db.importState({ [db.stateKey(card)]: performance });
+    await giveHistory(card);
     const source = await readCardSource(card);
 
     const result = await commitCardEdit(
@@ -249,7 +254,7 @@ C: The capital of [France] is [Paris]
   it("handles a card being split into two, which is the usual leech fix", async () => {
     const { readCardSource, commitCardEdit, db, sync } = await freshEdit("a.md", FILE);
     const card = (await sync.loadCachedCards())[1];
-    await db.importState({ [db.stateKey(card)]: performance });
+    await giveHistory(card);
     const source = await readCardSource(card);
 
     // "A card that fails repeatedly is usually two questions in one" — so the
@@ -539,23 +544,20 @@ C: The capital of [France] is [Paris]
 });
 
 /**
- * A v2 card's range covers its metadata lines, so the editor shows them. The ID
- * is the one that must survive an edit: everything the card has learned will
- * hang on it.
+ * A v2 card's range covers its metadata lines, so the editor shows them, and
+ * they can be edited like any other line.
  */
 describe("editing a card with metadata", () => {
   const V2 = `---
 name = "Nordic"
 ---
 
-ID: est-capital
 Tags: capitals
 Q: What is the capital of Estonia?
 A: Tallinn
 
 ---
 
-ID: k3n9wq2p
 C: The capital of [Norway] is [Oslo].
 `;
 
@@ -567,7 +569,7 @@ C: The capital of [Norway] is [Oslo].
     const { readCardSource, sync } = await freshEdit("v2.md", V2);
     const card = (await sync.loadCachedCards())[0];
     expect((await readCardSource(card)).text).toBe(
-      "ID: est-capital\nTags: capitals\nQ: What is the capital of Estonia?\nA: Tallinn"
+      "Tags: capitals\nQ: What is the capital of Estonia?\nA: Tallinn"
     );
   });
 
@@ -584,28 +586,10 @@ C: The capital of [Norway] is [Oslo].
     );
 
     expect(repo.files.get("v2.md")!.text).toBe(V2.replace("Tallinn", "Tallinn (Reval)"));
-    expect(result.card).toMatchObject({ id: "est-capital", key: "est-capital", tags: ["capitals"] });
+    expect(result.card).toMatchObject({ tags: ["capitals"] });
   });
 
-  it("puts the ID back when the edit drops it", async () => {
-    const { readCardSource, commitCardEdit, sync } = await freshEdit("v2.md", V2);
-    const card = (await sync.loadCachedCards())[0];
-    const source = await readCardSource(card);
-
-    const result = await commitCardEdit(
-      card,
-      source,
-      "Q: What is the capital of Estonia?\nA: Tallinn, formerly Reval",
-      { keepScheduling: true }
-    );
-
-    expect(repo.files.get("v2.md")!.text).toContain(
-      "\nID: est-capital\nQ: What is the capital of Estonia?\nA: Tallinn, formerly Reval\n"
-    );
-    expect(result.card?.id).toBe("est-capital");
-  });
-
-  it("lets the other metadata lines be edited", async () => {
+  it("lets the other metadata lines be edited, keeping the key", async () => {
     const { readCardSource, commitCardEdit, sync } = await freshEdit("v2.md", V2);
     const card = (await sync.loadCachedCards())[0];
     const source = await readCardSource(card);
@@ -618,26 +602,31 @@ C: The capital of [Norway] is [Oslo].
     );
 
     expect(result.card).toMatchObject({
-      id: "est-capital",
+      key: card.key,
       tags: ["capitals", "baltic"],
       status: "suspended",
     });
   });
 
-  it("keeps a cloze block's ID, and every deletion's key", async () => {
-    const { readCardSource, commitCardEdit, sync } = await freshEdit("v2.md", V2);
-    const card = (await sync.loadCachedCards()).find((c) => c.key === "k3n9wq2p:2")!;
-    const source = await readCardSource(card);
+  it("links each deletion of an edited cloze block to its new self, in order", async () => {
+    const { readCardSource, commitCardEdit, db, sync } = await freshEdit("v2.md", V2);
+    const before = (await sync.loadCachedCards()).filter((c) => c.content.type === "cloze");
+    for (const card of before) await giveHistory(card);
+    const source = await readCardSource(before[1]);
 
     const result = await commitCardEdit(
-      card,
+      before[1],
       source,
       "C: The capital of [Norway] is [Oslo], on the Oslofjord.",
       { keepScheduling: true }
     );
 
-    expect(result.cards.map((c) => c.key)).toEqual(["k3n9wq2p:1", "k3n9wq2p:2"]);
-    expect(result.card?.key).toBe("k3n9wq2p:2");
+    expect(result.card).toBe(result.cards[1]);
+    const links = (await db.getLocalBaselines()).map((b) => b.event).filter((e) => e.kind === "link");
+    expect(links.map((l) => l.kind === "link" && [l.from, l.card])).toEqual([
+      [before[0].key, result.cards[0].key],
+      [before[1].key, result.cards[1].key],
+    ]);
   });
 
   it("takes the metadata with it when the card is deleted", async () => {
@@ -648,23 +637,21 @@ C: The capital of [Norway] is [Oslo].
     await commitCardEdit(card, source, "", { keepScheduling: true });
 
     const text = repo.files.get("v2.md")!.text;
-    expect(text).not.toContain("est-capital");
+    expect(text).not.toContain("Estonia");
     expect(text).not.toContain("Tags:");
     // What is left still parses: no stray metadata above the next card.
     const left = await sync.loadCachedCards();
-    expect(left.map((c) => c.id)).toEqual(["k3n9wq2p", "k3n9wq2p"]);
+    expect(left.map((c) => c.content.type)).toEqual(["cloze", "cloze"]);
   });
 });
 
 describe("editing a card with an Extra section", () => {
-  const EXTRA = `ID: est-capital
-Q: What is the capital of Estonia?
+  const EXTRA = `Q: What is the capital of Estonia?
 A: Tallinn
 Extra: Called *Reval* until 1918.
 
 ---
 
-ID: k3n9wq2p
 C: The capital of [Norway] is [Oslo].
 Extra: On the Oslofjord.
 `;
@@ -677,7 +664,7 @@ Extra: On the Oslofjord.
     const { readCardSource, sync } = await freshEdit("extra.md", EXTRA);
     const [basic, cloze] = await sync.loadCachedCards();
     expect((await readCardSource(basic)).text).toBe(
-      "ID: est-capital\nQ: What is the capital of Estonia?\nA: Tallinn\nExtra: Called *Reval* until 1918."
+      "Q: What is the capital of Estonia?\nA: Tallinn\nExtra: Called *Reval* until 1918."
     );
     expect((await readCardSource(cloze)).text).toContain("\nExtra: On the Oslofjord.");
   });
@@ -700,7 +687,7 @@ Extra: On the Oslofjord.
 
   it("changes neither hash nor key when only the Extra section is edited", async () => {
     const { readCardSource, commitCardEdit, sync } = await freshEdit("extra.md", EXTRA);
-    const card = (await sync.loadCachedCards()).find((c) => c.key === "k3n9wq2p:2")!;
+    const card = (await sync.loadCachedCards())[2];
     const source = await readCardSource(card);
 
     const result = await commitCardEdit(
@@ -712,37 +699,8 @@ Extra: On the Oslofjord.
 
     expect(result.card).toMatchObject({ key: card.key, hash: card.hash });
     expect(result.card?.content.extra).toBe("On the Oslofjord, at its head.");
-    // Nothing to carry: the history is already under the right hash.
+    // Nothing to carry: the history is already under the right key.
     expect(result.migrated).toBe(0);
-  });
-});
-
-describe("keeping a card's ID through an edit", () => {
-  it("adds the original ID above a replacement that has none", async () => {
-    const { keepId } = await import("./card-edit");
-    expect(keepId("ID: ab\nTags: t\nQ: a\nA: b", "Tags: t\nQ: a\nA: c")).toBe(
-      "ID: ab\nTags: t\nQ: a\nA: c"
-    );
-  });
-
-  it("respects an ID the edit changed", async () => {
-    const { keepId } = await import("./card-edit");
-    expect(keepId("ID: ab\nQ: a\nA: b", "ID: cd\nQ: a\nA: b")).toBe("ID: cd\nQ: a\nA: b");
-  });
-
-  it("leaves a deletion a deletion", async () => {
-    const { keepId } = await import("./card-edit");
-    expect(keepId("ID: ab\nQ: a\nA: b", "  \n")).toBe("  \n");
-  });
-
-  it("adds nothing to a card that never had an ID", async () => {
-    const { keepId } = await import("./card-edit");
-    expect(keepId("Q: a\nA: b", "Q: a\nA: c")).toBe("Q: a\nA: c");
-  });
-
-  it("does not mistake an ID line in the answer for the card's own", async () => {
-    const { keepId } = await import("./card-edit");
-    expect(keepId("Q: a\nA: b\nID: ab", "Q: a\nA: c")).toBe("Q: a\nA: c");
   });
 });
 

@@ -7,7 +7,7 @@ import { FakeGitHub, readStore } from "./fake-github";
  * without either ever writing a file the other writes.
  */
 
-const deck = "ID: japan\nQ: Japan\nA: Tokyo\n\n---\n\nID: peru\nQ: Peru\nA: Lima\n";
+const deck = "Q: Japan\nA: Tokyo\n\n---\n\nQ: Peru\nA: Lima\n";
 
 async function device(browser: Browser, github: FakeGitHub): Promise<Page> {
   const context = await browser.newContext({ serviceWorkers: "block" });
@@ -59,7 +59,10 @@ test("two devices converge through the data branch", async ({ browser }) => {
     (await schedule(laptop)).map((s) => s.reviewCount).join()
   );
   expect(await schedule(phone)).toEqual(await schedule(laptop));
-  expect((await schedule(phone)).map((s) => s.key)).toEqual(["someone/cards/japan", "someone/cards/peru"]);
+  // Two cards, keyed by their text (PLAN-1.0 §2.7).
+  const keys = (await schedule(phone)).map((s) => s.key);
+  expect(keys).toHaveLength(2);
+  expect(keys.every((k) => /^someone\/cards\/h:[0-9a-f]{16}$/.test(k))).toBe(true);
   // Every move of the branch was a fast-forward that landed.
   expect(github.refWrites.every((w) => w.ok)).toBe(true);
   expect(github.unhandled).toEqual([]);

@@ -7,8 +7,9 @@ Version 2
 Hashcards decks are plain Markdown files (`.md`) in a git repository. Each file
 is a **deck**, and each deck holds **card blocks**: a basic card (`Q:` / `A:`)
 or a cloze card (`C:`), optionally preceded by **metadata lines** that give the
-card a stable ID, tags and a status, and optionally followed by an **`Extra:`**
-note shown after the answer.
+card tags and a status, and optionally followed by an **`Extra:`** note shown
+after the answer. **A card is its text**: there are no IDs to write or keep
+unique (see [Card keys](#card-keys)).
 
 ```markdown
 ---
@@ -16,21 +17,18 @@ name = "Europe: Nordic & Baltic"
 tags = ["geo", "europe"]
 ---
 
-ID: est-capital
 Tags: capitals
 Q: What is the capital of Estonia?
 A: Tallinn
 
 ---
 
-ID: k8q2xv7m
 Reverse: yes
 Q: **Germany**
 A: ![Germany on the map](map-deu.png)
 
 ---
 
-ID: k3n9wq2p
 Status: draft
 C: In Kubernetes, a [Deployment] manages a [ReplicaSet].
 Extra: A rollout creates a new ReplicaSet and scales the old one down.
@@ -45,19 +43,17 @@ emit structured data can use the JSON Schema in
 
 | Version 1 | Version 2 |
 |---|---|
-| A card *is* the SHA-256 of its text. Fixing a typo makes a new card and strands the old one's history. | A card has an **`ID:`** written in the file. Editing, moving or rewording it keeps its history. |
-| Nothing but `Q:` / `A:` / `C:` in a block. | **Metadata lines** (`ID:`, `Tags:`, `Reverse:`, `Status:`) may open a block. |
+| A card is the SHA-256 of its exact text: reflowing a paragraph makes a new card. | A card is still its text, hashed after **normalising whitespace**. Edits made in the app keep their history; edits made elsewhere can be [linked](#edits-and-history). |
+| Nothing but `Q:` / `A:` / `C:` in a block. | **Metadata lines** (`Tags:`, `Reverse:`, `Status:`) may open a block. |
 | Frontmatter knows only `name`. | Frontmatter also takes **`tags`**. |
 | Every card is scheduled. | Cards can be **drafts** (waiting to be accepted) or **suspended**. |
 | A reverse card means writing the card twice. | **`Reverse: yes`** schedules the answer→question card too. |
-| Cloze siblings share a "family hash". | Cloze siblings share an ID: `<id>:1`, `<id>:2`, … |
 | Notes about a card go in the answer or nowhere. | An optional **`Extra:`** section, shown only after reveal, outside the card's identity. |
 | Tags are free text. | Tags are **normalised** (`CKA::Workloads` → `cka/workloads`) and checked. |
 
-Every version 1 file is a valid version 2 file. Its cards have no IDs, so they
-are keyed by their content hash exactly as before, until IDs are stamped in
-(see [Stamping IDs](#stamping-ids)). Adding metadata to a card never changes
-its content hash.
+Every version 1 file is a valid version 2 file, with the same cards. Their keys
+change once, since the hash now normalises whitespace; `hc migrate` carries
+version 1 history over to the new keys.
 
 ## File Structure
 
@@ -111,18 +107,16 @@ line with its `A:`, or a `C:` line, then an optional [`Extra:`](#extra-section)
 line, and every line after them up to the next card. Blocks are separated by `---` on a line of its own:
 
 ```
-ID: monoid
 C: A semigroup with an identity element is called a [monoid].
 
 ---
 
-ID: semigroup
 C: A magma where the operation is [associative] is called a [semigroup].
 ```
 
 A new `Q:` or `C:` also ends the card before it, without a `---`. That still
 works, but such a card has no block top for metadata to go on (see below), so
-**use `---` between cards**. Stamping IDs inserts one where it is missing.
+**use `---` between cards**.
 
 Blank lines between blocks, and between metadata lines and the card, are fine.
 
@@ -130,42 +124,25 @@ Blank lines between blocks, and between metadata lines and the card, are fine.
 
 Metadata lines come **first in a block, before `Q:` or `C:`**. A line is
 metadata when it is at the top of a block and matches
-`^(ID|Tags|Reverse|Status):`. The top of a block is the start of the file
+`^(Tags|Reverse|Status):`. The top of a block is the start of the file
 (after any frontmatter) or the line after a `---`.
 
 **Once `Q:`, `A:` or `C:` has started, nothing is metadata.** An answer can say
-`Status: Running` or `ID: 42` and mean it. The same goes for a line between two
+`Status: Running` and mean it. The same goes for a line between two
 cards that are not separated by `---`: it belongs to the card above.
 
 Each key may appear at most once per block, in any order. Values are trimmed.
 
-### `ID:`
+### Legacy `ID:`
 
-```
-ID: est-capital
-```
-
-The card's stable identity. It must match
-
-```
-[a-z0-9][a-z0-9-]{1,63}
-```
-
-that is, 2–64 characters of lowercase letters, digits and `-`, not starting
-with `-`. IDs can never contain `:` or `/`, which is what lets [keys](#card-keys)
-be split unambiguously.
-
-- **Unique within the collection.** The parser rejects the same ID twice in one
-  file. Uniqueness across files is checked by tooling that reads the whole
-  collection (`hc lint`).
-- **Optional.** A card without an ID is valid and is keyed by its content hash.
-  Tools treat a missing ID as a warning, not an error, and can stamp one in.
-- **Pick a slug** when a card has an obvious name (`cka-wl-set-image`).
-  Otherwise let a tool generate one: 8 characters of lowercase Crockford base32
-  (`0-9` and `a-z` without `i`, `l`, `o`, `u`), such as `k8q2xv7m`.
-- **Never reuse an ID** for a different card. Review history follows the ID,
-  and is never deleted with the card: re-adding a deleted ID picks its history
-  back up.
+Files written by early 1.0 builds open their blocks with an `ID:` line
+(`ID: est-capital`, 2–64 characters of `a-z`, `0-9` and `-`). It is still
+read, so those files keep parsing, but it is not part of the card: it only
+tells tools which key the card's history was filed under then (`<id>`,
+`<id>:r` for its reverse, `<id>:<n>` for cloze deletion *n*), and until it is
+gone that history is read as the card's. `hc lint` warns about it, and
+`hc migrate` removes it and writes the [links](#edits-and-history) for real.
+Write no new ones.
 
 ### `Tags:`
 
@@ -267,9 +244,8 @@ square brackets `[...]`, introduced by `C:`:
 C: An [agonist] is a ligand that binds to a receptor and [activates it].
 ```
 
-Each deletion is a **separate card**. The block above makes two: one hiding
-"agonist", one hiding "activates it". They are numbered 1, 2, … in order of
-appearance, which is how their [keys](#card-keys) tell them apart.
+Each deletion is a **separate card**, with its own [key](#card-keys). The
+block above makes two: one hiding "agonist", one hiding "activates it".
 
 Cloze cards can span multiple lines:
 
@@ -311,14 +287,12 @@ It is never part of the question, and a cloze card's note is hidden with its
 deletions, so it cannot give them away.
 
 ```
-ID: est-capital
 Q: What is the capital of Estonia?
 A: Tallinn
 Extra: Called *Reval* until 1918.
 
 ---
 
-ID: cka-wl-set-image
 C: Change a Deployment's image: `kubectl` [set image] `deploy/web` [nginx=nginx:1.27]
 Extra:
 The container name comes before `=`.
@@ -339,8 +313,8 @@ next card boundary. It is Markdown, trimmed like the other sides.
 - A reverse card (`Reverse: yes`) carries the same extra, and so does every
   deletion of a cloze block.
 - **Extra is not part of the card's identity.** It never enters the
-  [content hash](#content-hashes) or the [key](#card-keys): adding, rewording
-  or removing it keeps the card's history.
+  [key](#card-keys): adding, rewording or removing it keeps the card's
+  history.
 
 ## Content Features
 
@@ -398,115 +372,99 @@ A: ![](audio/parande.mp3)
 
 ## Card Keys
 
-A **key** names one schedulable card. It is what the review log refers to, so
-it must survive edits. One ID can name several cards, so the key says which:
+A **key** names one schedulable card: it is what the review log refers to.
+A card is its text, so its key is a hash of its text:
 
 | Card | Key |
 |---|---|
-| Basic | `<id>` |
-| Its reverse | `<id>:r` |
-| Cloze deletion *n* (1-based, in order of appearance) | `<id>:<n>` |
-| A card with no ID | `h:<first 16 hex digits of its content hash>` |
-| A card from a subscribed collection, as recorded in *your* log | `<owner>/<repo>/<key>` |
+| Any card | `h:<first 16 hex digits of its identity hash>` |
+| A card from a subscribed collection, as recorded in *your* log | `<owner>/<repo>/h:<…>` |
 
-Examples: `est-capital`, `k8q2xv7m:r`, `k3n9wq2p:2`, `h:3f9a0c41d2b7e865`,
-`someone/cards/est-capital`.
+`Q: What is the capital of Estonia?` / `A: Tallinn` is `h:0adbdf261f9947fc`,
+written on one line or on three, with any indentation.
 
-Since IDs contain neither `:` nor `/` and are at least two characters long, a
-key always parses one way, and `h:` can never be an ID. All deletions of one
-cloze block are `<id>:*`, which is how siblings are recognised.
+### Identity hashes
 
-Adding a deletion to a cloze block, or reordering its deletions, renumbers the
-ones after it. Prefer appending deletions, or splitting a block that keeps
-growing.
+Text is first **normalised**: every run of whitespace (spaces, tabs, newlines)
+becomes one space, and the ends are trimmed. The parts below are joined with a
+NUL byte (`\0`); strings are UTF-8.
+
+| Card | Hashed |
+|---|---|
+| Basic | `SHA-256("basic" \0 question \0 answer)` |
+| Its reverse | the same with the sides swapped: it is the card it would be if written out by hand |
+| Cloze deletion | `SHA-256("cloze" \0 before \0 deleted \0 after)` |
+
+For a cloze deletion, `before`, `deleted` and `after` split the block's text at
+that deletion, with **every** deletion bracket removed (see
+[Bracket processing](#bracket-processing-for-clean-text)): `C: Foo [bar] baz
+[quux].` gives `"Foo "`, `"bar"`, `" baz quux."` for its first card. So
+bracketing another word of the sentence, or un-bracketing one, leaves the other
+deletions the cards they were.
+
+**What is not part of a card:** metadata lines, the `Extra:` section, the deck,
+the file, and where in the file the card is. Moving a card, retagging it,
+suspending it or rewriting its note keeps its history.
+
+**Siblings** are buried together in a review: a basic card and its reverse
+share the forward card's hash as their family, and the deletions of one cloze
+block share `SHA-256("cloze" \0 text without brackets)`.
+
+### Edits and history
+
+Rewording a card makes it a new card, with a new key. Its history stays under
+the old key: **nothing is ever deleted from the log**, so writing the old text
+back brings the history back with it, and re-adding a deleted card picks its
+history up again.
+
+To carry history over an edit, the log gets a **link**: an event saying the
+card now keyed `card` used to be `from`. Every event of `from` then counts as
+one of `card`, transitively; when two links would form a cycle (a relink
+undone), the later one wins. The Estonia card above, after its answer was
+changed to `**Tallinn**` in the app:
+
+```json
+{"v":2,"kind":"link","card":"h:520e371e59f5a9c3","from":"h:0adbdf261f9947fc","at":"2026-10-16T09:12:03.120Z","tz":120,"src":"edit"}
+```
+
+- **Edits made in the app** write a link for every card whose text changed,
+  pairing old and new by position in the block. Nothing to do.
+- **Edits made anywhere else** (GitHub, an editor, an agent) start the card
+  fresh, unless someone links it: `hc relink` compares the decks with an
+  earlier revision, proposes the pairs, and with `--apply` commits the links.
+  `hc relink <old-key> <file:line>` links one pair by hand. It can be done any
+  time later: the old history is still there.
+
+The same text twice in one collection is one card with one schedule. The
+parser keeps the first of two in one file; `hc lint` warns about both cases.
 
 ### Where reviews of a key are kept
 
 Reviews live on the repo's orphan `hashcards-data` branch, one file per
 writer per month: `reviews/YYYY-MM.<writer>.jsonl`. A device's writer name is
-eight hex digits. Two names are reserved for tools that write history on the
+eight hex digits. Three names are reserved for tools that write history on the
 collection's behalf, so that no device ever treats their files as its own:
 
 | Writer | Written by | Holds |
 |---|---|---|
-| `v1` | `hc migrate` | the v1 state file as `baseline` events, and the v1 review logs, re-keyed to IDs |
+| `v1` | `hc migrate` | the v1 state file as `baseline` events, and the v1 review logs, re-keyed |
 | `anki` | `hc import anki` | an Anki collection's review log, `src: "anki"` |
+| `hc` | `hc migrate`, `hc relink` | `link` events |
 
-History of a card that no deck has any more stays under its key (an `h:` key
-for a card that never had an ID), so a card re-added with that key or text
-picks it back up.
+### Version 1 hashes
 
-## Stamping IDs
-
-Stamping adds an `ID:` line with a generated ID to the top of every block that
-has none. It changes **nothing else**: frontmatter, blank lines, line endings
-(LF or CRLF) and the trailing newline stay byte for byte as they were, and
-existing IDs are kept. Generated IDs never collide with IDs already in the
-file. A card that follows the previous one without a `---` gets one inserted
-above its `ID:` line, since otherwise the ID would be part of the previous
-card's answer.
-
-Stamping is idempotent, and changes no card's content hash. Before:
-
-```
-Q: What is the capital of Estonia?
-A: Tallinn
-
----
-
-Tags: capitals
-C: The capital of [Norway] is [Oslo].
-```
-
-After:
-
-```
-ID: m3x9p2qa
-Q: What is the capital of Estonia?
-A: Tallinn
-
----
-
-ID: 7hc0wd5n
-Tags: capitals
-C: The capital of [Norway] is [Oslo].
-```
-
-## Content Hashes
-
-Every card also has a SHA-256 content hash, as in version 1. It is no longer a
-card's identity once the card has an ID, but it still keys cards without one
-(`h:` keys) and maps version 1 review history onto IDs. **Metadata lines and
-the `Extra:` section never enter the hash.**
-
-`+` below is byte concatenation with no separator; strings are UTF-8.
-
-### Basic Card Hash
+Version 1 keyed cards by a different hash, which logs written by version 1
+still use. It is computed for every card (no normalising, no separators) so
+that `hc migrate` and an unmigrated collection can map those logs to keys:
 
 ```
 SHA-256("Basic" + question + answer)
-```
-
-A reverse card is hashed as the basic card it is, with the sides swapped:
-`SHA-256("Basic" + answer + question)`.
-
-### Cloze Card Hash
-
-```
 SHA-256("Cloze" + cleanText + start_u64le + end_u64le)
 ```
 
-- `cleanText`: the cloze text with every deletion bracket removed (contents
-  kept).
-- `start_u64le`, `end_u64le`: the **byte offsets** (not character offsets) of
-  the deletion's first and last byte in `cleanText`, inclusive, as
-  little-endian unsigned 64-bit integers.
-
-Given `C: Foo [bar] baz [quux].`, the clean text is `"Foo bar baz quux."`;
-card 1 is `start=4, end=6`, card 2 is `start=12, end=15`.
-
-All deletions of one block also share `SHA-256("Cloze" + cleanText)`, the v1
-family hash. It is still computed; with IDs, `<id>:*` does the same job.
+`start_u64le` and `end_u64le` are the byte offsets of the deletion's first and
+last byte in `cleanText`, inclusive, as little-endian unsigned 64-bit
+integers.
 
 ### Bracket Processing for Clean Text
 
@@ -516,11 +474,6 @@ family hash. It is still computed; with IDs, `<id>:*` does the same job.
 4. `![`: enter image mode; brackets inside images are kept literally.
 5. `\[` or `\]`: the backslash is consumed and the bracket kept literally.
 6. All other bytes pass through unchanged.
-
-## Deduplication
-
-If two cards in the same file have the same content hash, only the first is
-kept. That includes a reverse card identical to a card written out by hand.
 
 ## Parsing State Machine
 
@@ -560,16 +513,13 @@ in **Start**; in every other state they are text.
 | A tag that does not normalise to the tag pattern | "Invalid tag" |
 | Unclosed frontmatter `---` | "Frontmatter opening '---' found but no closing '---'" |
 | Frontmatter `tags` not a one-line array of strings | "Frontmatter tags must be a TOML array of strings on one line" |
-| `ID:` not matching the pattern | "Invalid card ID" |
-| The same `ID:` twice in one file | "Duplicate card ID" |
+| A legacy `ID:` not matching its pattern | "Invalid card ID" |
 | A metadata key twice in one block | "A card can only have one 'Key:' line" |
 | `Reverse:` other than `yes` / `no` | "Reverse must be 'yes' or 'no'" |
 | `Reverse: yes` on a cloze card | "a cloze card cannot be reversed" |
 | `Status:` other than `draft` / `suspended` | "Status must be 'draft' or 'suspended'" |
 | Metadata followed by `---` or end of file | "Found metadata with no card after it" |
 | Non-blank text between metadata and `Q:` / `C:` | "Found text between a card's metadata and its Q: or C: line" |
-
-A missing `ID:` is not an error.
 
 ## Structured Cards (JSON Schema)
 
@@ -581,7 +531,6 @@ rather than Markdown:
 {
   "file": "geography/europe/Europe_Nordic_Baltic.md",
   "type": "basic",
-  "id": "est-capital",
   "tags": ["capitals"],
   "question": "What is the capital of Estonia?",
   "answer": "Tallinn",
@@ -595,7 +544,6 @@ rather than Markdown:
 | `type` | yes | `basic` (with `question` and `answer`) or `cloze` (with `text`). |
 | `question`, `answer` | basic | `Q: …` and `A: …` |
 | `text` | cloze | `C: …`, deletions in `[brackets]` |
-| `id` | no | `ID: …`; stamped if absent |
 | `extra` | no | `Extra: …`, after the card |
 | `tags` | no | `Tags: a, b`, already [normalised](#tags) |
 | `reverse` | no, basic only | `Reverse: yes` when `true` |
@@ -615,13 +563,11 @@ name = "Chemistry"
 tags = ["science"]
 ---
 
-ID: avogadro
 Q: What is Avogadro's number?
 A: $6.022 \times 10^{23}$
 
 ---
 
-ID: noble-gases
 Tags: lists
 Q: List the noble gases.
 A:
@@ -636,19 +582,16 @@ A:
 
 ---
 
-ID: water
 C: Water has the chemical formula [H₂O] and a molar mass of approximately [18.015 g/mol].
 Extra: 2 × 1.008 (H) + 15.999 (O).
 
 ---
 
-ID: ph-scale
 Status: suspended
 C: The pH scale ranges from [0] to [14], with [7] being neutral.
 
 ---
 
-ID: benzene
 Reverse: yes
 Q: Identify this molecular structure:
 
@@ -663,15 +606,15 @@ Q: What is the SI unit of amount of substance?
 A: The mole
 ```
 
-This file produces:
+This file produces, each card keyed `h:…`:
 
-| Key | Card | Tags | Status |
+| Cards | Kind | Tags | Status |
 |---|---|---|---|
-| `avogadro` | basic | science | active |
-| `noble-gases` | basic | science, lists | active |
-| `water:1`, `water:2` | cloze, with an extra | science | active |
-| `ph-scale:1` … `ph-scale:3` | cloze | science | suspended |
-| `benzene`, `benzene:r` | basic and its reverse | science | active |
-| `h:…` | basic, no ID yet | science | draft |
+| 1 | basic | science | active |
+| 1 | basic | science, lists | active |
+| 2 | cloze, with an extra | science | active |
+| 3 | cloze | science | suspended |
+| 2 | basic and its reverse | science | active |
+| 1 | basic | science | draft |
 
 **10 cards** in all, of which 6 are scheduled.

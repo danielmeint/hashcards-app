@@ -1,5 +1,5 @@
-# Checks every deck on pull requests: parse errors, duplicate IDs, cards
-# without IDs (warnings). Written by `hc init`.
+# Checks every deck on pull requests: parse errors, and (as warnings) the
+# same card twice. Written by `hc init`.
 #
 # hc is not on npm yet, so this builds it from the hashcards source. Once the
 # package is published, the last three steps become `npx --yes hashcards lint`.

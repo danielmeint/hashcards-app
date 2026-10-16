@@ -148,8 +148,8 @@ describe("the collections list", () => {
       range: [1, 2],
       content: { type: "basic", question: "Q", answer: "A" },
       hash: "hash-1",
-      familyHash: null,
-      id: null, key: "", tags: [], status: "active",
+      familyHash: "hash-1",
+      legacyKey: null, key: "", tags: [], status: "active",
     };
     await updateDeckFiles(
       [

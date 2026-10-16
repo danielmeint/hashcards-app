@@ -1,6 +1,5 @@
 import { Card, ParsedCard } from "./types";
 import { FileOp } from "./draft-edits";
-import { formatKey } from "./card-key";
 import { getMeta, inRepo, setMeta } from "./db";
 
 /**
@@ -59,16 +58,6 @@ export function opId(): string {
 }
 
 /**
- * The key a card of a block will have once its stamped ID is in the file —
- * the same answer the parser will give then: the forward card is `<id>`, its
- * reverse `<id>:r`, a cloze's deletions `<id>:1`, `<id>:2`, … in order.
- */
-function stampedKey(card: Card, index: number, id: string): string {
-  if (card.content.type === "cloze") return formatKey({ kind: "cloze", id, n: index + 1 });
-  return formatKey(index === 0 ? { kind: "basic", id } : { kind: "reverse", id });
-}
-
-/**
  * `cards` as they will be once `ops` are committed. Pure, and applied in queue
  * order, so an edit followed by a keep of the edited block works out the same
  * here as it will in the file. An op whose block is not among the cards any
@@ -88,12 +77,7 @@ export function applyPending(cards: Card[], ops: InboxOp[]): Card[] {
       const replaced = inRepo(op.cards ?? [], op.repo);
       result = [...rest.slice(0, first), ...replaced, ...rest.slice(first)];
     } else {
-      result = result.map((c) => {
-        if (!inBlock(c)) return c;
-        if (c.id || !op.stampId) return { ...c, status: "active" };
-        const index = op.block.indexOf(c.hash);
-        return { ...c, status: "active", id: op.stampId, key: stampedKey(c, index, op.stampId) };
-      });
+      result = result.map((c) => (inBlock(c) ? { ...c, status: "active" } : c));
     }
   }
   return result;

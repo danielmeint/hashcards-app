@@ -11,7 +11,9 @@
  *
  * A `review` is a grade given. A `baseline` stands in for history that is not
  * available — the v1 state file knew where a card was, not how it got there —
- * and resets the card to that stability and difficulty from then on.
+ * and resets the card to that stability and difficulty from then on. A `link`
+ * says a card used to be another (its text was edited): every event of `from`
+ * counts as one of `card` (`resolveLinks` in `replay.ts`, PLAN-1.0 §2.7).
  *
  * The v1 log (`src/review-log.ts`) is read too, as reviews with `src: "v1"`.
  * Its `card` is the v1 content hash; mapping that to a v2 key is migration's
@@ -65,7 +67,23 @@ export type BaselineEvent = {
   src?: Source;
 };
 
-export type ReviewLogEvent = ReviewEvent | BaselineEvent;
+export type LinkEvent = {
+  v: 2;
+  kind: "link";
+  /** The card's key now. */
+  card: string;
+  /** The key it had before: its history becomes `card`'s. */
+  from: string;
+  /** When the link was made. Only orders links among themselves. */
+  at: string;
+  tz?: number;
+  src?: Source;
+};
+
+/** What changes a card's schedule: everything but links, which only rename. */
+export type ScheduleEvent = ReviewEvent | BaselineEvent;
+
+export type ReviewLogEvent = ScheduleEvent | LinkEvent;
 
 export type ParseOptions = {
   /**
@@ -225,6 +243,19 @@ function parseV2(o: Fields): ReviewLogEvent {
       src: optStr(o, "src"),
     });
   }
+  if (kind === "link") {
+    const event = compact<LinkEvent>({
+      v: 2,
+      kind: "link",
+      card: str(o, "card"),
+      from: str(o, "from"),
+      at: instant(o, "at"),
+      tz: optInt(o, "tz", MIN_TZ, MAX_TZ),
+      src: optStr(o, "src"),
+    });
+    if (event.card === event.from) fail(`a link must name two different cards`);
+    return event;
+  }
   return fail(`unknown "kind" ${JSON.stringify(kind)}`);
 }
 
@@ -300,7 +331,7 @@ export function parseFile(
 /**
  * One event as a v2 line, keys in a fixed order and optional ones left out, so
  * the same event is always the same bytes. `kind` is written only for
- * baselines; a line without one is a review.
+ * baselines and links; a line without one is a review.
  */
 export function serializeEvent(event: ReviewLogEvent): string {
   if (event.kind === "review") {
@@ -311,6 +342,17 @@ export function serializeEvent(event: ReviewLogEvent): string {
       tz: event.tz,
       grade: event.grade,
       ms: event.ms,
+      src: event.src,
+    });
+  }
+  if (event.kind === "link") {
+    return JSON.stringify({
+      v: 2,
+      kind: "link",
+      card: event.card,
+      from: event.from,
+      at: event.at,
+      tz: event.tz,
       src: event.src,
     });
   }

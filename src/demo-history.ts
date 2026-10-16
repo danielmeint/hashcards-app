@@ -25,8 +25,8 @@ export type HistoryOptions = {
   replay: ReplayOptions;
   /** Cards to leave unseen, so the demo still has new cards to introduce. */
   fresh?: (card: Card) => boolean;
-  /** Keys of cards that keep being forgotten, so Statistics has a leech to show. */
-  struggling?: ReadonlySet<string>;
+  /** Cards that keep being forgotten, so Statistics has a leech to show. */
+  struggling?: (card: Card) => boolean;
 };
 
 /** How far back a card's first review may be. */
@@ -69,7 +69,7 @@ export function demoHistory(cards: Card[], options: HistoryOptions): Review[] {
   for (const card of cards) {
     if (card.status !== "active" || options.fresh?.(card)) continue;
     const key = stateKey(card);
-    if (seededUnit(`${key}#unseen`) < UNSEEN && !options.struggling?.has(card.key)) continue;
+    if (seededUnit(`${key}#unseen`) < UNSEEN && !options.struggling?.(card)) continue;
     reviews.push(...cardHistory(card, options));
   }
   return reviews.sort((a, b) => a.reviewedAt.localeCompare(b.reviewedAt));
@@ -78,8 +78,11 @@ export function demoHistory(cards: Card[], options: HistoryOptions): Review[] {
 function cardHistory(card: Card, options: HistoryOptions): Review[] {
   const key = stateKey(card);
   const inLog = keyInLog(options.log, key);
-  const struggling = options.struggling?.has(card.key) ?? false;
-  const start = NEWEST_START + Math.floor(seededUnit(`${key}#start`) * (OLDEST_START - NEWEST_START));
+  const struggling = options.struggling?.(card) ?? false;
+  // A leech needs lapses to show for: it starts as early as any card does.
+  const start = struggling
+    ? OLDEST_START
+    : NEWEST_START + Math.floor(seededUnit(`${key}#start`) * (OLDEST_START - NEWEST_START));
 
   const out: Review[] = [];
   let state: CardState | undefined;

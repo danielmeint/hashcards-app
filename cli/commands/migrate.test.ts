@@ -87,18 +87,8 @@ describe("hc migrate", () => {
         "D\thashcards-reviews/2026-10.3e2bd77f.jsonl",
         "D\thashcards-reviews/2026-10.5a1b5635.jsonl",
         "D\thashcards-state.json",
-        "M\tgeography/europe/Europe_Central.md",
-        "M\tgeography/europe/Europe_Nordic_Baltic.md",
-        "M\tgeography/europe/Europe_Southern.md",
-        "M\tgeography/europe/Europe_Western.md",
-        "M\tgeography/germany/Germany_States.md",
-        "M\tgeography/norway/Norway_Counties.md",
       ].sort()
     );
-    // Stamping only ever adds ID lines.
-    const diff = git(repo, ["diff", "-U0", old, "HEAD", "--", "geography"]);
-    const edits = diff.split("\n").filter((l) => /^[+-][^+-]/.test(l));
-    expect(edits.every((l) => /^\+ID: [0-9a-z]{8}$/.test(l))).toBe(true);
     // The data branch: an orphan holding only the migrated files.
     expect(git(repo, ["rev-list", "--count", "hashcards-data"])).toBe("1");
     expect(git(repo, ["ls-tree", "-r", "--name-only", "hashcards-data"]).split("\n")).toHaveLength(5);
@@ -191,9 +181,9 @@ describe("hc migrate", () => {
   });
 
   it("refuses a repo with nothing of v1 in it", async () => {
-    const v2 = makeRepo({ "deck.md": "ID: one\nQ: q\nA: a\n" });
+    const v2 = makeRepo({ "deck.md": "Q: q\nA: a\n" });
     gitInit(v2);
-    makeDataBranch(v2, { "2026-10.abcd1234.jsonl": review("one", "2026-10-01T08:00:00.000Z", 3) + "\n" });
+    makeDataBranch(v2, { "2026-10.abcd1234.jsonl": review("h:0123456789abcdef", "2026-10-01T08:00:00.000Z", 3) + "\n" });
     expect((await run(v2)).stderr).toContain("already migrated");
 
     const fresh = makeRepo({ "deck.md": "Q: q\nA: a\n" });
@@ -206,11 +196,9 @@ describe("hc migrate", () => {
     expect((await run(notGit)).stderr).toContain("not a git repository");
   });
 
-  it("refuses decks that do not parse or share an ID", async () => {
+  it("refuses decks that do not parse", async () => {
     const repo = v1Repo();
     write(repo, "broken.md", "C: no deletions here\n");
-    write(repo, "dup-a.md", "ID: same\nQ: a\nA: a\n");
-    write(repo, "dup-b.md", "ID: same\nQ: b\nA: b\n");
     git(repo, ["add", "-A"]);
     git(repo, ["commit", "-qm", "more decks"]);
 
@@ -218,7 +206,6 @@ describe("hc migrate", () => {
     expect(out.code).toBe(1);
     const blockers: string[] = out.json().blockers;
     expect(blockers.some((b) => b.startsWith("broken.md"))).toBe(true);
-    expect(blockers.some((b) => b.includes("duplicate ID 'same'"))).toBe(true);
   });
 
   it("refuses a detached HEAD", async () => {
@@ -253,5 +240,104 @@ describe("hc migrate", () => {
     expect(out.code).toBe(0);
     expect(out.json().counts).toMatchObject({ baselines: 51, reviews: 0 });
     expect(out.json().check.other).toBe(0);
+  });
+});
+
+/**
+ * A collection migrated by an early 1.0 build: `ID:` lines in every deck, its
+ * history filed under ID keys (PLAN-1.0 §2.7).
+ */
+describe("hc migrate on a collection with ID: lines", () => {
+  const DECK = "ID: est\nQ: Capital of Estonia?\nA: Tallinn\n\n---\n\nID: deu\nReverse: yes\nQ: Germany\nA: Berlin\n\n---\n\nID: k8s\nC: A [Deployment] manages a [ReplicaSet].\n";
+  const GONE = "ID: gone\nQ: Deleted card?\nA: yes\n";
+  const LOG = [
+    review("est", "2026-10-01T08:00:00.000Z", 3),
+    review("est", "2026-10-05T08:00:00.000Z", 3),
+    review("deu:r", "2026-10-02T08:00:00.000Z", 1),
+    review("k8s:2", "2026-10-03T08:00:00.000Z", 4),
+    review("gone", "2026-10-04T08:00:00.000Z", 2),
+    review("never-a-card", "2026-10-04T08:00:00.000Z", 2),
+  ].join("\n") + "\n";
+
+  function idRepo(): string {
+    const repo = makeRepo({ "deck.md": DECK, "old.md": GONE, "hashcards.toml": "[review]\nfuzz = true\n" });
+    gitInit(repo);
+    git(repo, ["rm", "-q", "old.md"]);
+    git(repo, ["commit", "-qm", "delete a deck"]);
+    makeDataBranch(repo, { "2026-10.dev1.jsonl": LOG });
+    return repo;
+  }
+
+  const due = async (repo: string) =>
+    (await hc(["due", "--json", "--repo", repo, "--date", "2027-06-01", "--limit", "100"], { now: NOW })).json().reviews.cards.map(
+      (c: { key: string; due: string; line: number }) => [c.key, c.due]
+    );
+
+  it("plans one link per card with history, and changes nothing yet", async () => {
+    const repo = idRepo();
+    const before = refs(repo);
+    const out = await run(repo, "--json");
+    expect(out.code).toBe(0);
+    expect(out.json()).toMatchObject({
+      applied: false,
+      blockers: [],
+      mode: "remove-ids",
+      ids: 3,
+      links: 4,
+      counts: { current: 3, recovered: 1, orphans: 1 },
+      check: { same: 3, changed: [] },
+    });
+    expect(refs(repo)).toBe(before);
+    expect((await hc(["lint", "--json", "--repo", repo])).json().warnings).toEqual([
+      expect.objectContaining({ kind: "legacy-id", file: "deck.md" }),
+    ]);
+  });
+
+  it("takes the ID lines out, links the history, and every schedule stays where it was", async () => {
+    const repo = idRepo();
+    const scheduled = await due(repo);
+    expect(scheduled).toHaveLength(3);
+    const old = head(repo);
+
+    const out = await run(repo, "--apply");
+
+    expect(out.code).toBe(0);
+    expect(out.stdout).toContain("git push --atomic origin main hashcards-data");
+    expect(git(repo, ["rev-parse", "HEAD^"])).toBe(old);
+    expect(read(repo, "deck.md")).toBe(DECK.replace(/^ID: \w+\n/gm, ""));
+    expect(git(repo, ["status", "--porcelain"])).toBe("");
+    const files = git(repo, ["ls-tree", "-r", "--name-only", "hashcards-data"]).split("\n");
+    expect(files).toEqual(["reviews/2026-10.dev1.jsonl", "reviews/2026-10.hc.jsonl"]);
+    const links = git(repo, ["show", "hashcards-data:reviews/2026-10.hc.jsonl"]).split("\n").map((l) => JSON.parse(l));
+    expect(links.map((l) => [l.kind, l.from, l.src])).toEqual(
+      expect.arrayContaining([
+        ["link", "est", "migrate"],
+        ["link", "deu:r", "migrate"],
+        ["link", "k8s:2", "migrate"],
+        ["link", "gone", "migrate"],
+      ])
+    );
+
+    expect(await due(repo)).toEqual(scheduled);
+    expect((await hc(["lint", "--json", "--repo", repo])).json()).toMatchObject({ ok: true, warnings: [] });
+    // Running it again finds nothing to do.
+    expect((await run(repo)).stderr).toContain("already migrated");
+  });
+
+  it("gives a deleted card its history back when its text returns", async () => {
+    const repo = idRepo();
+    await run(repo, "--apply");
+    write(repo, "back.md", "Q: Deleted card?\nA: yes\n");
+    const [card] = await parseFile("Q: Deleted card?\nA: yes\n", "back.md", "back");
+    const shown = (await hc(["show", card.key, "--json", "--repo", repo], { now: NOW })).json().cards[0];
+    expect(shown.history).toHaveLength(1);
+  });
+
+  it("refuses a dirty working tree", async () => {
+    const repo = idRepo();
+    write(repo, "notes.txt", "scratch");
+    const dirty = await run(repo, "--apply");
+    expect(dirty.code).toBe(2);
+    expect(dirty.stdout).toContain("the working tree has changes");
   });
 });

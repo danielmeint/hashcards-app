@@ -1,7 +1,10 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { planMigration } from "../../src/migrate";
+import { planIdRemoval, planMigration } from "../../src/migrate";
 import type { CheckRow, MigrationPlan } from "../../src/migrate";
+import { hasIds } from "../../src/card-ids";
+import { utcOffsetMinutes } from "../../src/core/schedule";
+import { linkFileChanges } from "../links";
 import { localDay } from "../../src/fsrs";
 import { isDeckPath, isDocFile, loadCollection, markdownFiles } from "../collection";
 import type { Collection } from "../collection";
@@ -22,16 +25,20 @@ import {
   writeTree,
 } from "../git";
 import type { RefUpdate, TreeChanges } from "../git";
-import { DATA_BRANCH, STATE_FILE, V1_LOG_DIR } from "../history";
+import { DATA_BRANCH, STATE_FILE, V1_LOG_DIR, dataRef, loadRawHistory } from "../history";
 
 /**
  * `hc migrate` (PLAN-1.0 M4): a v1 collection, moved to 1.0 in two commits.
  *
- * - On the current branch (`main`): IDs stamped into every deck,
- *   `hashcards.toml` added, `hashcards-state.json` and `hashcards-reviews/`
- *   removed.
- * - A new orphan `hashcards-data` branch: the history, re-keyed to the IDs,
- *   as `reviews/<month>.v1.jsonl` (`src/migrate.ts` says why `v1`).
+ * - On the current branch (`main`): `hashcards.toml` added,
+ *   `hashcards-state.json` and `hashcards-reviews/` removed.
+ * - A new orphan `hashcards-data` branch: the history, re-keyed from v1 hashes
+ *   to 1.0 keys, as `reviews/<month>.v1.jsonl` (`src/migrate.ts` says why
+ *   `v1`).
+ *
+ * A collection the first 1.0 builds migrated has `ID:` lines instead (§2.7):
+ * for one of those, `hc migrate` takes them out and writes a `link` per card
+ * to the data branch (`removeIds` below).
  *
  * **A dry run unless `--apply`.** The migration rewrites every deck and
  * deletes the state file, and its before/after check is the thing to read
@@ -45,16 +52,24 @@ type Blocker = string;
 
 export const migrate: Command = {
   name: "migrate",
-  summary: "move a v1 repo to 1.0: stamp IDs, move history to hashcards-data",
+  summary: "move a repo to 1.0: v1 history to hashcards-data, or ID: lines to links",
   help: `Usage: hc migrate [--apply] [--force] [--verbose]
 
-Moves a v1 collection (hashcards-state.json and hashcards-reviews/ on main,
-cards without IDs) to the 1.0 layout:
+Moves a v1 collection (hashcards-state.json and hashcards-reviews/ on main)
+to the 1.0 layout:
 
-  main             IDs stamped into every deck, hashcards.toml added,
+  main             hashcards.toml added,
                    hashcards-state.json and hashcards-reviews/ removed
-  hashcards-data   a new orphan branch with the history, re-keyed to the IDs:
+  hashcards-data   a new orphan branch with the history, re-keyed to 1.0 keys:
                    reviews/<month>.v1.jsonl ("v1" is reserved: no device writes it)
+
+On a collection already on 1.0 whose decks still have ID: lines (written by
+early 1.0 builds), removes them instead:
+
+  main             every ID: line removed
+  hashcards-data   one link event per card, from its ID key to its content key,
+                   in reviews/<month>.hc.jsonl; keys no card has any more are
+                   looked up in earlier versions of the decks
 
 A dry run by default: prints the plan and a before/after check of every card
 (the state file against a replay of the migrated events) and changes nothing.
@@ -84,6 +99,12 @@ Exit: 0 done (or would be), 1 dry run found blockers, 2 refused or error.`,
     const v1Logs = listFiles(repo, head, V1_LOG_DIR);
     const hasState = listFiles(repo, head).includes(STATE_FILE);
     const dataRefs = existingDataRefs(repo);
+    if (!hasState && v1Logs.length === 0 && dataRefs.length > 0) {
+      const collection = await loadCollection(repo);
+      if (collection.files.some((f) => f.cards !== null && hasIds(f.text, f.path))) {
+        return removeIds(ctx, head, collection);
+      }
+    }
     if (!hasState && v1Logs.length === 0) {
       throw new CommandError(
         dataRefs.length > 0
@@ -146,7 +167,7 @@ Exit: 0 done (or would be), 1 dry run found blockers, 2 refused or error.`,
       printPlan(ctx, report);
       ctx.say("");
       ctx.say(`Committed (locally, nothing pushed):`);
-      ctx.say(`  ${branch}  ${commits.main.slice(0, 7)}  IDs, hashcards.toml, v1 files removed`);
+      ctx.say(`  ${branch}  ${commits.main.slice(0, 7)}  hashcards.toml, v1 files removed`);
       ctx.say(`  ${DATA_BRANCH}  ${commits.data.slice(0, 7)}  the history, re-keyed`);
       ctx.say("");
       ctx.say("Check it (`hc lint`, `hc due`, `hc stats`), then publish both branches together:");
@@ -234,25 +255,22 @@ function apply(
     [],
     message("Carry the v1 review history over", [
       `${plural(c.baselines + c.unknownBaselines, "baseline")} from ${STATE_FILE} and ` +
-        `${plural(c.reviews + c.unknownReviews, "review")} from ${V1_LOG_DIR}/, re-keyed to card IDs. ` +
+        `${plural(c.reviews + c.unknownReviews, "review")} from ${V1_LOG_DIR}/, re-keyed to 1.0 keys. ` +
         `${plural(c.unknownHashes, "hash", "hashes")} no deck has keep their h: keys.`,
       `Written by \`hc migrate\` from ${branch} at ${head.slice(0, 7)}.`,
     ])
   );
 
   const changes: TreeChanges = new Map();
-  for (const deck of plan.stamped) changes.set(deck.path, deck.text);
   if (config !== null) changes.set(CONFIG_FILE, config);
   for (const path of removed) changes.set(path, null);
   const mainTree = writeTree(repo, head, changes);
-  const ids = plan.stamped.reduce((n, d) => n + d.ids, 0);
   const main = commitTree(
     repo,
     mainTree,
     [head],
     message("Migrate to hashcards 1.0", [
-      `Stamp ${plural(ids, "card ID")} into ${plural(plan.stamped.length, "deck")}` +
-        `${config !== null ? ", add hashcards.toml," : ""} and move the review history ` +
+      `${config !== null ? "Add hashcards.toml and move" : "Move"} the review history ` +
         `(${STATE_FILE}, ${V1_LOG_DIR}/) to the ${DATA_BRANCH} branch, ${data.slice(0, 7)}.`,
       "Written by `hc migrate`.",
     ])
@@ -320,7 +338,6 @@ function summary(report: Report) {
   const { rows, ...verdicts } = plan.check;
   return {
     branch: report.branch,
-    decks: plan.stamped.map(({ path, ids }) => ({ path, ids })),
     cards: plan.counts.cards,
     dataFiles: [...plan.files.keys()],
     counts: plan.counts,
@@ -335,12 +352,10 @@ function summary(report: Report) {
 function printPlan(ctx: Context, report: Report): void {
   const { plan, config } = report;
   const c = plan.counts;
-  const ids = plan.stamped.reduce((n, d) => n + d.ids, 0);
   const verbose = ctx.values.verbose === true;
   ctx.say(ctx.values.apply ? "hc migrate" : "hc migrate: dry run, nothing written (--apply to commit)");
   ctx.say("");
-  ctx.say(`Decks     ${plural(c.cards, "card")}; ${plural(ids, "ID")} to stamp in ${plural(plan.stamped.length, "file")}`);
-  for (const d of plan.stamped) ctx.say(`            ${d.path}  +${d.ids}`);
+  ctx.say(`Decks     ${plural(c.cards, "card")}, unchanged`);
   ctx.say(
     `History   ${report.hasState ? STATE_FILE : "no state file"} + ${plural(report.logs, "log file")} → ${DATA_BRANCH}:`
   );
@@ -350,9 +365,6 @@ function printPlan(ctx: Context, report: Report): void {
     `          ${plural(c.unknownHashes, "hash", "hashes")} no deck has, kept under h: keys ` +
       `(${plural(c.unknownBaselines, "baseline")}, ${plural(c.unknownReviews, "review")})`
   );
-  if (c.sharedHashes > 0) {
-    ctx.say(`          ${plural(c.sharedHashes, "hash", "hashes")} shared by identical cards: each gets the history`);
-  }
   const s = plan.settings;
   if (config.text === null) ctx.say(`Settings  ${CONFIG_FILE} exists and is kept as it is`);
   else {
@@ -414,4 +426,144 @@ function printBlockers(ctx: Context, blockers: Blocker[], applying: boolean): vo
   ctx.say(applying ? "Refusing to apply:" : "Blockers (--apply would refuse):");
   for (const b of blockers) ctx.say(`  - ${b}`);
   if (applying) ctx.io.stderr(`hc migrate: refused, ${plural(blockers.length, "blocker")} (see above)\n`);
+}
+
+// --- Removing ID: lines (PLAN-1.0 §2.7) -------------------------------------
+
+/**
+ * Every `ID:` line out of the decks, and a `link` per card onto the data
+ * branch, in one ref transaction. Like the v1 migration, a dry run unless
+ * `--apply`, and never pushed.
+ */
+async function removeIds(ctx: Context, head: string, collection: Collection): Promise<number> {
+  const repo = ctx.repo;
+  const blockers: Blocker[] = [];
+  const branch = currentBranch(repo);
+  if (!branch) blockers.push("HEAD is detached: check out the branch to migrate (main)");
+  const dirty = dirtyPaths(repo);
+  if (dirty.length > 0) {
+    blockers.push(`the working tree has changes; commit or stash them first:\n${dirty.slice(0, 10).map((l) => `    ${l}`).join("\n")}`);
+  }
+  for (const p of collection.problems.filter((p) => p.severity === "error")) {
+    blockers.push(`${p.file}${p.line ? `:${p.line}` : ""}: ${p.message} (see \`hc lint\`)`);
+  }
+
+  const tipRef = dataRef(repo);
+  const tip = tipRef ? resolveRef(repo, tipRef) : null;
+  const raw = loadRawHistory(repo, collection.cards);
+  const now = ctx.io.now();
+  const review = collection.config.config.review;
+  const plan = await planIdRemoval(
+    {
+      decks: collection.files.filter((f) => f.cards !== null).map(({ path, text }) => ({ path, text })),
+      history: deckHistory(repo, head),
+      events: raw.events,
+      at: now.toISOString(),
+      tz: utcOffsetMinutes(now.toISOString()),
+    },
+    { retention: review.desiredRetention, fuzz: review.fuzz }
+  );
+  if (plan.check.changed.length > 0) {
+    blockers.push(`${plural(plan.check.changed.length, "card")} would change schedule: a migration bug, not applied`);
+  }
+
+  const ids = plan.stripped.reduce((n, d) => n + d.ids, 0);
+  if (ctx.json) {
+    // Emitted below, with the result.
+  } else {
+    ctx.say(ctx.values.apply ? "hc migrate: removing ID: lines" : "hc migrate: removing ID: lines, dry run (--apply to commit)");
+    ctx.say("");
+    ctx.say(`Decks     ${plural(ids, "ID: line")} to remove from ${plural(plan.stripped.length, "file")}`);
+    for (const d of plan.stripped) ctx.say(`            ${d.path}  -${d.ids}`);
+    ctx.say(`Links     ${plural(plan.links.length, "link")} → ${DATA_BRANCH}: ${plan.counts.current} for cards in the decks, ` +
+      `${plan.counts.recovered} found in earlier versions of them`);
+    ctx.say(`          ${plural(plan.counts.orphans, "key")} with history that no card or earlier version has (kept, unlinked)`);
+    ctx.say(`Check     ${plan.check.same} cards with history unchanged, ${plan.check.changed.length} changed`);
+    for (const c of plan.check.changed) ctx.say(`            ${c.key}  ${c.before} → ${c.after}`);
+  }
+
+  const result = { mode: "remove-ids", ids, files: plan.stripped.map(({ path, ids }) => ({ path, ids })), links: plan.links.length, counts: plan.counts, check: plan.check };
+  if (!ctx.values.apply || blockers.length > 0) {
+    if (ctx.json) ctx.emit({ applied: false, blockers, ...result });
+    else printBlockers(ctx, blockers, ctx.values.apply === true);
+    if (blockers.length === 0) return EXIT.ok;
+    return ctx.values.apply ? EXIT.error : EXIT.findings;
+  }
+
+  const data = commitTree(
+    repo,
+    writeTree(repo, tip, linkFileChanges(repo, tip, plan.links)),
+    tip ? [tip] : [],
+    message("Link card history from IDs to content keys", [
+      `${plural(plan.links.length, "link")}: a card is its text again, so history filed under ID keys follows it to its content key.`,
+      "Written by `hc migrate`.",
+    ])
+  );
+  const changes: TreeChanges = new Map(plan.stripped.map((d) => [d.path, d.text]));
+  const main = commitTree(
+    repo,
+    writeTree(repo, head, changes),
+    [head],
+    message("Remove card IDs", [
+      `${plural(ids, "ID: line")} out of ${plural(plan.stripped.length, "deck")}: a card is its text. ` +
+        `Their history is linked on ${DATA_BRANCH}, ${data.slice(0, 7)}.`,
+      "Written by `hc migrate`.",
+    ])
+  );
+  updateRefs(
+    repo,
+    [
+      { ref: `refs/heads/${branch}`, to: main, old: head },
+      { ref: `refs/heads/${DATA_BRANCH}`, to: data, old: resolveRef(repo, `refs/heads/${DATA_BRANCH}`) },
+    ],
+    "hc migrate"
+  );
+  moveWorktree(repo, head, main);
+  const push = `git push --atomic origin ${branch} ${DATA_BRANCH}`;
+  if (ctx.json) ctx.emit({ applied: true, commits: { main, data }, push, ...result });
+  else {
+    ctx.say("");
+    ctx.say("Committed (locally, nothing pushed):");
+    ctx.say(`  ${branch}  ${main.slice(0, 7)}  ID: lines removed`);
+    ctx.say(`  ${DATA_BRANCH}  ${data.slice(0, 7)}  the links`);
+    ctx.say("");
+    ctx.say("Check it (`hc lint`, `hc due`), then publish both branches together:");
+    ctx.say(`  ${push}`);
+  }
+  return EXIT.ok;
+}
+
+/**
+ * Every earlier version of every Markdown file on `head`'s history, newest
+ * first. What `planIdRemoval` looks deleted and archived cards up in.
+ */
+function deckHistory(repo: string, head: string): { path: string; text: string }[] {
+  const out: { path: string; text: string }[] = [];
+  const seen = new Set<string>();
+  const log = git(repo, ["log", "--format=%H", "--name-only", "--diff-filter=AMD", head, "--", "*.md"]);
+  let commit = "";
+  for (const line of log.split("\n")) {
+    if (/^[0-9a-f]{40}$/.test(line)) {
+      commit = line;
+      continue;
+    }
+    if (!line.endsWith(".md")) continue;
+    // A deleted file has no blob at that commit: its last version is in the parent.
+    for (const rev of [`${commit}:${line}`, `${commit}^:${line}`]) {
+      const sha = tryRevParse(repo, rev);
+      if (!sha || seen.has(sha)) continue;
+      seen.add(sha);
+      out.push({ path: line, text: git(repo, ["cat-file", "blob", sha]) });
+      break;
+    }
+  }
+  return out;
+}
+
+function tryRevParse(repo: string, rev: string): string | null {
+  try {
+    return git(repo, ["rev-parse", "--verify", "--quiet", rev]).trim() || null;
+  } catch {
+    return null;
+  }
 }

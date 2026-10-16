@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { replay } from "../../src/core/replay";
 import { parseFile as parseLog } from "../../src/core/events";
 import { hashBasicCard } from "../../src/hash";
+import { parseFile } from "../../src/parser";
 import { gitInit, hc, makeDataBranch, makeRepo, review, write } from "../test-helpers";
 
 /**
@@ -13,49 +14,46 @@ const DECK = `---
 name = "Fixture"
 ---
 
-ID: est-capital
 Q: Capital of Estonia?
 A: Tallinn
 
 ---
 
-ID: leechy
 C: The [hard] one.
 
 ---
 
-ID: fresh-a
 Q: new a
 A: a
 
 ---
 
-ID: fresh-b
 Q: new b
 A: b
 
 ---
 
-ID: drafty
 Status: draft
 Q: draft
 A: d
 
 ---
 
-ID: susp
 Status: suspended
 Q: s
 A: s
 `;
 
+/** Each card's key (PLAN-1.0 §2.7), by a name for it. */
+const [EST, LEECHY, FRESH_A, , , SUSP] = (await parseFile(DECK, "deck.md", "deck")).map((c) => c.key);
+
 const LOG = [
-  review("est-capital", "2026-10-01T08:00:00.000Z", 3),
-  review("leechy:1", "2026-10-05T08:00:00.000Z", 1),
-  review("leechy:1", "2026-10-07T08:00:00.000Z", 1),
-  review("leechy:1", "2026-10-09T08:00:00.000Z", 1),
-  review("leechy:1", "2026-10-10T08:00:00.000Z", 3),
-  review("susp", "2026-10-01T08:00:00.000Z", 1),
+  review(EST, "2026-10-01T08:00:00.000Z", 3),
+  review(LEECHY, "2026-10-05T08:00:00.000Z", 1),
+  review(LEECHY, "2026-10-07T08:00:00.000Z", 1),
+  review(LEECHY, "2026-10-09T08:00:00.000Z", 1),
+  review(LEECHY, "2026-10-10T08:00:00.000Z", 3),
+  review(SUSP, "2026-10-01T08:00:00.000Z", 1),
   review("gone-card", "2026-10-02T08:00:00.000Z", 1),
   review("gone-card", "2026-10-03T08:00:00.000Z", 1),
   review("gone-card", "2026-10-04T08:00:00.000Z", 1),
@@ -79,11 +77,11 @@ describe("reading history from the hashcards-data branch", () => {
     const states = expected();
     expect(out.date).toBe("2026-10-30");
     expect(out.history).toEqual({ kind: "data-branch", ref: "refs/heads/hashcards-data", files: 1 });
-    expect(out.reviews.cards.map((c: { key: string }) => c.key).sort()).toEqual(["est-capital", "leechy:1"]);
-    const est = out.reviews.cards.find((c: { key: string }) => c.key === "est-capital");
-    expect(est).toMatchObject({ id: "est-capital", file: "deck.md", line: 5, deck: "Fixture", due: states.get("est-capital")!.dueDate });
+    expect(out.reviews.cards.map((c: { key: string }) => c.key).sort()).toEqual([EST, LEECHY].sort());
+    const est = out.reviews.cards.find((c: { key: string }) => c.key === EST);
+    expect(est).toMatchObject({ file: "deck.md", line: 5, deck: "Fixture", due: states.get(EST)!.dueDate });
     expect(out.new).toMatchObject({ count: 1, unseen: 2, perDay: 1, introducedToday: 0 });
-    expect(out.new.cards[0]).toMatchObject({ key: "fresh-a", summary: "new a" });
+    expect(out.new.cards[0]).toMatchObject({ key: FRESH_A, summary: "new a" });
     expect(out.drafts).toBe(1);
     const human = await hc(["due", "--repo", repo, "--date", "2026-10-30"]);
     expect(human.stdout).toMatch(/^2026-10-30: 2 reviews due, 1 new \(2 unseen; 0\/1 new started today\); 1 draft waiting in the Inbox$/m);
@@ -92,7 +90,7 @@ describe("reading history from the hashcards-data branch", () => {
   it("charges new cards started that day against the budget", async () => {
     const repo = makeRepo({ "deck.md": DECK, "hashcards.toml": "[review]\nnew_per_day = 2\n" });
     gitInit(repo);
-    makeDataBranch(repo, { "2026-10.x.jsonl": review("fresh-a", "2026-10-15T07:00:00.000Z", 3) + "\n" });
+    makeDataBranch(repo, { "2026-10.x.jsonl": review(FRESH_A, "2026-10-15T07:00:00.000Z", 3) + "\n" });
     const out = (await hc(["due", "--json", "--repo", repo, "--date", "2026-10-15"])).json();
     expect(out.new).toMatchObject({ introducedToday: 1, count: 1, perDay: 2, unseen: 3 });
   });
@@ -134,37 +132,39 @@ describe("reading history from the hashcards-data branch", () => {
     expect(run.json()).toEqual({
       minLapses: 3,
       leeches: [
-        expect.objectContaining({ key: "leechy:1", lapses: 3, reviews: 4, streak: 1, recovering: false, file: "deck.md", summary: "The […] one." }),
+        expect.objectContaining({ key: LEECHY, lapses: 3, reviews: 4, streak: 1, recovering: false, file: "deck.md", summary: "The […] one." }),
       ],
     });
     const all = (await hc(["leeches", "--json", "--all", "--repo", repo])).json();
-    expect(all.leeches.map((l: { key: string }) => l.key)).toEqual(["gone-card", "leechy:1"]);
+    expect(all.leeches.map((l: { key: string }) => l.key)).toEqual(["gone-card", LEECHY].sort());
     expect((await hc(["leeches", "--min-lapses", "4", "--repo", repo])).code).toBe(0);
     expect((await hc(["leeches", "--min-lapses", "zero", "--repo", repo])).code).toBe(2);
   });
 
   it("hc show gives a card's text, place, state and history", async () => {
     const repo = v2Repo();
-    const run = await hc(["show", "leechy", "--json", "--repo", repo]);
+    const run = await hc(["show", "deck.md:10", "--json", "--repo", repo]);
     expect(run.code).toBe(0);
     const [card] = run.json().cards;
     expect(card).toMatchObject({
-      key: "leechy:1",
-      id: "leechy",
+      key: LEECHY,
       file: "deck.md",
-      range: [11, 12],
+      range: [10, 10],
       type: "cloze",
       front: "The […] one.",
       back: "The [hard] one.",
-      state: { dueDate: expected().get("leechy:1")!.dueDate, reviewCount: 4 },
+      state: { dueDate: expected().get(LEECHY)!.dueDate, reviewCount: 4 },
     });
     expect(card.history).toHaveLength(4);
+    // By key, or by the start of its hash, as well.
+    expect((await hc(["show", LEECHY, "--json", "--repo", repo])).json().cards[0].key).toBe(LEECHY);
+    expect((await hc(["show", LEECHY.slice(2, 10), "--json", "--repo", repo])).json().cards[0].key).toBe(LEECHY);
 
     const gone = (await hc(["show", "gone-card", "--json", "--repo", repo])).json();
     expect(gone.cards).toEqual([expect.objectContaining({ key: "gone-card", deleted: true, file: null })]);
     expect((await hc(["show", "nothing-here", "--repo", repo])).code).toBe(1);
-    const human = await hc(["show", "est-capital", "--repo", repo]);
-    expect(human.stdout).toContain("est-capital  deck.md:5-7");
+    const human = await hc(["show", EST, "--repo", repo]);
+    expect(human.stdout).toContain(`${EST}  deck.md:5-6`);
     expect(human.stdout).toMatch(/2026-10-01\s+good\s+3\.0s/);
   });
 
@@ -196,7 +196,7 @@ describe("reading a v1 repo", () => {
       "hashcards-reviews/2026-10.abcd.jsonl": line + "\nnot json\n",
     });
     gitInit(repo);
-    return { repo, key: `h:${hash.slice(0, 16)}` };
+    return { repo, key: (await parseFile(deck, "deck.md", "deck"))[0].key };
   }
 
   it("uses the state file as baselines and the old log as v1 reviews", async () => {

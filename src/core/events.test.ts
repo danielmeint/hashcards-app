@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BaselineEvent,
+  LinkEvent,
   ReviewEvent,
   fallbackTz,
   parseFile,
@@ -94,6 +95,28 @@ describe("v2 lines", () => {
     expect(ok(`{"v":2,"card":"a","at":"2026-10-15T07:12:03Z","tz":0,"grade":2,"device":"3e2b"}`)).not.toHaveProperty(
       "device"
     );
+  });
+});
+
+describe("link lines", () => {
+  const link = `{"v":2,"kind":"link","card":"h:520e371e59f5a9c3","from":"h:0adbdf261f9947fc","at":"2026-10-16T09:12:03.120Z","tz":120,"src":"edit"}`;
+
+  it("reads a link and writes exactly the line it read", () => {
+    expect(ok(link)).toEqual<LinkEvent>({
+      v: 2,
+      kind: "link",
+      card: "h:520e371e59f5a9c3",
+      from: "h:0adbdf261f9947fc",
+      at: "2026-10-16T09:12:03.120Z",
+      tz: 120,
+      src: "edit",
+    });
+    expect(serializeEvent(ok(link))).toBe(link);
+  });
+
+  it("refuses a link without both cards, or from a card to itself", () => {
+    expect(error(`{"v":2,"kind":"link","card":"a","at":"2026-10-16T09:12:03Z"}`)).toMatch(/"from"/);
+    expect(error(`{"v":2,"kind":"link","card":"a","from":"a","at":"2026-10-16T09:12:03Z"}`)).toMatch(/two different/);
   });
 });
 

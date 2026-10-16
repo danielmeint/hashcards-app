@@ -42,16 +42,23 @@ export type Card = {
   range: [number, number];
   content: CardContent;
   /**
-   * The v1 content hash. Since M3 the app keys on `key`; the hash only derives
-   * `h:` keys, maps v1 history across, and is what a collection that has not
-   * been migrated yet still records. Metadata lines never enter it, so stamping
-   * an ID onto a card leaves it unchanged.
+   * The v1 content hash: what a collection that has not been migrated yet
+   * still records in its logs, and what migrating one maps across. The card's
+   * identity is `key`.
    */
   hash: string;
-  familyHash: string | null;
-  /** The `ID:` line of the card's block, if it has one. */
-  id: string | null;
-  /** What the review log will call this card — see `card-key.ts`. */
+  /**
+   * What the card shares with its siblings, which are buried together: a basic
+   * card and its reverse, or the deletions of one cloze block (§2.2).
+   */
+  familyHash: string;
+  /**
+   * The key this card had while files carried `ID:` lines (`est-capital`,
+   * `est-capital:r`, `est-capital:2`), read off a legacy `ID:` line; null
+   * without one. Its history is carried to `key` as if linked (§2.7).
+   */
+  legacyKey: string | null;
+  /** What the review log calls this card: `h:` and its content hash (§2.7). */
   key: string;
   /** The file's frontmatter `tags`, then the block's own `Tags:`, deduplicated. */
   tags: string[];

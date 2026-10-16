@@ -4,6 +4,7 @@ import { parseFile as parseLog } from "../../src/core/events";
 import type { ReviewLogEvent } from "../../src/core/events";
 import { ANKI_DEVICE, monthFiles, parseMonthFilePath } from "../../src/core/month-files";
 import { parseFile } from "../../src/parser";
+import { stripIds } from "../../src/card-ids";
 import { assertNotLiveCollection, openCollectionCopy, readCollection } from "../anki/collection";
 import { loadAnkictlConfig, loadDeckFiles } from "../anki/decks";
 import { buildImport } from "../anki/importer";
@@ -71,7 +72,7 @@ collection.anki2 and any -wal/-shm beside it somewhere else first. The copy is
 only read.
 
 Refuses a dirty working tree, a repo not yet migrated (run \`hc migrate\`),
-deck files or IDs the repo already has, and a second import (unless --force).
+deck files or cards the repo already has, and a second import (unless --force).
 
 Options:
   --decks <dir>        ankictl repo (required)
@@ -156,19 +157,44 @@ Exit: 0 done (or would be), 1 dry run found blockers, 2 refused or error.`,
     // --- What would be written --------------------------------------------
     const deckPaths = [...built.files.keys()].filter((p) => p.endsWith(".md"));
     const place = placement(deckPaths, opt("dir"));
-    const decks = new Map(deckPaths.map((p) => [place(p), built.files.get(p)!]));
+    // The importer names cards by ID, as ankictl's note keys; a card is its
+    // text (PLAN-1.0 §2.7). Each ID key maps to the card's content key, and
+    // the ID lines come out of the files.
+    const keyOf = new Map<string, string>();
+    const newKeys = new Map<string, string>();
+    const parseErrors: string[] = [];
+    const decks = new Map<string, string>();
+    for (const p of deckPaths) {
+      const path = place(p);
+      const text = built.files.get(p)!;
+      try {
+        for (const card of await parseFile(text, path, defaultDeckName(path))) {
+          if (card.legacyKey) keyOf.set(card.legacyKey, card.key);
+          newKeys.set(card.key, path);
+        }
+        decks.set(path, stripIds(text, path));
+      } catch (error) {
+        parseErrors.push(`${path} as converted does not parse: ${(error as Error).message}`);
+        decks.set(path, text);
+      }
+    }
+    const rekey = (key: string) => keyOf.get(key) ?? key;
     const events: ReviewLogEvent[] = [];
     for (const [path, text] of built.files) {
       if (!path.startsWith("reviews/")) continue;
       const parsed = parseLog(text);
       // The importer writes these lines itself; one that does not parse is a bug.
       if (parsed.errors.length > 0) throw new CommandError(`${path}:${parsed.errors[0].line}: ${parsed.errors[0].error}`);
-      events.push(...parsed.events);
+      events.push(...parsed.events.map((e) => ({ ...e, card: rekey(e.card) })));
     }
     const reviewFiles = monthFiles(events, ANKI_DEVICE);
-    const reference = JSON.parse(built.files.get("reference.json")!) as {
+    const referenceById = JSON.parse(built.files.get("reference.json")!) as {
       rolloverHour: number;
       cards: Record<string, ReferenceCard>;
+    };
+    const reference = {
+      ...referenceById,
+      cards: Object.fromEntries(Object.entries(referenceById.cards).map(([k, v]) => [rekey(k), v])),
     };
 
     // --- Blockers ----------------------------------------------------------
@@ -189,19 +215,14 @@ Exit: 0 done (or would be), 1 dry run found blockers, 2 refused or error.`,
         blockers.push(`${path} would not be read as a deck under ${CONFIG_FILE}'s [decks] globs`);
       }
     }
-    const newIds = new Map<string, string>();
-    for (const [path, text] of decks) {
-      try {
-        for (const card of await parseFile(text, path, defaultDeckName(path))) {
-          if (card.id) newIds.set(card.id, path);
-        }
-      } catch (error) {
-        blockers.push(`${path} as converted does not parse: ${(error as Error).message}`);
-      }
-    }
-    const clashes = [...newIds.keys()].filter((id) => collection.ids.has(id));
+    blockers.push(...parseErrors);
+    const there = new Map(collection.cards.map((c) => [c.key, c]));
+    const clashes = [...newKeys.keys()].filter((key) => there.has(key));
     if (clashes.length > 0) {
-      blockers.push(`${plural(clashes.length, "ID")} already in the repo: ${clashes.slice(0, 10).join(", ")}`);
+      blockers.push(
+        `${plural(clashes.length, "card")} already in the repo: ` +
+          clashes.slice(0, 10).map((k) => `${there.get(k)!.filePath}:${there.get(k)!.range[0]}`).join(", ")
+      );
     }
     const tipRef = dataRef(repo);
     const tip = tipRef ? resolveRef(repo, tipRef) : null;
@@ -377,7 +398,6 @@ function printReport(ctx: Context, r: Report): void {
   }
   for (const path of r.reviewFiles.keys()) ctx.say(`            ${path}`);
   if (r.earlier.length > 0) ctx.say(`          replacing ${plural(r.earlier.length, "earlier Anki file")}`);
-  if (s.idChanges.length) ctx.say(`IDs       ${plural(s.idChanges.length, "key")} slugged into valid IDs`);
   ctx.say(`Warnings  ${s.warnings.length}${s.warnings.length && !verbose ? " (--verbose lists them)" : ""}`);
   if (verbose) for (const w of s.warnings) ctx.say(`            ${w.key ?? "-"}: ${w.message}`);
 

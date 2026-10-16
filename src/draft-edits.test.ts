@@ -14,7 +14,6 @@ const FILE = `---
 name = "Kubernetes"
 ---
 
-ID: k8s-pod
 Q: What is a Pod?
 A: The smallest deployable unit.
 
@@ -26,7 +25,6 @@ A: A ReplicaSet.
 
 ---
 
-ID: k8s-svc
 Status: draft
 Tags: networking
 C: A [Service] gives Pods a stable [address].
@@ -56,7 +54,7 @@ describe("findDrafts", () => {
     expect(drafts[0].cards).toHaveLength(1);
     // A cloze with two deletions is one draft, not two.
     expect(drafts[1].cards).toHaveLength(2);
-    expect(drafts[1].cards.every((c) => c.id === "k8s-svc")).toBe(true);
+    expect(drafts[1].cards.every((c) => c.content.type === "cloze")).toBe(true);
   });
 
   it("keeps a reverse card with its forward card", async () => {
@@ -77,31 +75,32 @@ describe("findDrafts", () => {
 });
 
 describe("keepDraft", () => {
-  it("swaps the Status line for an ID on a block without one", async () => {
-    const out = keepDraft(FILE, await rangeOf(FILE, "Deployment"), "abcd2345");
-    expect(out).toBe(FILE.replace("Status: draft\nQ: What does", "ID: abcd2345\nQ: What does"));
+  it("drops the Status line, and nothing else", async () => {
+    const out = keepDraft(FILE, await rangeOf(FILE, "Deployment"));
+    expect(out).toBe(FILE.replace("Status: draft\nQ: What does", "Q: What does"));
   });
 
-  it("only drops the Status line when the block has an ID", async () => {
-    const out = keepDraft(FILE, await rangeOf(FILE, "Service"), "unused00");
-    expect(out).toBe(FILE.replace("ID: k8s-svc\nStatus: draft\n", "ID: k8s-svc\n"));
-    const kept = (await cards(out)).filter((c) => c.id === "k8s-svc");
+  it("leaves the block's other metadata, and its cards, as they were", async () => {
+    const out = keepDraft(FILE, await rangeOf(FILE, "Service"));
+    expect(out).toBe(FILE.replace("Status: draft\nTags: networking\n", "Tags: networking\n"));
+    const before = (await cards(FILE)).filter((c) => c.content.type === "cloze");
+    const kept = (await cards(out)).filter((c) => c.content.type === "cloze");
     expect(kept.map((c) => c.status)).toEqual(["active", "active"]);
-    expect(kept.map((c) => c.key)).toEqual(["k8s-svc:1", "k8s-svc:2"]);
+    expect(kept.map((c) => c.key)).toEqual(before.map((c) => c.key));
   });
 
   it("keeps CRLF line endings", () => {
     const text = "Status: draft\r\nQ: a\r\nA: b\r\n";
-    expect(keepDraft(text, [1, 3], "abcd2345")).toBe("ID: abcd2345\r\nQ: a\r\nA: b\r\n");
+    expect(keepDraft(text, [1, 3])).toBe("Q: a\r\nA: b\r\n");
   });
 
   it("refuses a block that is not a draft", () => {
-    expect(() => keepDraft("Q: a\nA: b\n", [1, 2], "abcd2345")).toThrow(/Status: draft/);
+    expect(() => keepDraft("Q: a\nA: b\n", [1, 2])).toThrow(/Status: draft/);
   });
 
   it("does not mistake an answer saying Status: draft for metadata", () => {
     const text = "Status: draft\nQ: Which line?\nA: Status: draft\n";
-    expect(keepDraft(text, [1, 3], "abcd2345")).toBe("ID: abcd2345\nQ: Which line?\nA: Status: draft\n");
+    expect(keepDraft(text, [1, 3])).toBe("Q: Which line?\nA: Status: draft\n");
   });
 });
 
@@ -137,18 +136,18 @@ describe("discardBlock", () => {
     const before = await cards(FILE);
     const after = await cards(out);
     expect(after.map((c) => c.key)).toEqual(
-      before.filter((c) => c.id !== "k8s-svc").map((c) => c.key)
+      before.filter((c) => c.content.type !== "cloze").map((c) => c.key)
     );
-    expect(out.startsWith(FILE.slice(0, FILE.indexOf("ID: k8s-svc")))).toBe(true);
+    expect(out.startsWith(FILE.slice(0, FILE.indexOf("Status: draft\nTags: networking")))).toBe(true);
     expect(out.endsWith("Q: What is a Node?\nA: A worker machine.\n")).toBe(true);
   });
 });
 
 describe("rewriteBlock", () => {
-  it("keeps the ID the rewrite dropped", async () => {
+  it("puts the rewrite where the block was", async () => {
     const range = await rangeOf(FILE, "Service");
     const out = rewriteBlock(FILE, range, "Status: draft\nC: A [Service] is stable.");
-    expect(out).toContain("ID: k8s-svc\nStatus: draft\nC: A [Service] is stable.\n\n---");
+    expect(out).toContain("A: A ReplicaSet.\n\n---\n\nStatus: draft\nC: A [Service] is stable.\n\n---");
   });
 
   it("is a discard when emptied", async () => {
@@ -160,9 +159,10 @@ describe("rewriteBlock", () => {
 describe("locateBlock", () => {
   it("finds a draft after the file moved around it", async () => {
     const [, svc] = findDrafts(await cards(FILE), () => true);
-    const moved = "Q: New card on top\nA: yes\n\n---\n\n" + FILE.slice(FILE.indexOf("ID: k8s-pod"));
+    const moved = "Q: New card on top\nA: yes\n\n---\n\n" + FILE.slice(FILE.indexOf("Q: What is a Pod?"));
     const at = await locateBlock(moved, "k8s.md", svc.cards.map((c) => c.hash));
-    expect(at?.cards.map((c) => c.id)).toEqual(["k8s-svc", "k8s-svc"]);
+    expect(at?.cards.map((c) => c.key)).toEqual(svc.cards.map((c) => c.key));
+    expect(at?.range[0]).toBe(svc.cards[0].range[0] + 1);
   });
 
   it("refuses a block someone already kept", async () => {
@@ -177,14 +177,14 @@ describe("applyOps", () => {
     const [deploy, svc] = findDrafts(await cards(FILE), () => true);
     const result = await applyOps(FILE, "k8s.md", [
       { action: "discard" as const, block: deploy.cards.map((c) => c.hash) },
-      { action: "keep" as const, block: svc.cards.map((c) => c.hash), stampId: "zzzz0000" },
+      { action: "keep" as const, block: svc.cards.map((c) => c.hash) },
     ]);
     expect(result.conflicts).toEqual([]);
     expect(result.applied).toHaveLength(2);
     expect(result.text).toBe(
       FILE.replace("Status: draft\nQ: What does a Deployment manage?\nA: A ReplicaSet.\n\n---\n\n", "").replace(
-        "ID: k8s-svc\nStatus: draft\n",
-        "ID: k8s-svc\n"
+        "Status: draft\nTags: networking\n",
+        "Tags: networking\n"
       )
     );
   });
@@ -192,14 +192,14 @@ describe("applyOps", () => {
   it("reports a change whose draft was edited upstream as a conflict, and applies the rest", async () => {
     const [deploy, svc] = findDrafts(await cards(FILE), () => true);
     const upstream = FILE.replace("A: A ReplicaSet.", "A: A ReplicaSet, which manages Pods.");
-    const keep = { action: "keep" as const, block: deploy.cards.map((c) => c.hash), stampId: "abcd2345" };
+    const keep = { action: "keep" as const, block: deploy.cards.map((c) => c.hash) };
     const discard = { action: "discard" as const, block: svc.cards.map((c) => c.hash) };
     const result = await applyOps(upstream, "k8s.md", [keep, discard]);
     expect(result.conflicts).toEqual([keep]);
     expect(result.applied).toEqual([discard]);
     expect(result.text).toContain("A: A ReplicaSet, which manages Pods.");
     expect(result.text).toContain("Status: draft");
-    expect(result.text).not.toContain("k8s-svc");
+    expect(result.text).not.toContain("Service");
   });
 
   it("refuses a rewrite that no longer parses", async () => {
@@ -220,9 +220,9 @@ describe("applyOps", () => {
     const editedHash = (await cards(afterEdit.text)).find((c) => c.status === "draft" && c.content.type === "basic")!.hash;
     const both = await applyOps(FILE, "k8s.md", [
       { action: "edit" as const, block: deploy.cards.map((c) => c.hash), text: edited },
-      { action: "keep" as const, block: [editedHash], stampId: "own2rs00" },
+      { action: "keep" as const, block: [editedHash] },
     ]);
     expect(both.conflicts).toEqual([]);
-    expect(both.text).toContain("ID: own2rs00\nQ: What does a Deployment own?\nA: ReplicaSets.\n");
+    expect(both.text).toContain("---\n\nQ: What does a Deployment own?\nA: ReplicaSets.\n");
   });
 });

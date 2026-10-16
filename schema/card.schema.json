@@ -16,12 +16,6 @@
       "description": "basic: a question and an answer. cloze: one text with [bracketed] deletions, each of which becomes its own card.",
       "enum": ["basic", "cloze"]
     },
-    "id": {
-      "description": "The card's stable identity, written as its ID: line. Unique within the collection. Leave it out to have one stamped (8 characters of lowercase base32); pick a readable slug when the card has an obvious name.",
-      "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9-]{1,63}$",
-      "examples": ["est-capital", "cka-wl-set-image", "k8q2xv7m"]
-    },
     "question": {
       "description": "Basic cards: the front, as Markdown. Becomes the Q: line and the lines after it.",
       "$ref": "#/$defs/side"
@@ -97,7 +91,6 @@
     {
       "file": "geography/europe/Europe_Nordic_Baltic.md",
       "type": "basic",
-      "id": "est-capital",
       "tags": ["capitals"],
       "question": "What is the capital of Estonia?",
       "answer": "Tallinn"
@@ -113,14 +106,12 @@
     {
       "file": "cka/workloads.md",
       "type": "cloze",
-      "id": "cka-deployment-owns",
       "text": "In Kubernetes, a [Deployment] manages a [ReplicaSet].",
       "status": "draft"
     },
     {
       "file": "cka/workloads.md",
       "type": "cloze",
-      "id": "cka-wl-set-image",
       "tags": ["cka/workloads", "cka/type/syntax-pattern"],
       "text": "Change a Deployment's image: kubectl [set image] deploy/web [nginx=nginx:1.27]",
       "extra": "The container name comes before `=`. Docs: *kubectl set image --help*",

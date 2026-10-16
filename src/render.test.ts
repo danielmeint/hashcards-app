@@ -14,8 +14,8 @@ const card = (question: string, filePath = "aws.md"): Card => ({
   range: [1, 2],
   content: { type: "basic", question, answer: "A" },
   hash: "h",
-  familyHash: null,
-  id: null, key: "", tags: [], status: "active",
+  familyHash: "h",
+  legacyKey: null, key: "", tags: [], status: "active",
 });
 
 describe("media in card text", () => {

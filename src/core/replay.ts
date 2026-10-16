@@ -1,4 +1,4 @@
-import { ReviewLogEvent, fallbackTz, serializeEvent } from "./events";
+import { LinkEvent, ReviewLogEvent, ScheduleEvent, fallbackTz, serializeEvent } from "./events";
 import {
   DEFAULT_RETENTION,
   GradeValue,
@@ -78,7 +78,7 @@ export type EventOrder = {
   line: string;
 };
 
-export function orderOf(event: ReviewLogEvent): EventOrder {
+export function orderOf(event: ScheduleEvent): EventOrder {
   return {
     ms: Date.parse(event.at),
     rank: event.kind === "baseline" ? 1 : 0,
@@ -94,11 +94,71 @@ export function compareOrder(a: EventOrder, b: EventOrder): number {
 }
 
 export function compareEvents(a: ReviewLogEvent, b: ReviewLogEvent): number {
-  return compareOrder(orderOf(a), orderOf(b));
+  // Links sort among events like reviews do: by instant, then by line.
+  const of = (e: ReviewLogEvent): EventOrder =>
+    e.kind === "link" ? { ms: Date.parse(e.at), rank: 0, card: e.card, line: serializeEvent(e) } : orderOf(e);
+  return compareOrder(of(a), of(b));
+}
+
+// --- Links (PLAN-1.0 §2.7) ---------------------------------------------------
+
+/**
+ * Where each linked key's history goes: `from` → the key it ends up as,
+ * following chains (`a→b`, `b→c` sends `a` to `c`).
+ *
+ * Links are applied in time order, and a later link for the same `from` wins.
+ * One that would close a cycle — `a→b`, then `b→a`, a relink undone — replaces
+ * the older link of the cycle, so the history goes where the latest link says.
+ */
+export function linkMap(events: Iterable<ReviewLogEvent>): Map<string, string> {
+  const links = [...events].filter((e): e is LinkEvent => e.kind === "link").sort(compareEvents);
+  const next = new Map<string, string>();
+  for (const { from, card } of links) {
+    // Walk on from the new target; if the walk comes back to `from`, cut the
+    // edge that does it.
+    const seen = new Set<string>();
+    for (let at = card; next.has(at) && !seen.has(at); at = next.get(at)!) {
+      seen.add(at);
+      if (next.get(at) === from) {
+        next.delete(at);
+        break;
+      }
+    }
+    next.set(from, card);
+  }
+  const resolved = new Map<string, string>();
+  for (const from of next.keys()) {
+    let at = from;
+    const seen = new Set<string>([at]);
+    while (next.has(at) && !seen.has(next.get(at)!)) {
+      at = next.get(at)!;
+      seen.add(at);
+    }
+    resolved.set(from, at);
+  }
+  return resolved;
+}
+
+/**
+ * The events that schedule, each under the key its card has now: links
+ * applied (`linkMap`) and left out. What every reader of the log replays or
+ * counts, so that a card's history is the same wherever it is read.
+ */
+export function resolveLinks(
+  events: Iterable<ReviewLogEvent>,
+  links: Map<string, string> = linkMap(events)
+): ScheduleEvent[] {
+  const out: ScheduleEvent[] = [];
+  for (const event of events) {
+    if (event.kind === "link") continue;
+    const card = links.get(event.card);
+    out.push(card === undefined ? event : { ...event, card });
+  }
+  return out;
 }
 
 /** Sort into replay order, dropping exact duplicates. Leaves `events` alone. */
-function ordered(events: Iterable<ReviewLogEvent>): { event: ReviewLogEvent; order: EventOrder }[] {
+function ordered(events: Iterable<ScheduleEvent>): { event: ScheduleEvent; order: EventOrder }[] {
   const all = [...events].map((event) => ({ event, order: orderOf(event) }));
   all.sort((a, b) => compareOrder(a.order, b.order));
   return all.filter((e, i) => i === 0 || e.order.line !== all[i - 1].order.line);
@@ -114,7 +174,7 @@ function ordered(events: Iterable<ReviewLogEvent>): { event: ReviewLogEvent; ord
  */
 export function applyEvent(
   prior: CardState | undefined,
-  event: ReviewLogEvent,
+  event: ScheduleEvent,
   options: ReplayOptions
 ): CardState {
   const retention = options.retention ?? DEFAULT_RETENTION;
@@ -175,14 +235,14 @@ export function fingerprint({ params, retention, fuzz }: ReplayOptions): string 
   ]);
 }
 
-/** Every event, from nothing. */
+/** Every event, from nothing, links resolved. */
 export function replayAll(
   events: Iterable<ReviewLogEvent>,
   options: ReplayOptions
 ): Replayed {
   const cards = new Map<string, CardState>();
   let watermark: EventOrder | null = null;
-  for (const { event, order } of ordered(events)) {
+  for (const { event, order } of ordered(resolveLinks([...events]))) {
     cards.set(event.card, applyEvent(cards.get(event.card), event, options));
     watermark = order;
   }
@@ -211,6 +271,11 @@ export function replay(
  *
  * An event identical to the watermark is one already applied (a file read
  * twice), and is skipped rather than forcing a full replay.
+ *
+ * A new link renames history that is already applied, so it always forces a
+ * full replay. Other new events are resolved through the links already in
+ * `all()`: a review of a card's old key, from a device that had not heard of
+ * the edit yet, lands on the new one.
  */
 export function replayMore(
   prev: Replayed,
@@ -218,7 +283,12 @@ export function replayMore(
   all: () => Iterable<ReviewLogEvent>,
   options: ReplayOptions
 ): Replayed & { replayedAll: boolean } {
-  const fresh = ordered(newEvents).filter(
+  const incoming = [...newEvents];
+  if (incoming.some((e) => e.kind === "link")) {
+    return { ...replayAll(all(), options), replayedAll: true };
+  }
+  const links = linkMap(all());
+  const fresh = ordered(links.size === 0 ? (incoming as ScheduleEvent[]) : resolveLinks(incoming, links)).filter(
     ({ order }) => prev.watermark === null || order.line !== prev.watermark.line
   );
   const inOrder =

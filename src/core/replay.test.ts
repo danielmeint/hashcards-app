@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { BaselineEvent, ReviewEvent, ReviewLogEvent } from "./events";
-import { CardState, ReplayOptions, Replayed, compareEvents, replay, replayAll, replayMore } from "./replay";
+import { BaselineEvent, LinkEvent, ReviewEvent, ReviewLogEvent } from "./events";
+import {
+  CardState,
+  ReplayOptions,
+  Replayed,
+  compareEvents,
+  linkMap,
+  replay,
+  replayAll,
+  replayMore,
+  resolveLinks,
+} from "./replay";
 import { GradeValue, interval, schedule, step } from "./schedule";
 import { ReviewedPerformance } from "../types";
 
@@ -12,6 +22,10 @@ function rev(card: string, at: string, grade: GradeValue, tz = 120, extra: Parti
 
 function base(card: string, at: string, s: number, d: number, reps: number, extra: Partial<BaselineEvent> = {}): BaselineEvent {
   return { v: 2, kind: "baseline", card, at, tz: 120, s, d, reps, ...extra };
+}
+
+function link(from: string, card: string, at: string): LinkEvent {
+  return { v: 2, kind: "link", card, from, at, tz: 120 };
 }
 
 /** A small deterministic PRNG, for shuffles and simulated sessions. */
@@ -354,5 +368,65 @@ describe("incremental replay", () => {
     }
     expect(fullReplays).toBeGreaterThan(0);
     expect(state.cards).toEqual(replay(devices.flat(), on));
+  });
+});
+
+/** PLAN-1.0 §2.7: a card that used to be another carries its history. */
+describe("links", () => {
+  const history = [
+    rev("old", "2026-10-01T07:00:00Z", 3),
+    rev("old", "2026-10-05T07:00:00Z", 3),
+  ];
+
+  it("gives the new card the old one's whole history", () => {
+    const linked = replay([...history, link("old", "new", "2026-10-06T07:00:00Z")], OFF);
+    const reference = replay(history.map((e) => ({ ...e, card: "new" })), OFF);
+    expect(linked.get("new")).toEqual(reference.get("new"));
+    expect(linked.has("old")).toBe(false);
+  });
+
+  it("does not depend on when the link was made, or where it sorts", () => {
+    const late = rev("old", "2026-10-09T07:00:00Z", 1);
+    const a = replay([...history, link("old", "new", "2026-10-06T07:00:00Z"), late], OFF);
+    const b = replay([link("old", "new", "2026-10-01T00:00:00Z"), late, ...history], OFF);
+    expect(a.get("new")).toEqual(b.get("new"));
+    expect(a.get("new")!.reviewCount).toBe(3);
+  });
+
+  it("interleaves the new card's own reviews with the old ones", () => {
+    const events = [...history, rev("new", "2026-10-08T07:00:00Z", 2), link("old", "new", "2026-10-09T07:00:00Z")];
+    expect(replay(events, OFF).get("new")!.reviewCount).toBe(3);
+  });
+
+  it("follows chains, and lets a later link of one card win", () => {
+    expect(linkMap([link("a", "b", "2026-10-01T00:00:00Z"), link("b", "c", "2026-10-02T00:00:00Z")])).toEqual(
+      new Map([["a", "c"], ["b", "c"]])
+    );
+    expect(linkMap([link("a", "b", "2026-10-01T00:00:00Z"), link("a", "c", "2026-10-02T00:00:00Z")]).get("a")).toBe("c");
+  });
+
+  it("undoes a link with the reverse one, rather than looping", () => {
+    const map = linkMap([link("a", "b", "2026-10-01T00:00:00Z"), link("b", "a", "2026-10-02T00:00:00Z")]);
+    expect(map).toEqual(new Map([["b", "a"]]));
+    const events = resolveLinks([rev("a", "2026-09-01T07:00:00Z", 3), rev("b", "2026-09-02T07:00:00Z", 3), ...[
+      link("a", "b", "2026-10-01T00:00:00Z"),
+      link("b", "a", "2026-10-02T00:00:00Z"),
+    ]]);
+    expect(events.map((e) => e.card)).toEqual(["a", "a"]);
+  });
+
+  it("forces a full replay when one arrives, and resolves late reviews of an old key", () => {
+    const prev = replayAll(history, OFF);
+    const linkEvent = link("old", "new", "2026-10-06T07:00:00Z");
+    const more = replayMore(prev, [linkEvent], () => [...history, linkEvent], OFF);
+    expect(more.replayedAll).toBe(true);
+    expect(more.cards.get("new")!.reviewCount).toBe(2);
+
+    // Another device, which had not heard of the edit, graded the old text.
+    const late = rev("old", "2026-10-07T07:00:00Z", 3);
+    const after = replayMore(more, [late], () => [...history, linkEvent, late], OFF);
+    expect(after.replayedAll).toBe(false);
+    expect(after.cards.get("new")!.reviewCount).toBe(3);
+    expect(after.cards.has("old")).toBe(false);
   });
 });

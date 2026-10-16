@@ -33,8 +33,8 @@ function card(
     range: [n, n + 1],
     content: { type: "basic", question: `Q${n}`, answer: `A${n}` },
     hash: `hash-${n}`,
-    familyHash: null,
-    id: null, key: "", tags: [], status: "active",
+    familyHash: `hash-${n}`,
+    legacyKey: null, key: "", tags: [], status: "active",
   };
 }
 

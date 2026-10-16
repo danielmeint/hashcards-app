@@ -16,7 +16,6 @@ A: A ReplicaSet.
 
 ---
 
-ID: k8s-svc
 Status: draft
 Tags: networking
 C: A [Service] gives Pods a stable [address].
@@ -81,11 +80,11 @@ test("keep two, discard one, edit one: one commit with all of it", async ({ page
   await expect.poll(() => github.mainCommits).toEqual(["Inbox: keep 2, discard 1, edit 1"]);
   const text = (path: string) => String(github.files.get(path)!.content);
   const geo = text("geo/Capitals.md");
-  expect(geo).toMatch(/^---\nname = "Capitals"\n---\n\nID: [0-9a-z]{8}\nQ: Capital of Estonia\?\nA: Tallinn\n$/);
+  expect(geo).toMatch(/^---\nname = "Capitals"\n---\n\nQ: Capital of Estonia\?\nA: Tallinn\n$/);
   const k8s = text("k8s.md");
-  expect(k8s).toMatch(/^Q: What is a Pod\?\nA: The smallest deployable unit\.\n\n---\n\nID: [0-9a-z]{8}\nQ: What does a Deployment manage\?\nA: A ReplicaSet\.\n\n---\n\n/);
+  expect(k8s).toMatch(/^Q: What is a Pod\?\nA: The smallest deployable unit\.\n\n---\n\nQ: What does a Deployment manage\?\nA: A ReplicaSet\.\n\n---\n\n/);
   expect(k8s.endsWith(
-    "ID: k8s-svc\nStatus: draft\nTags: networking\nC: A [Service] gives a set of Pods one stable [address].\nExtra: ClusterIP by default.\n"
+    "Status: draft\nTags: networking\nC: A [Service] gives a set of Pods one stable [address].\nExtra: ClusterIP by default.\n"
   )).toBe(true);
 
   // The edited draft is still waiting; the two kept are new cards.

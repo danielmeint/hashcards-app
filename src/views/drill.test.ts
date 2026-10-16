@@ -33,8 +33,8 @@ function basicCard(n: number): Card {
     range: [n, n + 1],
     content: { type: "basic", question: `Q${n}`, answer: `A${n}` },
     hash: `hash-${n}`,
-    familyHash: null,
-    id: null, key: "", tags: [], status: "active",
+    familyHash: `hash-${n}`,
+    legacyKey: null, key: "", tags: [], status: "active",
   };
 }
 
@@ -90,8 +90,8 @@ function clozeCard(n: number): Card {
     range: [n, n + 1],
     content: { type: "cloze", text: "The capital is Paris", start: 15, end: 19 },
     hash: `cloze-${n}`,
-    familyHash: null,
-    id: null, key: "", tags: [], status: "active",
+    familyHash: `cloze-${n}`,
+    legacyKey: null, key: "", tags: [], status: "active",
   };
 }
 

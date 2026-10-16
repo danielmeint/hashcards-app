@@ -1,4 +1,4 @@
-import type { ReviewLogEvent } from "../src/core/events";
+import type { ScheduleEvent } from "../src/core/events";
 import { fallbackTz } from "../src/core/events";
 import type { CardState } from "../src/core/replay";
 import { PARAMETERS, addDays, dayAt, daysBetween, retrievability } from "../src/core/schedule";
@@ -11,13 +11,13 @@ import type { ParsedCard } from "../src/types";
  */
 
 /** The local day an event happened on, in the timezone it recorded. */
-export function eventDay(e: ReviewLogEvent): string {
+export function eventDay(e: ScheduleEvent): string {
   return dayAt(e.at, e.tz ?? fallbackTz(e.at));
 }
 
 /** Each card's events, in time order. */
-export function eventsByCard(events: readonly ReviewLogEvent[]): Map<string, ReviewLogEvent[]> {
-  const by = new Map<string, ReviewLogEvent[]>();
+export function eventsByCard(events: readonly ScheduleEvent[]): Map<string, ScheduleEvent[]> {
+  const by = new Map<string, ScheduleEvent[]>();
   for (const e of events) by.set(e.card, [...(by.get(e.card) ?? []), e]);
   for (const list of by.values()) list.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   return by;
@@ -29,7 +29,7 @@ export function eventsByCard(events: readonly ReviewLogEvent[]): Map<string, Rev
  * on, wherever the reviews were done — the app's per-device counter cannot
  * know about another phone's, the log can.
  */
-export function introducedOn(byCard: Map<string, ReviewLogEvent[]>, day: string): number {
+export function introducedOn(byCard: Map<string, ScheduleEvent[]>, day: string): number {
   let n = 0;
   for (const list of byCard.values()) {
     if (list[0].kind === "review" && eventDay(list[0]) === day) n++;
@@ -44,7 +44,7 @@ export type Retention = { reviews: number; passed: number; rate: number | null }
  * card's first ever review), the share not graded Forgot. Since `since`, if
  * given.
  */
-export function trueRetention(byCard: Map<string, ReviewLogEvent[]>, since?: string): Retention {
+export function trueRetention(byCard: Map<string, ScheduleEvent[]>, since?: string): Retention {
   let reviews = 0;
   let passed = 0;
   for (const list of byCard.values()) {
@@ -94,7 +94,7 @@ export function forecast(
 
 /** Reviews graded on each of the `days` days up to and including `today`. */
 export function reviewsPerDay(
-  events: readonly ReviewLogEvent[],
+  events: readonly ScheduleEvent[],
   today: string,
   days: number
 ): { date: string; reviews: number }[] {
@@ -111,7 +111,7 @@ export function reviewsPerDay(
 }
 
 /** Days in a row, ending today or yesterday, with at least one review. */
-export function streak(events: readonly ReviewLogEvent[], today: string): number {
+export function streak(events: readonly ScheduleEvent[], today: string): number {
   const days = new Set(events.filter((e) => e.kind === "review").map(eventDay));
   let day = days.has(today) ? today : addDays(today, -1);
   let n = 0;
@@ -138,7 +138,7 @@ export type LeechStats = {
  * (`src/leeches.ts`), which until M3 only sees one device's reviews.
  */
 export function leeches(
-  byCard: Map<string, ReviewLogEvent[]>,
+  byCard: Map<string, ScheduleEvent[]>,
   threshold = LEECH_THRESHOLD
 ): LeechStats[] {
   const out: LeechStats[] = [];

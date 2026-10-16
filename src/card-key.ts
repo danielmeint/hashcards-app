@@ -1,12 +1,20 @@
 /**
- * Card IDs and the keys built from them (PLAN-1.0 §2.2).
+ * Card keys: what the review log calls a card (PLAN-1.0 §2.2).
  *
- * An ID is what a person or an agent writes in the file (`ID: est-capital`). A
- * key is what the review log refers to: one ID can name several cards — a
- * basic card and its reverse, or every deletion in a cloze block — so the key
- * says which of them. A card with no ID still needs a key, and falls back to
- * its v1 content hash, which is exactly as stable as v1 identity ever was.
+ * A card is its text (§2.7), so its key is its content hash, `h:` and the
+ * first 16 hex digits. That is all a key is now.
+ *
+ * The first 1.0 builds also had `ID:` lines, and keys made from them
+ * (`est-capital`, `est-capital:r`, `est-capital:2`). Those still appear in
+ * logs written then, and a file that still has `ID:` lines tells the parser
+ * which of them each card used to be (`legacyKey`), so the ID forms are kept
+ * here for reading — nothing writes a new one.
  */
+
+/** A card's key: its content hash (§2.7), shortened. */
+export function hashKey(hash: string): string {
+  return formatKey({ kind: "hash", hash });
+}
 
 /**
  * Lowercase letters, digits and `-`, 2–64 long, not starting with `-`.
@@ -21,7 +29,7 @@ export function isValidId(id: string): boolean {
   return ID_PATTERN.test(id);
 }
 
-/** How much of the v1 hash an `h:` key keeps: 64 bits, plenty for one collection. */
+/** How much of a hash an `h:` key keeps: 64 bits, plenty for one collection. */
 const HASH_KEY_LENGTH = 16;
 
 export type CardKey =
@@ -29,7 +37,7 @@ export type CardKey =
   | { kind: "reverse"; id: string }
   /** `n` is 1-based, in order of appearance in the block. */
   | { kind: "cloze"; id: string; n: number }
-  /** A card with no ID: the first 16 hex digits of its v1 hash. */
+  /** A card's content hash (or, in logs from before §2.7, its v1 hash), shortened. */
   | { kind: "hash"; hash: string };
 
 /**
@@ -119,4 +127,16 @@ export function keyInLog(log: string, qualified: string): string {
 export function stateKey(card: { repo: string; key: string; hash: string }): string {
   const key = card.key || formatKey({ kind: "hash", hash: card.hash });
   return card.repo === "" ? key : `${card.repo}/${key}`;
+}
+
+/**
+ * Keys `card` had before PLAN-1.0 §2.7, which its history may still be filed
+ * under: the one its legacy `ID:` line gave it, and the `h:` key of its v1
+ * hash, which is what it was before 1.0. Readers of the log treat both as
+ * linked to the card's key until real links are written.
+ */
+export function formerKeys(card: { key: string; hash: string; legacyKey: string | null }): string[] {
+  if (!card.key) return [];
+  const keys = [card.legacyKey, formatKey({ kind: "hash", hash: card.hash })];
+  return keys.filter((k): k is string => k !== null && k !== card.key);
 }

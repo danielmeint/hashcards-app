@@ -7,6 +7,7 @@ import { refreshStates, replayOptions } from "./review-state";
 import { recordSyncSuccess } from "./sync-state";
 import { localDay } from "./fsrs";
 import { demoHistory } from "./demo-history";
+import { Card } from "./types";
 
 /**
  * The starter collection, bundled at build time. The demo's decks are the
@@ -30,8 +31,12 @@ export function starterFiles(): Record<string, string> {
 
 /** Cards left new, so the demo's first review is also its tutorial. */
 const TUTORIAL = "Welcome.md";
-/** One card that keeps being forgotten, so Statistics has a leech to show. */
-const STRUGGLING = new Set(["es-sobremesa:r"]);
+/**
+ * One card that keeps being forgotten, so Statistics has a leech to show: the
+ * reverse of *la sobremesa*, which has no one English word to give it away.
+ */
+const STRUGGLING = (card: Card) =>
+  card.content.type === "basic" && card.content.answer === "**la sobremesa**";
 
 /**
  * Turn this page into the demo and fill it: settings and database switched to

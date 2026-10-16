@@ -15,10 +15,9 @@ import { readFile, repoFor, writableRepos } from "../github";
 import { loadMarkdown, renderDraftBody } from "../render";
 import { prepareMedia } from "../media";
 import { typeset } from "../typeset";
-import { randomId } from "../card-ids";
 import { inRepo } from "../db";
 import { parseFile } from "../parser";
-import { keepId, sliceLines } from "../card-edit-text";
+import { sliceLines } from "../card-edit-text";
 import type { CardSource, EditResult } from "../card-edit";
 import { attachSwipe } from "./drill/gestures";
 import { createInboxSession, Decision, InboxSession } from "./inbox-session";
@@ -78,7 +77,6 @@ export async function renderInbox(
       await dropOps(ids);
       await loadCards();
     },
-    newCardId: randomId,
     newOpId: opId,
     now: () => new Date().toISOString(),
   });
@@ -343,7 +341,7 @@ export async function renderInbox(
           return { file: text, sha: read.sha, text: sliceLines(text, range) };
         },
         async save(source, typed): Promise<EditResult> {
-          const replacement = keepId(source.text, typed);
+          const replacement = typed;
           const done = (cards: EditResult["cards"]): EditResult => ({
             cards,
             card: cards[0] ?? null,

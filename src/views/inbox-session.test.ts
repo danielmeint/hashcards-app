@@ -4,7 +4,7 @@ import { DraftBlock } from "../draft-edits";
 import { InboxOp } from "../inbox-queue";
 import { Card } from "../types";
 
-function block(name: string, id: string | null = null): DraftBlock {
+function block(name: string): DraftBlock {
   const card = {
     deckName: "d",
     repo: "me/cards",
@@ -12,9 +12,9 @@ function block(name: string, id: string | null = null): DraftBlock {
     range: [1, 3],
     content: { type: "basic", question: name, answer: "a" },
     hash: `hash-${name}`,
-    familyHash: null,
-    id,
-    key: id ?? `h:${name}`,
+    familyHash: `family-${name}`,
+    legacyKey: null,
+    key: `h:${name}`,
     tags: [],
     status: "draft",
   } as Card;
@@ -29,7 +29,6 @@ function harness(drafts: DraftBlock[]) {
     drop: async (ids) => {
       for (const id of ids) queued.splice(queued.findIndex((o) => o.id === id), 1);
     },
-    newCardId: () => `card${++n}xx`,
     newOpId: () => `op-${++n}`,
     now: () => "2026-10-15T10:00:00.000Z",
   };
@@ -37,13 +36,13 @@ function harness(drafts: DraftBlock[]) {
 }
 
 describe("an Inbox visit", () => {
-  it("queues a keep with a stamped ID only for a block without one", async () => {
-    const { session, queued } = harness([block("a"), block("b", "has-id")]);
+  it("queues a keep per kept block, naming its cards", async () => {
+    const { session, queued } = harness([block("a"), block("b")]);
     await session.keep();
     await session.keep();
-    expect(queued.map((o) => [o.action, o.stampId])).toEqual([
-      ["keep", "card1xx"],
-      ["keep", undefined],
+    expect(queued.map((o) => [o.action, o.block])).toEqual([
+      ["keep", ["hash-a"]],
+      ["keep", ["hash-b"]],
     ]);
     expect(session.finished).toBe(true);
   });

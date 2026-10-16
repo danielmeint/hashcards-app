@@ -53,7 +53,6 @@ export function activeCards(collection: Collection): ParsedCard[] {
 export function cardRef(card: ParsedCard) {
   return {
     key: card.key,
-    id: card.id,
     file: card.filePath,
     line: card.range[0],
     deck: card.deckName,

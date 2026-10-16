@@ -68,14 +68,14 @@ export function isDeckPath(path: string, config: Config): boolean {
 }
 
 export type Problem = {
-  kind: "config" | "parse" | "duplicate-id" | "missing-id";
+  kind: "config" | "parse" | "duplicate-card" | "legacy-id";
   severity: "error" | "warning";
   file: string;
   /** 1-based; null when the problem has no one line. */
   line: number | null;
   message: string;
-  /** The card's ID, for duplicate-ID problems. */
-  id?: string;
+  /** The card's key, for duplicate-card problems. */
+  key?: string;
 };
 
 export type DeckFile = {
@@ -89,10 +89,11 @@ export type Collection = {
   root: string;
   config: ConfigResult;
   files: DeckFile[];
-  /** Every card of every file that parses, in file order. */
+  /**
+   * Every card of every file that parses, in file order. The same text twice
+   * is one card (PLAN-1.0 §2.7): only the first is here.
+   */
   cards: ParsedCard[];
-  /** Every ID written in any deck file, parseable or not, with where. */
-  ids: Map<string, { file: string; line: number }[]>;
   problems: Problem[];
 };
 
@@ -119,18 +120,22 @@ export async function loadCollection(root: string): Promise<Collection> {
   }));
 
   const files: DeckFile[] = [];
-  const ids = new Map<string, { file: string; line: number }[]>();
-  const noteId = (id: string, file: string, line: number) => {
-    const at = ids.get(id) ?? [];
-    at.push({ file, line });
-    ids.set(id, at);
-  };
+  const firstOf = new Map<string, ParsedCard>();
+  const duplicate = (card: ParsedCard, first: ParsedCard) =>
+    problems.push({
+      kind: "duplicate-card",
+      severity: "warning",
+      file: card.filePath,
+      line: card.range[0],
+      key: card.key,
+      message: `the same card as ${locate(first)}: one card, one schedule (whitespace does not count)`,
+    });
 
   for (const path of markdownFiles(root).filter((p) => isDeckPath(p, config.config))) {
     const text = readFileSync(join(root, path), "utf8");
     let cards: ParsedCard[] | null = null;
     try {
-      cards = await parseFile(text, path, defaultDeckName(path));
+      cards = await parseFile(text, path, defaultDeckName(path), duplicate);
     } catch (error) {
       const { message, line } = splitLocation((error as Error).message);
       problems.push({
@@ -143,47 +148,31 @@ export async function loadCollection(root: string): Promise<Collection> {
     }
 
     if (cards) {
-      // Parsed, so scanning cannot fail. The scan has the line of each ID and
-      // of each block top, which parsed cards no longer do.
-      const { lineOffset, cards: blocks } = scanFile(text, path);
-      for (const block of blocks) {
-        if (block.meta?.id) noteId(block.meta.id.value, path, lineOffset + block.meta.id.line + 1);
-        else {
-          problems.push({
-            kind: "missing-id",
-            severity: "warning",
-            file: path,
-            line: lineOffset + block.startLine + 1,
-            message: "card has no ID: `hc lint --fix` stamps one",
-          });
+      // Across files: within one, the parser already reported it.
+      cards = cards.filter((card) => {
+        const first = firstOf.get(card.key);
+        if (!first) {
+          firstOf.set(card.key, card);
+          return true;
         }
-      }
-    } else {
-      // A file that does not parse still owns its IDs: a new one stamped
-      // elsewhere must not take one of them.
-      text.split("\n").forEach((line, i) => {
-        const m = line.match(/^ID:\s*(\S+)\s*$/);
-        if (m) noteId(m[1], path, i + 1);
+        duplicate(card, first);
+        return false;
       });
+      const { lineOffset, cards: blocks } = scanFile(text, path);
+      const legacy = blocks.filter((b) => b.meta?.id);
+      if (legacy.length > 0) {
+        problems.push({
+          kind: "legacy-id",
+          severity: "warning",
+          file: path,
+          line: lineOffset + legacy[0].meta!.id!.line + 1,
+          message:
+            `${legacy.length === 1 ? "1 ID: line" : `${legacy.length} ID: lines`}: cards are identified by their text now. ` +
+            "`hc migrate` removes them and keeps their history",
+        });
+      }
     }
     files.push({ path, text, cards });
-  }
-
-  for (const [id, at] of ids) {
-    // Within one file the parser already refuses a repeat; this is across files.
-    if (new Set(at.map((a) => a.file)).size < 2) continue;
-    const [first, ...rest] = at;
-    for (const dup of rest) {
-      if (dup.file === first.file) continue;
-      problems.push({
-        kind: "duplicate-id",
-        severity: "error",
-        file: dup.file,
-        line: dup.line,
-        id,
-        message: `duplicate ID '${id}', also used at ${first.file}:${first.line}`,
-      });
-    }
   }
 
   problems.sort(
@@ -194,7 +183,6 @@ export async function loadCollection(root: string): Promise<Collection> {
     config,
     files,
     cards: files.flatMap((f) => f.cards ?? []),
-    ids,
     problems,
   };
 }

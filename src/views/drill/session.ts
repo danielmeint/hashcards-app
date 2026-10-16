@@ -114,7 +114,8 @@ function asCardState(perf: Performance): CardState | undefined {
 
 /** Cards that bury each other: a block's cloze deletions, a card and its reverse. */
 function familyOf(card: Card): string | null {
-  return card.id ? `${card.repo}/${card.id}` : card.familyHash;
+  // Older cached cards have none until their file is parsed again.
+  return card.familyHash ? `${card.repo}/${card.familyHash}` : null;
 }
 
 /** Fresh drills shuffle and bury siblings; resumed ones keep their order. */

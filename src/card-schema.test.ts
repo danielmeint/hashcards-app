@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import schema from "../schema/card.schema.json";
-import { ID_PATTERN } from "./card-key";
 import { parseFile, TAG_PATTERN } from "./parser";
 
 /**
@@ -13,7 +12,6 @@ import { parseFile, TAG_PATTERN } from "./parser";
 type SchemaCard = {
   file: string;
   type: "basic" | "cloze";
-  id?: string;
   question?: string;
   answer?: string;
   text?: string;
@@ -26,7 +24,6 @@ type SchemaCard = {
 /** A card block as the spec says a schema card is written. */
 function toBlock(card: SchemaCard): string {
   const meta = [
-    card.id && `ID: ${card.id}`,
     card.tags?.length && `Tags: ${card.tags.join(", ")}`,
     card.reverse && "Reverse: yes",
     card.status && card.status !== "active" && `Status: ${card.status}`,
@@ -38,10 +35,6 @@ function toBlock(card: SchemaCard): string {
 }
 
 describe("the card JSON Schema", () => {
-  it("allows exactly the IDs the parser does", () => {
-    expect(schema.properties.id.pattern).toBe(ID_PATTERN.source);
-  });
-
   it("allows exactly the tags the parser does, once normalised", () => {
     // `source` escapes the slashes a JSON string leaves bare.
     expect(new RegExp(schema.properties.tags.items.pattern).source).toBe(TAG_PATTERN.source);
@@ -49,7 +42,7 @@ describe("the card JSON Schema", () => {
 
   it("knows every field the parser reads off a block", () => {
     expect(Object.keys(schema.properties).sort()).toEqual(
-      ["answer", "extra", "file", "id", "question", "reverse", "status", "tags", "text", "type"]
+      ["answer", "extra", "file", "question", "reverse", "status", "tags", "text", "type"]
     );
   });
 
@@ -67,7 +60,6 @@ describe("the card JSON Schema", () => {
     const expected = card.type === "cloze" ? (card.text!.match(/\[/g) ?? []).length : 1;
     expect(parsed).toHaveLength(card.reverse ? 2 : expected);
     for (const c of parsed) {
-      expect(c.id).toBe(card.id ?? null);
       expect(c.tags).toEqual(card.tags ?? []);
       expect(c.status).toBe(card.status ?? "active");
       expect(c.content.extra).toBe(card.extra);

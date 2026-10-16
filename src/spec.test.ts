@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { stampIds } from "./card-ids";
 import { parseFile } from "./parser";
+import { parseLine } from "./core/events";
 
 /**
  * The examples in CARD_FORMAT_SPEC.md, read out of the document itself. A spec
@@ -17,26 +17,29 @@ function blocksUnder(heading: string): string[] {
   return [...section.matchAll(/^```[a-z]*\n([\s\S]*?)^```$/gm)].map((m) => m[1]);
 }
 
+const KEY = /^h:[0-9a-f]{16}$/;
+
 describe("the format spec's examples", () => {
   it("opening example parses as described", async () => {
     const cards = await parseFile(blocksUnder("Overview")[0], "t.md", "t");
-    expect(cards.map((c) => [c.key, c.status, c.tags])).toEqual([
-      ["est-capital", "active", ["geo", "europe", "capitals"]],
-      ["k8q2xv7m", "active", ["geo", "europe"]],
-      ["k8q2xv7m:r", "active", ["geo", "europe"]],
-      ["k3n9wq2p:1", "draft", ["geo", "europe"]],
-      ["k3n9wq2p:2", "draft", ["geo", "europe"]],
+    expect(cards.map((c) => [c.content.type, c.status, c.tags])).toEqual([
+      ["basic", "active", ["geo", "europe", "capitals"]],
+      ["basic", "active", ["geo", "europe"]],
+      ["basic", "active", ["geo", "europe"]],
+      ["cloze", "draft", ["geo", "europe"]],
+      ["cloze", "draft", ["geo", "europe"]],
     ]);
+    for (const card of cards) expect(card.key).toMatch(KEY);
     expect(cards[3].content.extra).toMatch(/^A rollout creates/);
   });
 
   it("Extra section example parses as described", async () => {
     const block = blocksUnder("Card Types").find((b) => b.includes("Extra:"))!;
     const cards = await parseFile(block, "t.md", "t");
-    expect(cards.map((c) => [c.key, c.content.extra])).toEqual([
-      ["est-capital", "Called *Reval* until 1918."],
-      ["cka-wl-set-image:1", "The container name comes before `=`.\n\nSee `kubectl set image --help`."],
-      ["cka-wl-set-image:2", "The container name comes before `=`.\n\nSee `kubectl set image --help`."],
+    expect(cards.map((c) => c.content.extra)).toEqual([
+      "Called *Reval* until 1918.",
+      "The container name comes before `=`.\n\nSee `kubectl set image --help`.",
+      "The container name comes before `=`.\n\nSee `kubectl set image --help`.",
     ]);
   });
 
@@ -46,29 +49,37 @@ describe("the format spec's examples", () => {
     expect(card.tags).toEqual(["cka/type/syntax-pattern", "lists"]);
   });
 
+  it("key example is the key, however the card is laid out", async () => {
+    const key = /is `(h:[0-9a-f]{16})`,\nwritten on one line or on three/.exec(SPEC)![1];
+    for (const text of [
+      "Q: What is the capital of Estonia?\nA: Tallinn",
+      "Q:\n  What is the capital of\n  Estonia?\nA:   Tallinn  ",
+      "Tags: capitals\nQ: What is the capital of Estonia?\nA: Tallinn\nExtra: Reval",
+    ]) {
+      const [card] = await parseFile(text, "t.md", "t");
+      expect(card.key).toBe(key);
+    }
+  });
+
+  it("link example links the Estonia card to its edited self", async () => {
+    const line = blocksUnder("Card Keys").find((b) => b.includes('"kind":"link"'))!.trim();
+    const parsed = parseLine(line);
+    expect(parsed.ok).toBe(true);
+    const [before] = await parseFile("Q: What is the capital of Estonia?\nA: Tallinn", "t.md", "t");
+    const [after] = await parseFile("Q: What is the capital of Estonia?\nA: **Tallinn**", "t.md", "t");
+    expect(parsed.ok && parsed.event).toMatchObject({ kind: "link", from: before.key, card: after.key });
+  });
+
   it("complete example produces the cards its table lists", async () => {
     const cards = await parseFile(blocksUnder("Complete Example")[0], "t.md", "t");
     expect(cards).toHaveLength(10);
-    expect(cards.map((c) => c.key.replace(/^h:.*/, "h:…"))).toEqual([
-      "avogadro",
-      "noble-gases",
-      "water:1",
-      "water:2",
-      "ph-scale:1",
-      "ph-scale:2",
-      "ph-scale:3",
-      "benzene",
-      "benzene:r",
-      "h:…",
+    for (const card of cards) expect(card.key).toMatch(KEY);
+    expect(new Set(cards.map((c) => c.key)).size).toBe(10);
+    expect(cards.map((c) => c.status)).toEqual([
+      "active", "active", "active", "active", "suspended", "suspended", "suspended", "active", "active", "draft",
     ]);
     expect(cards.filter((c) => c.status === "active")).toHaveLength(6);
     expect(cards[1].tags).toEqual(["science", "lists"]);
-    expect(cards.filter((c) => c.content.extra).map((c) => c.key)).toEqual(["water:1", "water:2"]);
-  });
-
-  it("stamping example is what stamping does", () => {
-    const [before, after] = blocksUnder("Stamping IDs");
-    const ids = ["m3x9p2qa", "7hc0wd5n"];
-    expect(stampIds(before, () => ids.shift()!)).toBe(after);
+    expect(cards.filter((c) => c.content.extra)).toHaveLength(2);
   });
 });

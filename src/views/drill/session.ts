@@ -344,12 +344,17 @@ export async function createSession(
         if (!dryRun) recordIntroduced(todayStr(), key, true);
       }
 
-      // Forgot and Hard come round again later in the drill — hashcards' version
-      // of Anki's learning steps, since a whole-day schedule cannot say "in ten
+      // Forgot comes round again later in the drill — hashcards' version of
+      // Anki's learning steps, since a whole-day schedule cannot say "in ten
       // minutes". The next answer is an ordinary grade: FSRS-6 models a review
       // on the same day, so it counts, rather than being a separate
       // "reinforcement" mode the scheduler never saw.
-      if (grade === Grade.Forgot || grade === Grade.Hard) {
+      //
+      // Hard does not. It is a pass — remembered, with effort — and FSRS
+      // schedules it as one; sending it round again said "not learned yet",
+      // which is how Hard ends up pressed for cards that were forgotten, and
+      // a forgotten card graded as remembered gets an interval far too long.
+      if (grade === Grade.Forgot) {
         queue.push(card);
       } else {
         completedHashes.add(key);
@@ -393,7 +398,7 @@ export async function createSession(
 
       reviews.pop();
 
-      if (entry.grade === Grade.Forgot || entry.grade === Grade.Hard) {
+      if (entry.grade === Grade.Forgot) {
         const idx = queue.findLastIndex((c) => stateKey(c) === key);
         if (idx >= 0) queue.splice(idx, 1);
       } else {

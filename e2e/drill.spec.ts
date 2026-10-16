@@ -26,11 +26,14 @@ test("revealing the answer does not move the card", async ({ page, github }) => 
   await page.goto("/");
   await page.locator("#drill-all").click();
   const card = page.locator(".card-container .card").first();
+  const question = page.locator(".card-content > :first-child").first();
 
-  const before = await card.boundingBox();
+  const before = [await card.boundingBox(), await question.boundingBox()];
   await page.locator("#reveal-btn").click();
   await expect(page.locator(".grade-btn").first()).toBeVisible();
-  expect((await card.boundingBox())?.y).toBe(before?.y);
+  // Not its top, not its height: the grade buttons take exactly the room the
+  // reveal button did, or the centred question jumps as the card shrinks.
+  expect([await card.boundingBox(), await question.boundingBox()]).toEqual(before);
 });
 
 test("ending a drill saves its reviews to the data branch", async ({ page, github }) => {

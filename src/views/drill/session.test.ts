@@ -156,14 +156,26 @@ describe("drill session", () => {
     const { createSession } = await fresh();
     const session = await createSession([card(1)]);
 
-    for (const grade of [Grade.Forgot, Grade.Hard, Grade.Forgot]) {
+    for (let i = 0; i < 3; i++) {
       session.reveal();
-      session.grade(grade);
+      session.grade(Grade.Forgot);
       expect(session.current?.hash).toBe("hash-1");
     }
     session.reveal();
     session.grade(Grade.Easy);
     expect(session.finished).toBe(true);
+  });
+
+  it("counts Hard as a pass: the card is done for today", async () => {
+    const { createSession } = await fresh();
+    const session = await createSession([card(1)]);
+    session.reveal();
+    session.grade(Grade.Hard);
+    expect(session.finished).toBe(true);
+
+    await session.undo();
+    expect(session.current?.hash).toBe("hash-1");
+    expect(session.finished).toBe(false);
   });
 
   it("undoes the second answer back to the card coming round", async () => {

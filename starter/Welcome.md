@@ -15,11 +15,11 @@ A:
 | Key | Grade | When |
 |---|---|---|
 | 1 | Forgot | You didn't remember it |
-| 2 | Hard | You got there, with effort |
+| 2 | Hard | You remembered, slowly or with effort |
 | 3 | Good | You remembered it |
 | 4 | Easy | You knew it instantly |
 
-Extra: **Forgot** brings the card back later in the same review. The others push it into the future, Easy the furthest.
+Extra: Hard is a pass, not half a fail: if you didn't remember, it's **Forgot**. Forgot brings the card back later in the same review; the others push it into the future, Hard the least and Easy the furthest.
 
 ---
 

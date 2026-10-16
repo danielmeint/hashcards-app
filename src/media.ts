@@ -2,7 +2,7 @@ import { Card } from "./types";
 import { getMedia } from "./db";
 
 /**
- * Images and audio that cards point at (ROADMAP 1.4).
+ * Images and audio that cards point at (docs/history/ROADMAP.md 1.4).
  *
  * They used to be left to the browser: a relative `src` was rewritten to
  * `raw.githubusercontent.com` and fetched by the `<img>` itself. That host

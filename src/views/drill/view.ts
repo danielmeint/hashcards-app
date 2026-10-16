@@ -23,7 +23,7 @@ export type DrillView = {
 };
 
 export type ViewOptions = {
-  /** Opens the editor on the card in front of you. Absent in demo mode, which
+  /** Opens the editor on the card in front of you. Absent in a dry run, which
    *  has no repo behind it and so nothing to edit. */
   onEdit?: () => void;
   /** Whether the card on screen right now can be edited — a drill can span

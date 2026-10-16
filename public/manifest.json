@@ -1,7 +1,7 @@
 {
   "name": "Hashcards",
   "short_name": "Hashcards",
-  "description": "Spaced repetition flashcards from GitHub",
+  "description": "Spaced-repetition flashcards written in Markdown, kept in your own GitHub repository",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

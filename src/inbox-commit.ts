@@ -4,13 +4,16 @@ import {
   TreeChange,
   createCommit,
   createTree,
+  deleteFile,
   getBlobText,
   getRef,
   getRepos,
   getTree,
+  readFileIfPresent,
   repoKey,
   updateRef,
   writableRepos,
+  writeFile,
 } from "./github";
 import { applyOps } from "./draft-edits";
 import { InboxOp, commitMessage, dropOps, pendingOps } from "./inbox-queue";
@@ -21,6 +24,7 @@ import { gitBlobSha } from "./hash";
 import { CONFLICT_RETRIES } from "./compat";
 import { AuthError } from "./auth";
 import { getSyncStatus, setSyncStatus } from "./sync-state";
+import { isDemo } from "./demo-mode";
 
 /**
  * Committing the Inbox's queued changes: one commit per collection, however
@@ -53,6 +57,7 @@ export type CommitOutcome = {
 };
 
 export async function commitInbox(config: RepoConfig, ops: InboxOp[]): Promise<CommitOutcome> {
+  if (isDemo()) return commitToDemo(config, ops);
   for (let attempt = 0; ; attempt++) {
     try {
       return await attemptCommit(config, ops);
@@ -100,6 +105,41 @@ async function attemptCommit(config: RepoConfig, ops: InboxOp[]): Promise<Commit
   await updateRef(config, config.branch, commit);
   await recordFiles(repoKey(config), written, created.blobs);
   return { applied, conflicts, commit };
+}
+
+/**
+ * The same batch, applied to the demo's in-memory repository. There is no Git
+ * Data API there, only files, so each changed file is written on its own —
+ * but through `applyOps`, the same as above, so a kept, discarded or edited
+ * draft comes out exactly as it would in a real repo.
+ */
+async function commitToDemo(config: RepoConfig, ops: InboxOp[]): Promise<CommitOutcome> {
+  const byPath = new Map<string, InboxOp[]>();
+  for (const op of ops) byPath.set(op.path, [...(byPath.get(op.path) ?? []), op]);
+  const applied: InboxOp[] = [];
+  const conflicts: InboxOp[] = [];
+  const written = new Map<string, string | null>();
+  const blobs = new Map<string, string>();
+  for (const [path, fileOps] of byPath) {
+    const file = await readFileIfPresent(config, path);
+    if (!file) {
+      conflicts.push(...fileOps);
+      continue;
+    }
+    const result = await applyOps(file.text, path, fileOps);
+    applied.push(...result.applied);
+    conflicts.push(...result.conflicts);
+    if (result.applied.length === 0) continue;
+    if (result.text.trim() === "") {
+      await deleteFile(config, path, file.sha, commitMessage(result.applied));
+      written.set(path, null);
+    } else {
+      blobs.set(path, await writeFile(config, path, result.text, { sha: file.sha, message: commitMessage(result.applied) }));
+      written.set(path, result.text);
+    }
+  }
+  await recordFiles(repoKey(config), written, blobs);
+  return { applied, conflicts, commit: applied.length > 0 ? "demo" : null };
 }
 
 /**
@@ -185,7 +225,8 @@ export function conflictNotice(conflicts: number): string | undefined {
  * failure: the queue waits, and the banner says so.
  */
 export async function saveInbox(): Promise<void> {
-  if (!navigator.onLine || getRepos().length === 0) return;
+  // The demo's repository is in memory: being offline does not keep it away.
+  if ((!navigator.onLine && !isDemo()) || getRepos().length === 0) return;
   if ((await pendingOps()).length === 0) return;
   const before = getSyncStatus();
   setSyncStatus({ phase: "syncing", detail: "Saving Inbox" });

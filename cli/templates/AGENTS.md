@@ -7,9 +7,9 @@ and whatever `hashcards.toml` excludes). Review history lives on the
 
 ## Use `hc`, then lint
 
-`hc` is the hashcards CLI. If it is not on your PATH, run it as
-`npx hashcards …` or with the path you were given (`node …/hc.js`), and write
-that out in each command: a shell variable holding it may not word-split.
+`hc` is the hashcards CLI. If it is not on your PATH, run it with the path
+you were given (`node …/hc.js`; it is not on npm yet), and write that out in
+each command: a shell variable holding it may not word-split.
 
 ```bash
 hc add --json cards.json          # or: echo '[…]' | hc add --json -

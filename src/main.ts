@@ -9,10 +9,12 @@ import { renderDrill } from "./views/drill";
 import { renderStats } from "./views/stats";
 import { renderInbox } from "./views/inbox";
 import { pushSettings } from "./sync";
-import { getDemoData } from "./demo";
+import { renderWelcome } from "./views/welcome";
+import { isDemo } from "./demo-mode";
 import { warmTypesetting } from "./typeset";
 import { applyTheme, watchSystemTheme } from "./theme";
 import { Card, DrillSession } from "./types";
+import { html, render } from "lit-html";
 import "./style.css";
 
 const app = document.getElementById("app")!;
@@ -32,7 +34,10 @@ function freshHost(): HTMLElement {
   return host;
 }
 
-type View = "settings" | "decks" | "drill" | "stats" | "inbox";
+type View = "welcome" | "settings" | "decks" | "drill" | "stats" | "inbox";
+
+/** Where Settings goes back to: Today once there is a collection, the welcome before. */
+const home = (): View => (getRepos().length === 0 ? "welcome" : "decks");
 
 /**
  * Views that outlive their own render — the deck list listens for background
@@ -55,12 +60,16 @@ async function navigate(
   const host = freshHost();
 
   switch (view) {
+    case "welcome":
+      await renderWelcome(host, () => navigate("settings"));
+      break;
+
     case "settings":
       // Leaving Settings is when its collection settings go to the repo,
       // rather than whenever the next sync happens to run: another device
       // opened now should already see them.
       disposeView = () => void pushSettings();
-      await renderSettings(host, () => navigate("decks"), settingsNotice);
+      await renderSettings(host, () => navigate(home()), settingsNotice);
       settingsNotice = undefined;
       break;
 
@@ -93,6 +102,17 @@ async function navigate(
 }
 
 async function init() {
+  // The demo and the real app cannot share a page: the demo swaps out storage
+  // before anything reads it (`demo-mode.ts`). So crossing between them, by
+  // the welcome's button or by editing the URL, is a reload.
+  window.addEventListener("hashchange", () => {
+    if ((location.hash === "#demo") !== isDemo()) location.reload();
+  });
+  if (location.hash === "#demo") {
+    await startDemoSession();
+    return;
+  }
+
   // Before any sync of this session can record a timestamp of its own.
   adoptLegacySyncTimestamp();
 
@@ -110,29 +130,25 @@ async function init() {
     navigator.storage.persist().catch(() => {});
   }
 
-  // Before anything reads the credential, and before the demo check: this page
-  // load may be the return leg of a sign-in, and the one-time code in the URL
-  // has to be redeemed and cleared exactly once.
+  // Before anything reads the credential: this page load may be the return leg
+  // of a sign-in, and the one-time code in the URL has to be redeemed and
+  // cleared exactly once.
+  let justSignedIn = false;
   try {
-    await completeSignIn();
+    justSignedIn = await completeSignIn();
   } catch (e) {
     settingsNotice = (e as Error).message;
   }
 
-  // Demo mode: #demo launches a drill with fake cards, no persistence
-  if (window.location.hash === "#demo") {
-    const demo = await getDemoData();
-    await renderDrill(freshHost(), demo.cards, () => navigate("decks"), {
-      dryRun: true,
-      cache: demo.cache,
-    });
+  // No collection yet: the welcome, with its three ways in. Except straight
+  // back from signing in, where choosing the repository is the obvious next
+  // step and Settings is where the picker is, or after a failed sign-in, whose
+  // message Settings shows.
+  if (getRepos().length === 0) {
+    await navigate(justSignedIn || settingsNotice ? "settings" : "welcome");
     return;
   }
-
-  // Settings is both the first-run screen and where a sign-in that just landed
-  // without a repository picks one. Everything else opens on the deck list,
-  // including a sign-in that had a repository waiting for it.
-  if (getRepos().length === 0 || settingsNotice) {
+  if (settingsNotice) {
     await navigate("settings");
     return;
   }
@@ -155,6 +171,30 @@ async function init() {
   // And keeps trying afterwards: reconnecting or returning to the tab retries
   // a sync that never landed, rather than leaving it until the next cold open.
   startAutoSync();
+}
+
+/**
+ * `#demo`: the whole app on the starter decks, nothing saved. Loaded on demand,
+ * so the starter decks bundled into it cost the real app nothing.
+ */
+async function startDemoSession(): Promise<void> {
+  const { startDemo } = await import("./demo");
+  await startDemo();
+  applyTheme();
+  watchSystemTheme();
+  document.documentElement.classList.add("demo");
+  const bar = document.createElement("div");
+  bar.className = "demo-bar";
+  bar.setAttribute("role", "note");
+  // A plain link to `/`: leaving the fragment off is a full navigation, which
+  // is what leaving the demo has to be.
+  render(
+    html`<span><strong>Demo</strong><span class="demo-bar-detail"> · nothing is saved</span></span>
+      <a href="/" id="demo-exit">Start your own collection</a>`,
+    bar
+  );
+  app.before(bar);
+  await navigate("decks");
 }
 
 init();

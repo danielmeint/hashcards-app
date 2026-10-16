@@ -1,177 +1,221 @@
-# Hashcards PWA
+# Hashcards
 
-**[hashcards.dev](https://hashcards.dev)**
+**Spaced-repetition flashcards you write in Markdown, keep in your own GitHub
+repository, and review anywhere.** · [hashcards.dev](https://hashcards.dev)
 
-A mobile-friendly Progressive Web App for spaced repetition flashcards. Cards live as `.md` files in a GitHub repo (same format as the [hashcards](https://github.com/eudoxia0/hashcards) CLI), and the app reads them via the GitHub API.
+<p align="center">
+  <img src="docs/screenshots/phone-today.webp" width="240" alt="Today: cards due, the Inbox and the decks">
+  <img src="docs/screenshots/phone-review.webp" width="240" alt="Reviewing a card with code in it, answer showing">
+  <img src="docs/screenshots/phone-inbox.webp" width="240" alt="The Inbox: a draft card to keep or discard">
+</p>
+<p align="center">
+  <img src="docs/screenshots/desktop-review-dark.webp" width="560" alt="Reviewing on a desktop, dark theme, with keyboard hints">
+  <img src="docs/screenshots/phone-stats.webp" width="200" alt="Statistics: retention, forecast and activity">
+</p>
 
-## Features
+## Quick start
 
-- **FSRS scheduling** — modern spaced repetition algorithm with per-card stability and difficulty tracking
-- **GitHub sync** — sign in with GitHub and pick a repo; reads `.md` card files and syncs review state to a `hashcards-state.json` file
-- **Offline support** — works fully offline via IndexedDB + service worker; syncs when back online
-- **Card formats** — basic Q/A cards and cloze deletions with multiple blanks
-- **Rich content** — LaTeX math (KaTeX), syntax-highlighted code blocks, images, tables
-- **Cloze sibling burial** — only one deletion per cloze card shown per session
-- **Leech hunting** — the stats view ranks the cards that keep failing, and edits them in place
-- **Edit cards in the app** — rewrite or delete a card and commit it to GitHub, keeping its scheduling
-- **Undo** — revert the last grade during a session
-- **Keyboard shortcuts** — Space to reveal, 1-4 to grade, U to undo
+1. **[Try the demo](https://hashcards.dev/#demo).** The whole app on sample
+   decks, with no account. Nothing is saved.
+2. **[Use the template](https://github.com/new?template_owner=danielmeint&template_name=hashcards-starter).**
+   It copies the same sample decks into a repository of your own.
+3. **[Sign in](https://hashcards.dev) with GitHub and pick that repository.**
+   When GitHub asks which repositories hashcards may use, include your new one.
 
-## Card Format
+Already have a repository of cards? Sign in and pick it. One still in the
+original hashcards format opens too, and `hc migrate` brings it up to 1.0
+(see [below](#for-agents-and-scripts)).
 
-Cards are plain Markdown files. Basic cards use `Q:` / `A:` prefixes, cloze cards use `C:` with `[brackets]` around deletions:
+## How it works
+
+- **Cards are Markdown files in your repository.** Each `.md` file is a deck.
+  Write them in the app, on GitHub, in your editor, or have an agent write them.
+- **Review history lives on a `hashcards-data` branch** of the same repository,
+  one file per device per month, so `main` stays the history of
+  your cards and nothing else. Every device replays the same log and agrees on
+  what is due.
+- **Settings live in `hashcards.toml`**: new cards per day, desired retention,
+  interval fuzz, and which files are decks. Theme and haptics stay on the
+  device.
+- **[FSRS](https://github.com/open-spaced-repetition/fsrs4anki/wiki/The-Algorithm)
+  schedules every card**, aiming each review at the moment you would otherwise
+  start to forget.
+- **It works offline.** It is an installable web app; reviews are kept on the
+  device and sync when you are back online.
+- **Drafts wait in the Inbox.** A card marked `Status: draft` is not scheduled
+  until you keep it, so whatever a script or an agent proposes goes past you
+  first.
+- **No server holds your data.** The only server code is the GitHub sign-in
+  exchange, which keeps no state.
+
+Reviewing: **Space** shows the answer and **Space** again grades it Good;
+**1–4** grade Forgot, Hard, Good, Easy; **U** undoes; **E** edits the card in
+front of you. On a phone, tap to reveal, then swipe right for Good or left for
+Forgot.
+
+## Card format
 
 ```markdown
-Q: What is the derivative of $x^n$?
-A: $nx^{n-1}$
+---
+name = "Europe"
+tags = ["geography"]
+---
+
+ID: capital-estonia
+Q: What is the capital of Estonia?
+A: Tallinn
+Extra: Called *Reval* until 1918.
 
 ---
 
-C: Euler's identity states that [$e^{i\pi} + 1 = 0$].
+ID: longest-river-europe
+C: The longest river in Europe is the [Volga].
+
+---
+
+ID: es-biblioteca
+Reverse: yes
+Status: draft
+Q: **la biblioteca**
+A: the library
 ```
 
-Use `---` separators between cards. TOML frontmatter with `name = "..."` overrides the deck name (otherwise derived from the filename).
+Basic cards are `Q:` and `A:`; cloze cards are `C:` with each `[blank]` its
+own card. Metadata lines open a card: a stable `ID:` (history follows it, so
+rewording a card keeps its schedule), `Tags:`, `Reverse: yes` and
+`Status: draft` or `suspended`. `Extra:` is a note shown after the answer.
+Markdown, code blocks, tables, LaTeX (`$…$`, `$$…$$`), images and audio all
+work. The full definition is in [CARD_FORMAT_SPEC.md](CARD_FORMAT_SPEC.md),
+with a JSON Schema for one card in [`schema/card.schema.json`](schema/card.schema.json).
 
-See the [hashcards format spec](https://github.com/eudoxia0/hashcards#format) for full details.
+## For agents and scripts
 
-## Setup
+`hc` is the hashcards command line. It works on a local clone of a card repo
+and reads review history from the `hashcards-data` branch with plain `git`.
+Card repos made from the template, and any repo after `hc init`, carry an
+[`AGENTS.md`](cli/templates/AGENTS.md) that tells a coding agent the format
+and the rules: write drafts, never change an ID, finish with `hc lint`. When
+an agent runs `hc add`, cards default to `Status: draft`.
 
-### 1. Create a card repo
-
-Create a GitHub repository with `.md` files containing your flashcards. See [hashcards-demo](https://github.com/danielmeint/hashcards-demo) for an example.
-
-### 2. Connect the app
-
-Open the app and click **Sign in with GitHub**. Choose which repositories to grant access to, then pick your card repo from the list. That is the whole setup — the app receives a short-lived token scoped to those repositories, and you can revoke it at any time from your GitHub settings.
-
-<details>
-<summary>Using a personal access token instead</summary>
-
-Sign-in needs a GitHub App, which a self-hosted copy may not have (see [Sign-in setup](#sign-in-setup)). Settings always offers the token path as well:
-
-1. Create a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) with **Contents: Read and write** permission on your card repo.
-2. In Settings, expand **Use a personal access token instead**, paste the token, enter the repo owner, name and branch, and click **Connect**.
-
-</details>
-
-## CLI
-
-`hc` works on a local clone of a card repo: for scripts, CI and agents. It
-reads review history from the `hashcards-data` branch with plain `git` (or, in
-a repo not yet migrated, from `hashcards-state.json` and `hashcards-reviews/`).
+`hc` is not on npm yet. Build it from this repository:
 
 ```bash
-npm run build:cli               # → dist-cli/hc.js (or run from source: node cli/hc.ts)
+git clone https://github.com/danielmeint/hashcards-app && cd hashcards-app
+npm ci && npm run build:cli      # → dist-cli/hc.js (Node 22 or newer)
+node dist-cli/hc.js lint --repo ~/my-cards
+```
 
+```bash
 hc lint [--fix]                 # parse errors, duplicate IDs; --fix stamps missing IDs
 hc add --deck net/tcp.md --draft -q "Question?" -a "Answer"
-hc add --deck net/tcp.md --cloze "TCP opens with [SYN]."
+hc add --deck net/tcp.md --cloze "TCP opens with a [SYN]."
 hc add --json cards.json        # one card or an array, as schema/card.schema.json
 hc due [--date tomorrow]        # reviews due, new cards within new_per_day
-hc stats                        # totals, maturity, retention, 14-day forecast, reviews/day
+hc stats                        # totals, maturity, retention, 14-day forecast
 hc leeches [--min-lapses 3]     # cards that keep failing
-hc show <key|id>                # a card, its file:line, state and history
-hc init                         # hashcards.toml, AGENTS.md, a lint workflow for PRs
-hc migrate [--apply]            # v1 repo → 1.0: stamp IDs, history to hashcards-data (dry run by default)
-hc import anki --decks <ankictl repo> --collection <copy> [--dir cka] [--apply]
-                                # Anki notes → decks, revlog → hashcards-data (cli/anki/README.md)
+hc show <key|id>                # a card, its file and line, state and history
+hc init                         # hashcards.toml, AGENTS.md and a lint workflow, for an existing repo
+hc migrate [--apply]            # an original-format repo → 1.0 (dry run by default)
+hc import anki --decks <dir> --collection <copy> [--apply]   # see cli/anki/README.md
 ```
 
 Every command takes `--repo <dir>` (default: the current directory) and
-`--json`. Exit codes: 0 ok, 1 findings (lint errors, leeches, no such card),
-2 usage or error. `hc <command> --help` has the details.
+`--json`. Exit codes: 0 ok, 1 findings, 2 usage or error. `hc <command> --help`
+has the details.
 
-Which files are decks: `hashcards.toml`'s `[decks]` include/exclude globs if
-it has them, otherwise every `.md` except README/AGENTS-style documentation
-(`README`, `AGENTS`, `CLAUDE`, `CHANGELOG`, `LICENSE`… and all-caps names with
-a `_` or `-`, such as `CARD_GUIDE.md`), and nothing in hidden directories.
+**An existing repo:** `hc init` adds `hashcards.toml`, `AGENTS.md` and a GitHub
+workflow that runs `hc lint` on every push and pull request. **A repo in the
+original hashcards format** (cards without IDs, `hashcards-state.json` on
+`main`): `hc migrate` stamps IDs into every deck and moves the review history
+to `hashcards-data`, keeping every card's schedule. Until then the app reads
+such a repo as it is and says what to run.
 
-`hc init` writes an [`AGENTS.md`](cli/templates/AGENTS.md) telling coding
-agents how to write cards in the repo. When an agent runs `hc add`, cards
-default to `Status: draft`.
+## Self-hosting
 
-## Development
+<details>
+<summary>Development</summary>
 
 ```bash
-npm install
-npm run dev       # start dev server
-npm test          # run tests
-npm run build     # production build
+npm ci
+npm run dev           # dev server
+npm test              # unit tests (vitest)
+npm run typecheck
+npm run e2e           # browser tests against a fake GitHub (set E2E_PORT per worktree)
+npm run screenshots   # regenerate docs/screenshots/ from the demo
+npm run build         # production build in dist/
 ```
 
-## Deployment
+`starter/` is the sample collection: the demo's decks, and the root of the
+[`hashcards-starter`](https://github.com/danielmeint/hashcards-starter)
+template repo. `cli/starter.test.ts` keeps it lint-clean and in step with
+`hc init`'s templates.
 
-`npm run build` outputs static files to `dist/`, deployed to Cloudflare Pages by `.github/workflows/deploy.yml`. The `functions/` directory at the repo root is picked up by the same `wrangler pages deploy` invocation and served at `/api/auth/*`.
+</details>
 
-### Dev deployment
+<details>
+<summary>Deployment</summary>
 
-`npm run deploy:dev` builds whatever is checked out and publishes it to
-**https://dev.hashcards-app.pages.dev** — a Pages preview, never production, so
-a branch can be tried on a phone before it merges. It needs `npx wrangler login`
-once. Sign-in works there because the GitHub App lists that URL as a callback and
-the Pages *preview* environment has its own `GITHUB_CLIENT_ID` and
-`GITHUB_CLIENT_SECRET` (set with `--env preview`; preview and production
-secrets are separate).
+`npm run build` outputs static files to `dist/`, deployed to Cloudflare Pages by
+`.github/workflows/deploy.yml`. The `functions/` directory is deployed by the
+same `wrangler pages deploy` and served at `/api/auth/*`.
 
-### Sign-in setup
+`npm run deploy:dev` publishes whatever is checked out to
+**https://dev.hashcards-app.pages.dev**, a Pages preview, never production. It
+needs `npx wrangler login` once. Sign-in works there because the GitHub App
+lists that URL as a callback and the Pages *preview* environment has its own
+`GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (set with `--env preview`).
 
-"Sign in with GitHub" needs a GitHub App of your own. Without one the app still works — the sign-in button simply does not appear, and the token path is the only way in.
+</details>
 
-A browser cannot complete an OAuth exchange by itself: GitHub's token endpoint is not CORS-enabled and requires a client secret. `functions/api/auth/` is the smallest thing that closes that gap. It holds no state, sets no cookies, and never sees your cards.
+<details>
+<summary>Sign-in setup (a GitHub App of your own)</summary>
+
+"Sign in with GitHub" needs a GitHub App. Without one the app still works: the
+sign-in button falls back to Settings, where a fine-grained personal access
+token with **Contents: Read and write** on your card repo connects instead.
+
+A browser cannot complete an OAuth exchange by itself: GitHub's token endpoint
+is not CORS-enabled and needs a client secret. `functions/api/auth/` closes
+that gap. It holds no state, sets no cookies, and never sees your cards.
 
 ```bash
 node scripts/create-github-app.mjs --name "My Hashcards" --url https://your-domain
 ```
 
-Open the URL it prints, press **Create GitHub App**, and it writes to `.github-app/` (gitignored):
+Open the URL it prints and press **Create GitHub App**. It writes to
+`.github-app/` (gitignored): `github-app.public.json` (id, slug, client ID,
+all public), `github-app.secret` and `github-app.private-key.pem` (both
+`0600`). The script uses GitHub's
+[App Manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest);
+`buildManifest` shows what it asks for and why. Then:
 
-| | |
-|---|---|
-| `github-app.public.json` | id, slug, client ID — public, these go in the repo |
-| `github-app.secret` | client secret, `0600` |
-| `github-app.private-key.pem` | `0600`; unused here, but the only copy |
-
-The script goes through GitHub's [App Manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest), so permissions, callback URLs and the install-time OAuth step come from one reviewed object rather than from ten form fields — see `buildManifest` for what it asks for and why. Then:
-
-1. Put the **client ID** and **slug** from `github-app.public.json` into `src/github-app.ts`. Both are public and belong in the repo; the secret does not.
-2. Push the credentials to your Pages project. Piping keeps the secret out of your shell history and out of `ps`:
+1. Put the **client ID** and **slug** into `src/github-app.ts`.
+2. Push the credentials to your Pages project, piped so the secret stays out
+   of your shell history:
    ```bash
    npx wrangler pages secret put GITHUB_CLIENT_SECRET \
      --project-name hashcards-app < .github-app/github-app.secret
    npx wrangler pages secret put GITHUB_CLIENT_ID --project-name hashcards-app
    ```
-3. Install the App on your card repo — the script prints the link.
-4. Confirm **user-to-server token expiration** is on, at the App's settings page. It is the default for new apps and cannot be set from a manifest. With it on you get 8-hour tokens and a refresh token, which is what `src/auth.ts` expects; with it off the token is permanent and `expiresAt` is simply null.
+3. Install the App on your card repo (the script prints the link).
+4. Check that **user-to-server token expiration** is on in the App's settings
+   (the default; it cannot be set from a manifest). `src/auth.ts` expects
+   8-hour tokens with a refresh token.
 
-Delete `.github-app/` once the secret is in Cloudflare, keeping the private key if you want it.
+Delete `.github-app/` once the secret is in Cloudflare, keeping the private key
+if you want it. To create the App by hand instead: callback URLs
+`https://your-domain/` and `http://localhost:8788/`, OAuth during
+installation on, token expiry on, webhook off, **Contents** read and write.
 
-<details>
-<summary>Creating the App by hand instead</summary>
-
-At [github.com/settings/apps/new](https://github.com/settings/apps/new): **Callback URL** `https://your-domain/` and `http://localhost:8788/`; **Request user authorization (OAuth) during installation** on; **Expire user authorization tokens** on; **Webhook → Active** off; **Repository permissions → Contents** Read and write. Then generate a client secret and follow the numbered steps above.
+For local development `vite` does not serve `/api/auth/*`. Put the two
+variables in `.dev.vars` (gitignored) and run `npm run build && npx wrangler
+pages dev dist` (http://localhost:8788).
 
 </details>
 
-For local development, `vite` does not serve `/api/auth/*`. Put the two variables in a `.dev.vars` file (gitignored) and run the Functions alongside the built site:
-
-```bash
-npm run build
-npx wrangler pages dev dist   # http://localhost:8788
-```
-
-## Tech Stack
-
-- TypeScript, vanilla DOM
-- Vite
-- marked (Markdown rendering)
-- idb (IndexedDB wrapper)
-- KaTeX + highlight.js via CDN
-- Cloudflare Pages, with a Pages Function for the OAuth token exchange
-- FSRS algorithm (custom port)
-
-## Roadmap
-
-Known defects, planned work, and longer-term ideas live in [ROADMAP.md](ROADMAP.md).
+Built with TypeScript, lit-html, Vite, marked, idb, ts-fsrs, and KaTeX and
+highlight.js loaded on demand. The plan for 1.0 is [PLAN-1.0.md](PLAN-1.0.md);
+how the app got there is in [docs/history/ROADMAP.md](docs/history/ROADMAP.md).
 
 ## License
 

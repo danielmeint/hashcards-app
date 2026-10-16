@@ -27,7 +27,11 @@ import { haptic } from "../../haptics";
  */
 
 export type SessionOptions = {
-  /** Demo mode: run the whole loop but persist nothing. */
+  /**
+   * Run the whole loop but persist nothing. The old drill-only demo used it;
+   * the demo now runs on a store of its own (`demo-mode.ts`) and persists as
+   * the app does, so this is left for tests.
+   */
   dryRun?: boolean;
   /** Scheduling state to use instead of reading it from IndexedDB. */
   cache?: Map<string, Performance>;
@@ -95,7 +99,7 @@ type UndoEntry = {
 
 /**
  * The state a card was in before a grade, as `applyEvent` takes it. A state
- * from the cache already is one; anything else (the demo's, a test's) is
+ * from the cache already is one; anything else (a test's) is
  * filled in the way the live path always read it, in this device's days.
  */
 function asCardState(perf: Performance): CardState | undefined {
@@ -332,7 +336,7 @@ export async function createSession(
       cache.set(key, newPerf);
 
       // Charge the new-card budget only when the card is actually graded —
-      // and never in demo mode, which is meant to persist nothing. The budget
+      // and never in a dry run, which is meant to persist nothing. The budget
       // lives in localStorage, so it counts as persistence.
       if (newCardHashes.has(key) && !gradedNewCards.has(key)) {
         gradedNewCards.add(key);

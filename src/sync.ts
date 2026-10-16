@@ -45,6 +45,7 @@ import { settings } from "./settings";
 import { applyPending, pendingOps } from "./inbox-queue";
 import { conflictNotice, runInboxFlush } from "./inbox-commit";
 import { v1FilesKey as v1FilesKeyOf } from "./v1-log";
+import { isDemo } from "./demo-mode";
 
 let cachedCards: Card[] | null = null;
 
@@ -112,7 +113,8 @@ type SyncScope = {
 
 function start(config: RepoConfig, scope: SyncScope): Promise<boolean> {
   if (inFlight) return inFlight;
-  inFlight = exclusive(() => runSync(config, scope)).finally(() => {
+  const run = isDemo() ? () => demoSync(config, scope) : () => runSync(config, scope);
+  inFlight = exclusive(run).finally(() => {
     inFlight = null;
   });
   return inFlight;
@@ -231,6 +233,24 @@ async function runSync(
     });
     return false;
   }
+}
+
+/**
+ * A sync in the demo: the parts of one that mean something without a remote.
+ *
+ * The demo's repository is the files in `demo-mode.ts`, so the Inbox's queue
+ * is committed to them and the cards re-read from them, through the same code
+ * a real sync uses. There are no other devices to pull reviews from and
+ * nowhere to push them, so they count as in step — they are already in the
+ * only copy there is — and Today never warns about reviews left on the device.
+ */
+async function demoSync(config: RepoConfig, scope: SyncScope): Promise<boolean> {
+  if (scope.push) await runInboxFlush([config]);
+  if (scope.cards) await syncCards(config);
+  await refreshStates();
+  recordSyncSuccess(true);
+  setSyncStatus({ phase: "idle" });
+  return true;
 }
 
 /**

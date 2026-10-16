@@ -1,6 +1,6 @@
 import { formatKey, formerKeys } from "./card-key";
-import { ReviewLogEvent } from "./core/events";
-import { ReplayOptions, Replayed, replayAll, replayMore, resolveLinks } from "./core/replay";
+import { ReviewLogEvent, ScheduleEvent } from "./core/events";
+import { ReplayOptions, Replayed, compareOrder, orderOf, replayAll, replayMore, resolveLinks } from "./core/replay";
 import { dayAt } from "./core/schedule";
 import {
   ReplayMark,
@@ -160,6 +160,33 @@ export async function reviewHistory(): Promise<HistoryEntry[]> {
     }
   }
   return history;
+}
+
+/**
+ * The cards first graded on `day`, on any device: those whose earliest event is
+ * a review given that day, in the timezone it was given in. A card whose
+ * history starts with a baseline (migrated, imported) was not new.
+ *
+ * What the new-card budget is spent against (`new-card-budget.ts`), as `hc due`
+ * counts it (`introducedOn`): one budget, so one count, whichever device the
+ * cards were started on.
+ */
+export async function startedOn(day: string): Promise<Set<string>> {
+  const { groups } = await collectEvents();
+  const started = new Set<string>();
+  for (const [group, events] of groups) {
+    const first = new Map<string, ScheduleEvent>();
+    for (const event of resolveLinks(events)) {
+      const seen = first.get(event.card);
+      if (!seen || compareOrder(orderOf(event), orderOf(seen)) < 0) first.set(event.card, event);
+    }
+    for (const [card, event] of first) {
+      if (event.kind === "review" && dayAt(event.at, event.tz) === day) {
+        started.add(stateKeyIn(group, card));
+      }
+    }
+  }
+  return started;
 }
 
 /** Per collection, the key each v1 content hash now belongs to. */

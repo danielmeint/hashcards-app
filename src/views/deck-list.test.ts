@@ -335,9 +335,23 @@ describe("deck identity", () => {
     const { renderDeckList } = await freshDeckList();
     localStorage.setItem("new_cards_per_day", "1");
     await cache([card(1, "A", "a.md"), card(2, "A", "a.md")]);
-    const { recordIntroduced } = await import("../new-card-budget");
-    const { todayStr } = await import("../fsrs");
-    recordIntroduced(todayStr(), 1);
+    // Today's one new card, started on another deck: the budget is spent.
+    const { importReviews } = await import("../db");
+    await importReviews([
+      {
+        key: "someone/cards/h:0123456789abcdef",
+        log: "someone/cards",
+        tz: -new Date().getTimezoneOffset(),
+        cardHash: "other",
+        reviewedAt: new Date().toISOString(),
+        grade: 3,
+        stability: 2,
+        difficulty: 5,
+        intervalRaw: 2,
+        intervalDays: 2,
+        dueDate: "2999-01-01",
+      },
+    ]);
 
     await renderDeckList(container, () => {}, () => {}, () => {});
 

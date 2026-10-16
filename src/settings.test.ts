@@ -12,7 +12,7 @@ describe("settings", () => {
     expect(settings.hapticFeedback.get()).toBe(true);
     expect(settings.theme.get()).toBe("system");
     expect(settings.lastPushedAt.get()).toBeNull();
-    expect(settings.introducedToday.get()).toBeNull();
+    expect(settings.newCardsReset.get()).toBeNull();
     expect(settings.desiredRetention.get()).toBe(0.9);
   });
 
@@ -42,12 +42,12 @@ describe("settings", () => {
   it("round-trips every type it stores", () => {
     settings.newCardsPerDay.set(5);
     settings.hapticFeedback.set(false);
-    settings.introducedToday.set({ date: "2026-08-19", count: 3 });
+    settings.newCardsReset.set({ date: "2026-08-19", count: 3 });
     settings.lastSyncedAt.set("2026-08-19T09:00:00.000Z");
 
     expect(settings.newCardsPerDay.get()).toBe(5);
     expect(settings.hapticFeedback.get()).toBe(false);
-    expect(settings.introducedToday.get()).toEqual({
+    expect(settings.newCardsReset.get()).toEqual({
       date: "2026-08-19",
       count: 3,
     });
@@ -67,13 +67,13 @@ describe("settings", () => {
 
   it("falls back rather than propagating a corrupt value", () => {
     localStorage.setItem("new_cards_per_day", "twenty");
-    localStorage.setItem("new_cards_introduced", "{not json");
+    localStorage.setItem("new_cards_reset", "{not json");
     localStorage.setItem("theme", "chartreuse");
 
     // This used to parse to NaN and travel: `remainingBudget` became NaN, and
     // the deck list offered no new cards at all without ever saying why.
     expect(settings.newCardsPerDay.get()).toBe(20);
-    expect(settings.introducedToday.get()).toBeNull();
+    expect(settings.newCardsReset.get()).toBeNull();
     expect(settings.theme.get()).toBe("system");
   });
 

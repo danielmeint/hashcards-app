@@ -111,7 +111,7 @@ const theme: Codec<Theme> = {
   write: (value) => (value === "system" ? null : value),
 };
 
-/** New cards charged against today's budget, and the day that was. */
+/** A count of new cards on a given day. */
 export type IntroducedToday = { date: string; count: number };
 
 export const settings = {
@@ -122,10 +122,8 @@ export const settings = {
    */
   repos: setting("repos", json<RepoConfig[]>([])),
   newCardsPerDay: setting("new_cards_per_day", count(20)),
-  introducedToday: setting(
-    "new_cards_introduced",
-    json<IntroducedToday | null>(null)
-  ),
+  /** Today's started cards at the last "Reset" on this device (`new-card-budget.ts`). */
+  newCardsReset: setting("new_cards_reset", json<IntroducedToday | null>(null)),
   intervalFuzz: setting("interval_fuzz", flag(true)),
   desiredRetention: setting(
     "desired_retention",
@@ -155,6 +153,8 @@ export const settings = {
  * is in the middle of leaving behind.
  */
 export const legacy = {
+  /** New cards started today, counted on this device alone, before the log was asked. */
+  introducedToday: setting("new_cards_introduced", json<IntroducedToday | null>(null)),
   /** The pasted token, before sign-in replaced it (4.1). */
   pat: setting("github_pat", optionalText),
   /** The 5 MB card blob, before the deck store replaced it (2.4). */

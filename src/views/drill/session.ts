@@ -338,11 +338,10 @@ export async function createSession(
       cache.set(key, newPerf);
 
       // Charge the new-card budget only when the card is actually graded —
-      // and never in a dry run, which is meant to persist nothing. The budget
-      // lives in localStorage, so it counts as persistence.
+      // and never in a dry run, which is meant to persist nothing.
       if (newCardHashes.has(key) && !gradedNewCards.has(key)) {
         gradedNewCards.add(key);
-        if (!dryRun) recordIntroduced(todayStr(), 1);
+        if (!dryRun) recordIntroduced(todayStr(), key, true);
       }
 
       // Forgot and Hard come round again later in the drill — hashcards' version
@@ -406,7 +405,7 @@ export async function createSession(
         const stillGraded = reviews.some((r) => r.key === key);
         if (!stillGraded) {
           gradedNewCards.delete(key);
-          if (!dryRun) recordIntroduced(todayStr(), -1);
+          if (!dryRun) recordIntroduced(todayStr(), key, false);
         }
       }
 

@@ -329,11 +329,6 @@ async function onboardingTour(page: Page, tag: string): Promise<void> {
   await check(page, `${tag}-demo-settings`, [page.locator("#demo-own"), page.locator("#theme")], true);
 }
 
-const today = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
-
 for (const project of Object.keys(WIDTHS)) {
   for (const width of WIDTHS[project]) {
     test.describe(`${width}px on ${project}`, () => {
@@ -362,11 +357,11 @@ for (const project of Object.keys(WIDTHS)) {
 
       test("caught up, in a theme chosen over the system's", async ({ page, github }) => {
         seed(github);
-        // Today's whole new-card budget already spent: nothing left to review.
-        await page.addInitScript((day) => {
-          localStorage.setItem("new_cards_introduced", JSON.stringify({ date: day, count: 20 }));
+        // No new cards today, and nothing reviewed yet: nothing left to do.
+        await page.addInitScript(() => {
+          localStorage.setItem("new_cards_per_day", "0");
           localStorage.setItem("theme", "dark");
-        }, today());
+        });
         await page.emulateMedia({ colorScheme: "light" });
         await page.goto("/");
         await expect(page.locator(".all-caught-up")).toBeVisible();

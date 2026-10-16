@@ -202,3 +202,22 @@ test("two tabs of one browser: both reviews reach GitHub", async ({ browser }) =
   expect(await deviceId(a)).toBe(await deviceId(b));
   expect(github.unhandled).toEqual([]);
 });
+
+test("new cards started on one device are spent from the other's budget too", async ({ browser }) => {
+  const github = repo();
+  github.set("hashcards.toml", "[review]\nnew_per_day = 2\n");
+  const phone = await device(browser, github);
+  await phone.page.goto("/");
+  await expect(phone.page.locator(".hero-sub, #drill-all").first()).toBeVisible();
+  await grade(phone.page, 2);
+  await expect.poll(() => reviewLines(github).length).toBe(2);
+  await expect(phone.page.locator(".all-caught-up")).toBeVisible();
+
+  // The desktop has a third card it has never seen, and a budget of two —
+  // both spent on the phone today.
+  const desktop = await device(browser, github);
+  await desktop.page.goto("/");
+  await expect(desktop.page.locator(".all-caught-up")).toBeVisible();
+  await expect(desktop.page.locator(".all-caught-up")).toContainText("2 cards reviewed today, 2 of them new");
+  expect(github.unhandled).toEqual([]);
+});

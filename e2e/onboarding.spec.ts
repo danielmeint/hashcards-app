@@ -99,9 +99,9 @@ test("welcome, demo, and a real collection that never sees the demo", async ({ p
   expect(
     await page.evaluate(() => ({
       repos: JSON.parse(localStorage.getItem("repos") ?? "[]"),
-      introduced: localStorage.getItem("new_cards_introduced"),
+      reset: localStorage.getItem("new_cards_reset"),
     }))
-  ).toEqual({ repos: [{ owner: "someone", repo: "cards", branch: "main" }], introduced: null });
+  ).toEqual({ repos: [{ owner: "someone", repo: "cards", branch: "main" }], reset: null });
   expect(github.unhandled).toEqual([]);
 });
 

@@ -15,6 +15,7 @@ import {
   getNewCardsPerDay,
   setNewCardsPerDay,
   getIntroducedToday,
+  refreshIntroduced,
   resetIntroduced,
 } from "../new-card-budget";
 import { todayStr } from "../fsrs";
@@ -61,6 +62,7 @@ export async function renderSettings(
   const today = todayStr();
   const isFirstRun = !credential || !config;
 
+  await refreshIntroduced(today);
   const state = {
     newPerDay: getNewCardsPerDay(),
     introducedToday: getIntroducedToday(today),
@@ -202,7 +204,7 @@ export async function renderSettings(
                       id="reset-new-btn"
                       class="link-btn reset-btn"
                       @click=${() => {
-                        resetIntroduced();
+                        resetIntroduced(today);
                         state.introducedToday = 0;
                         paint();
                       }}

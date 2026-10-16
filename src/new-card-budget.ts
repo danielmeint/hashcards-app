@@ -1,6 +1,7 @@
 import { Card, ReviewedPerformance } from "./types";
 import { todayStr } from "./fsrs";
-import { settings } from "./settings";
+import { legacy, settings } from "./settings";
+import { startedOn } from "./review-state";
 import { markDirty } from "./collection-settings";
 import { stateKey } from "./db";
 
@@ -18,22 +19,52 @@ export function setNewCardsPerDay(n: number): void {
 
 // --- Today's budget ---
 
+/*
+ * The budget is one per collection (`hashcards.toml`), so what it is spent
+ * against is too: the cards first graded today on any device, worked out from
+ * the merged log (`startedOn`), as `hc due` does. It used to be a counter in
+ * this device's localStorage, so a phone that had started twenty new cards
+ * left the desktop offering twenty more.
+ *
+ * The log is read asynchronously and the budget is asked synchronously (the
+ * deck list, the drill), so the answer is kept here: refreshed whenever the
+ * deck list loads, and kept current between refreshes by the drill, which
+ * reports each first grade and each undo of one as it happens.
+ */
+let started: { date: string; keys: Set<string> } | null = null;
+
+/** Re-read today's started cards from the log. */
+export async function refreshIntroduced(today: string = todayStr()): Promise<void> {
+  const keys = await startedOn(today);
+  started = { date: today, keys };
+  // The counter this replaced; its count would read as a reset here.
+  legacy.introducedToday.remove();
+}
+
 export function getIntroducedToday(today: string = todayStr()): number {
-  const introduced = settings.introducedToday.get();
-  return introduced?.date === today ? introduced.count : 0;
+  const count = started?.date === today ? started.keys.size : 0;
+  const reset = settings.newCardsReset.get();
+  return Math.max(0, count - (reset?.date === today ? reset.count : 0));
 }
 
 export function remainingBudget(today: string = todayStr()): number {
   return Math.max(0, getNewCardsPerDay() - getIntroducedToday(today));
 }
 
-export function recordIntroduced(today: string, count: number): void {
-  const existing = getIntroducedToday(today);
-  settings.introducedToday.set({ date: today, count: existing + count });
+/** The drill graded `key` for the first time (`started`), or undid that grade. */
+export function recordIntroduced(today: string, key: string, first: boolean): void {
+  if (started?.date !== today) started = { date: today, keys: new Set() };
+  if (first) started.keys.add(key);
+  else started.keys.delete(key);
 }
 
-export function resetIntroduced(): void {
-  settings.introducedToday.remove();
+/**
+ * "Reset" in Settings: today's count starts again from zero on this device.
+ * Local on purpose — it is a choice to do more today here, not a setting.
+ */
+export function resetIntroduced(today: string = todayStr()): void {
+  const count = started?.date === today ? started.keys.size : 0;
+  settings.newCardsReset.set({ date: today, count });
 }
 
 // --- Card classification ---

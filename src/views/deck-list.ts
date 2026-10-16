@@ -14,6 +14,7 @@ import { localDay, todayStr } from "../fsrs";
 import {
   getNewCardsPerDay,
   getIntroducedToday,
+  refreshIntroduced,
   selectDueCards,
   countDue,
   remainingBudget,
@@ -30,6 +31,7 @@ import { findDrafts } from "../draft-edits";
 import { icon } from "./icons";
 import { isDemo } from "../demo-mode";
 import { now } from "../clock";
+import { reviewHistory } from "../review-state";
 
 /**
  * Today: how much is due, one button to review it, and the decks as filters
@@ -761,11 +763,9 @@ async function load(): Promise<Model> {
       (a.dir === "" ? -1 : b.dir === "" ? 1 : a.dir.localeCompare(b.dir))
   );
 
-  // Local midnight, as an instant: the review log is keyed by ISO timestamp.
-  const midnight = now();
-  midnight.setHours(0, 0, 0, 0);
+  // On any device, as the budget and Statistics count.
   const reviewedToday = new Set(
-    (await getReviewsSince(midnight.toISOString())).map((r) => r.cardHash)
+    (await reviewHistory()).filter((h) => h.day === today).map((h) => h.key)
   ).size;
 
   const comingUp = Array.from({ length: 7 }, (_, i) => {
@@ -775,6 +775,8 @@ async function load(): Promise<Model> {
     return { date, count };
   });
 
+  // Cards started today on any device, from the log just loaded.
+  await refreshIntroduced(today);
   const budgetLeft = remainingBudget(today);
   return {
     cards,

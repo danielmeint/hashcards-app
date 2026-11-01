@@ -62,7 +62,17 @@ type DeckInfo = {
  * `Algebra.md` in your repo and `Algebra.md` in a deck you subscribe to are two
  * different decks that would otherwise sit under the same nameless heading.
  */
-type DeckGroup = { repo: string; dir: string; decks: DeckInfo[] };
+type DeckGroup = {
+  repo: string;
+  dir: string;
+  decks: DeckInfo[];
+  /**
+   * What reviewing the folder would give now: everything due under `dir`,
+   * subfolders included, with new cards held to the day's budget. Zero leaves
+   * the heading a heading rather than a button that starts nothing.
+   */
+  due: number;
+};
 
 /** Everything on screen that comes from storage rather than from sync status. */
 type Model = {
@@ -313,11 +323,7 @@ export async function renderDeckList(
                 </div>`
               : nothing}
             <section class="group">
-              ${group.dir
-                ? html`<h2 class="group-title deck-group-name">${group.dir
-                    .split("/")
-                    .join(" · ")}</h2>`
-                : nothing}
+              ${group.dir ? folderHeading(group) : nothing}
               <div class="list">${group.decks.map(deckRow)}</div>
             </section>
           `;
@@ -567,6 +573,33 @@ export async function renderDeckList(
   }
 
   /**
+   * A folder's heading reviews the folder: every deck under it, subfolders
+   * included, as a parent deck does in Anki. The repository root has no
+   * heading, and Start review already covers it.
+   */
+  function folderHeading(group: DeckGroup): TemplateResult {
+    const label = group.dir.split("/").join(" · ");
+    if (group.due === 0) {
+      return html`<h2 class="group-title deck-group-name">${label}</h2>`;
+    }
+    const start = () => {
+      const due = selectDueCards(
+        folderCards(model.cards, group.repo, group.dir),
+        model.performances,
+        model.today
+      );
+      if (due.length > 0) onDrill(due);
+    };
+    return html`<h2 class="group-title deck-group-name"><button
+      class="folder-btn"
+      data-repo=${group.repo}
+      data-dir=${group.dir}
+      title="Review this folder"
+      @click=${start}
+    >${label}${icon("chevron", 14)}</button></h2>`;
+  }
+
+  /**
    * A whole row is the target. What it promises is the deck's own supply: a
    * deck with new cards but no budget left today says so rather than offering
    * a review that would come up empty.
@@ -753,7 +786,7 @@ async function load(): Promise<Model> {
       (g) => g.repo === deck.repo && g.dir === deck.dir
     );
     if (group) group.decks.push(deck);
-    else groups.push({ repo: deck.repo, dir: deck.dir, decks: [deck] });
+    else groups.push({ repo: deck.repo, dir: deck.dir, decks: [deck], due: 0 });
   }
   // Collections in configured order — yours first, then what you subscribe to.
   const order = getRepos().map(repoKey);
@@ -778,6 +811,14 @@ async function load(): Promise<Model> {
   // Cards started today on any device, from the log just loaded.
   await refreshIntroduced(today);
   const budgetLeft = remainingBudget(today);
+  for (const group of groups) {
+    if (group.dir === "") continue;
+    group.due = selectDueCards(
+      folderCards(cards, group.repo, group.dir),
+      performances,
+      today
+    ).length;
+  }
   return {
     cards,
     performances,
@@ -807,6 +848,12 @@ async function load(): Promise<Model> {
     ...pending,
     problems: await loadProblems(),
   };
+}
+
+/** Every card under `dir` in collection `repo`, subfolders included. */
+export function folderCards(cards: Card[], repo: string, dir: string): Card[] {
+  const prefix = `${dir}/`;
+  return cards.filter((c) => c.repo === repo && c.filePath.startsWith(prefix));
 }
 
 /** The problem's line on GitHub, where the file can be fixed; null in the demo. */

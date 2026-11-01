@@ -76,3 +76,15 @@ test("ending a drill saves its reviews to the data branch", async ({ page, githu
   expect([...github.files.keys()]).toEqual(["Capitals.md"]);
   expect(github.unhandled).toEqual([]);
 });
+
+test("a folder's heading reviews every deck under it", async ({ page, github }) => {
+  github.set("Capitals.md", deck("Japan"));
+  github.set("lang/Spanish.md", deck("hola", "adiós"));
+  github.set("lang/es/Verbs.md", deck("ser"));
+  await page.goto("/");
+  await page.locator('.folder-btn[data-dir="lang"]').click();
+
+  // Both lang decks, the subfolder's included; not Capitals at the root.
+  await expect(page.locator(".progress-count")).toHaveText("0 / 3");
+  expect(github.unhandled).toEqual([]);
+});

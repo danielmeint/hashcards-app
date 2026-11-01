@@ -122,6 +122,7 @@ kbd { display: none; font: 600 11px var(--font-mono); border: 1px solid currentC
   .grade-btn:hover { filter: brightness(0.97) saturate(1.15); }
   .segmented button:hover:not([aria-pressed="true"]) { color: var(--text); }
   .link-btn:hover { text-decoration: underline; }
+  .folder-btn:hover { color: var(--text); }
 }
 
 /* ===== Pages, groups and rows ===== */
@@ -153,6 +154,12 @@ kbd { display: none; font: 600 11px var(--font-mono); border: 1px solid currentC
 .group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .group-title { padding: 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
 .deck-group-name { text-transform: capitalize; }
+/* A folder heading that reviews the folder: still the heading, with a 44px target. */
+.folder-btn {
+  display: inline-flex; align-items: center; gap: 2px; min-height: 44px; margin: -13px -6px -6px; padding: 0 6px;
+  border-radius: 10px; text-transform: inherit;
+}
+.folder-btn .icon-chevron { color: var(--faint); stroke-width: 2.4; }
 .group-note { padding: 0 6px; font-size: 13px; line-height: 1.4; color: var(--muted); }
 .group-note:empty { display: none; }
 .group-caption { padding: 0 6px 2px; font-size: 13px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }

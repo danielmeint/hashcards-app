@@ -28,7 +28,8 @@ original hashcards format opens too, and `hc migrate` brings it up to 1.0
 
 ## How it works
 
-- **Cards are Markdown files in your repository.** Each `.md` file is a deck.
+- **Cards are Markdown files in your repository.** Each `.md` file is a deck,
+  and folders group them: tap a deck, or a folder's name, to review only that.
   Write them in the app, on GitHub, in your editor, or have an agent write them.
 - **Review history lives on a `hashcards-data` branch** of the same repository,
   one file per device per month, so `main` stays the history of

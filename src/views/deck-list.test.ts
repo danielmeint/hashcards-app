@@ -290,6 +290,56 @@ describe("deck identity", () => {
     expect(drilled[0].map((c) => c.filePath)).toEqual(["aws/Networking.md"]);
   });
 
+  it("reviews a folder and every folder under it, and nothing else", async () => {
+    const { renderDeckList } = await freshDeckList();
+    await cache([
+      card(1, "Root", "Root.md"),
+      card(2, "S3", "aws/S3.md"),
+      card(3, "VPC", "aws/net/VPC.md"),
+      // Starts with the same letters, but is not inside aws/.
+      card(4, "Other", "aws-old/Other.md"),
+      // The same folder in another collection is another folder.
+      { ...card(5, "Elsewhere", "aws/Elsewhere.md"), repo: "someone/else" },
+    ]);
+
+    const drilled: Card[][] = [];
+    await renderDeckList(container, (cards) => drilled.push(cards), () => {}, () => {});
+    (
+      container.querySelector('.folder-btn[data-repo="someone/cards"][data-dir="aws"]') as HTMLButtonElement
+    ).click();
+
+    expect(drilled).toHaveLength(1);
+    expect(drilled[0].map((c) => c.filePath).sort()).toEqual(["aws/S3.md", "aws/net/VPC.md"]);
+  });
+
+  it("holds a folder's new cards to the budget, as a deck's are", async () => {
+    const { renderDeckList } = await freshDeckList();
+    localStorage.setItem("new_cards_per_day", "2");
+    await cache([
+      card(1, "A", "lang/A.md"),
+      card(2, "A", "lang/A.md"),
+      card(3, "B", "lang/es/B.md"),
+      card(4, "B", "lang/es/B.md"),
+    ]);
+
+    const drilled: Card[][] = [];
+    await renderDeckList(container, (cards) => drilled.push(cards), () => {}, () => {});
+    (container.querySelector('.folder-btn[data-dir="lang"]') as HTMLButtonElement).click();
+
+    expect(drilled[0]).toHaveLength(2);
+  });
+
+  it("leaves a folder with nothing to review today as a plain heading", async () => {
+    const { renderDeckList } = await freshDeckList();
+    localStorage.setItem("new_cards_per_day", "0");
+    await cache([card(1, "A", "lang/A.md")]);
+
+    await renderDeckList(container, () => {}, () => {}, () => {});
+
+    expect(container.querySelector(".folder-btn")).toBeNull();
+    expect(container.querySelector(".deck-group-name")!.textContent).toBe("lang");
+  });
+
   it("shows each deck's real supply but promises only what the budget allows", async () => {
     const { renderDeckList } = await freshDeckList();
     localStorage.setItem("new_cards_per_day", "2");

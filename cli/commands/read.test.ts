@@ -159,6 +159,65 @@ new_per_day = 2
     expect(out.reviews.count).toBe(2);
   });
 
+  it("hc stats --deck and --tag count only those cards, and only their reviews", async () => {
+    const SD = `---
+tags = ["interview"]
+---
+
+Tags: interview/caching
+Q: What is a write-through cache?
+A: One written with the store.
+
+---
+
+Q: What is back-pressure?
+A: Slowing producers down.
+`;
+    const repo = makeRepo({ "deck.md": DECK, "interview/sd.md": SD, "hashcards.toml": "[review]\nnew_per_day = 1\n" });
+    gitInit(repo);
+    const [cache, pressure] = (await parseFile(SD, "interview/sd.md", "sd")).map((c) => c.key);
+    makeDataBranch(repo, {
+      "2026-10.dev1.jsonl":
+        LOG +
+        [
+          review(cache, "2026-10-01T08:00:00.000Z", 3),
+          review(cache, "2026-10-05T08:00:00.000Z", 1),
+          review(pressure, "2026-10-02T08:00:00.000Z", 3),
+        ].join("\n") +
+        "\n",
+    });
+    const stats = async (...args: string[]) =>
+      (await hc(["stats", "--json", "--repo", repo, "--date", "2026-10-10", ...args])).json();
+
+    const all = await stats();
+    expect(all.scope).toBeNull();
+    expect(all.cards.total).toBe(8);
+
+    const folder = await stats("--deck", "interview/**");
+    expect(folder.scope).toEqual({ deck: "interview/**", tag: null });
+    expect(folder.cards).toMatchObject({ total: 2, active: 2, new: 0, young: 2, decks: 1, files: 1 });
+    // Only the cache card has been tested since it was learned, and failed.
+    expect(folder.retention.allTime).toEqual({ reviews: 1, passed: 0, rate: 0 });
+    expect(folder.reviews.total).toBe(3);
+
+    // A tag includes the tags under it, and is read as the parser reads one.
+    expect((await stats("--tag", "Interview")).cards.total).toBe(2);
+    const caching = await stats("--tag", "interview/caching");
+    expect(caching.scope).toEqual({ deck: null, tag: "interview/caching" });
+    expect(caching.cards.total).toBe(1);
+    expect(caching.reviews.total).toBe(2);
+    // Both: a card must match both.
+    expect((await stats("--deck", "deck.md", "--tag", "interview")).cards.total).toBe(0);
+
+    const human = await hc(["stats", "--repo", repo, "--date", "2026-10-10", "--deck", "interview/**"]);
+    expect(human.stdout).toMatch(/decks interview\/\*\*/);
+    expect(human.stdout).toMatch(/Cards {2}2 in 1 deck \(1 file\)/);
+
+    const bad = await hc(["stats", "--repo", repo, "--deck", "interview/"]);
+    expect(bad.code).toBe(2);
+    expect(bad.stderr).toMatch(/'interview\/\*\*' is everything in it/);
+  });
+
   it("hc stats counts cards, retention, forecast and reviews per day", async () => {
     const repo = v2Repo();
     const run = await hc(["stats", "--json", "--repo", repo, "--date", "2026-10-10", "--days", "3"]);

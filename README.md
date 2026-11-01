@@ -112,7 +112,7 @@ hc add --deck net/tcp.md --draft -q "Question?" -a "Answer"
 hc add --deck net/tcp.md --cloze "TCP opens with a [SYN]."
 hc add --json cards.json        # one card or an array, as schema/card.schema.json
 hc due [--date tomorrow]        # reviews due, new cards within new_per_day and [limits]
-hc stats                        # totals, maturity, retention, 14-day forecast
+hc stats [--deck <glob>] [--tag <tag>]   # totals, maturity, retention, 14-day forecast
 hc leeches [--min-lapses 3]     # cards that keep failing
 hc show <file:line|key>         # a card, its file and line, state and history
 hc relink [--apply]             # carry history over cards edited outside the app

@@ -1,5 +1,8 @@
 import { addDays } from "../../src/core/schedule";
-import { EXIT } from "../command";
+import { globMatch, globProblem } from "../../src/core/glob";
+import { normaliseTag } from "../../src/parser";
+import type { ParsedCard } from "../../src/types";
+import { EXIT, UsageError } from "../command";
 import type { Command } from "../command";
 import { bar, percent, plural, table } from "../format";
 import { describeSource } from "../history";
@@ -17,7 +20,7 @@ import { activeCards, openWorkspace } from "../workspace";
 export const stats: Command = {
   name: "stats",
   summary: "collection totals, maturity, retention, forecast, reviews per day",
-  help: `Usage: hc stats [--date YYYY-MM-DD] [--days N]
+  help: `Usage: hc stats [--date YYYY-MM-DD] [--days N] [--deck <glob>] [--tag <tag>]
 
   cards        totals by status; active cards by new / young / mature
                (mature: interval of ${MATURE_DAYS} days or more)
@@ -26,15 +29,36 @@ export const stats: Command = {
   forecast     reviews due on each of the next 14 days (overdue counted today)
   reviews      reviews per day over the last N days (default 14), streak
 
+With --deck or --tag, every number is about those cards alone: their counts,
+their reviews, their retention and forecast. Given both, a card must match both.
+
 Options:
   --date <day>   evaluate as of this day; default: today
-  --days <n>     days of review history to show (default 14)`,
+  --days <n>     days of review history to show (default 14)
+  --deck <glob>  only decks whose path matches, as globs in hashcards.toml do
+                 ("interview/**" is every deck in that folder, "Spanish.md" any
+                 deck of that name)
+  --tag <tag>    only cards with this tag or one under it ("cka" includes
+                 "cka/workloads")`,
   options: {
     date: { type: "string" },
     days: { type: "string" },
+    deck: { type: "string" },
+    tag: { type: "string" },
   },
   async run(ctx) {
-    const { collection, history, states, today } = await openWorkspace(ctx);
+    const workspace = await openWorkspace(ctx);
+    const { states, today } = workspace;
+    const scope = readScope(ctx.values);
+    // Narrowed before anything is counted: the cards in scope, and the events
+    // of those cards only, so every insight below reads them alone.
+    const collection = scope
+      ? { ...workspace.collection, cards: workspace.collection.cards.filter((c) => inScope(c, scope)) }
+      : workspace.collection;
+    const keys = new Set(collection.cards.map((c) => c.key));
+    const history = scope
+      ? { ...workspace.history, events: workspace.history.events.filter((e) => keys.has(e.card)) }
+      : workspace.history;
     const config = collection.config.config;
     const active = activeCards(collection);
     const byCard = eventsByCard(history.events);
@@ -52,6 +76,7 @@ Options:
     const result = {
       date: today,
       history: history.source,
+      scope,
       cards: {
         total: collection.cards.length,
         active: active.length,
@@ -61,7 +86,7 @@ Options:
         young,
         mature,
         decks: new Set(collection.cards.map((c) => c.deckName)).size,
-        files: collection.files.length,
+        files: scope ? new Set(collection.cards.map((c) => c.filePath)).size : collection.files.length,
       },
       retention: {
         desired: config.review.desiredRetention,
@@ -84,7 +109,12 @@ Options:
     }
 
     const c = result.cards;
-    ctx.say(`${today}  ·  history: ${describeSource(history.source)}`);
+    ctx.say(
+      `${today}  ·  history: ${describeSource(history.source)}` +
+        (scope?.deck ? `  ·  decks ${scope.deck}` : "") +
+        (scope?.tag ? `  ·  tag ${scope.tag}` : "")
+    );
+    if (scope && collection.cards.length === 0) ctx.io.stderr("warning: no cards match\n");
     ctx.say(`\nCards  ${c.total} in ${plural(c.decks, "deck")} (${plural(c.files, "file")})`);
     ctx.say(
       table([
@@ -112,3 +142,29 @@ Options:
     return EXIT.ok;
   },
 };
+
+type Scope = { deck: string | null; tag: string | null };
+
+/** `--deck` and `--tag`, checked; null when neither is given. */
+function readScope(values: Record<string, unknown>): Scope | null {
+  const deck = typeof values.deck === "string" ? values.deck : null;
+  const raw = typeof values.tag === "string" ? values.tag : null;
+  if (deck === null && raw === null) return null;
+  if (deck !== null) {
+    const problem = globProblem(deck);
+    if (problem) throw new UsageError(`--deck: ${problem}`);
+  }
+  const tag = raw === null ? null : normaliseTag(raw);
+  if (raw !== null && tag === null) throw new UsageError("--tag needs a tag");
+  return { deck, tag };
+}
+
+/** A card in scope: in a matching deck, and tagged with the tag or one under it. */
+function inScope(card: ParsedCard, scope: Scope): boolean {
+  if (scope.deck !== null && !globMatch(scope.deck, card.filePath)) return false;
+  if (scope.tag !== null) {
+    const under = `${scope.tag}/`;
+    if (!card.tags.some((t) => t === scope.tag || t.startsWith(under))) return false;
+  }
+  return true;
+}

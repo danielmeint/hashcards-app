@@ -228,6 +228,106 @@ describe("the stats view", () => {
     expect(container.textContent).toContain("Nothing has failed");
   });
 
+  describe("for some of the decks", () => {
+    const at = (n: number, filePath: string, deckName: string): Card => ({ ...card(n), filePath, deckName });
+
+    async function seedDecks() {
+      const stats = await freshStats();
+      const cards = [
+        at(1, "Geo.md", "Geo"),
+        at(2, "lang/Spanish.md", "Spanish"),
+        at(3, "lang/es/Verbs.md", "Verbs"),
+        { ...at(4, "lang/Drafts.md", "Drafts"), status: "draft" as const },
+      ];
+      await stats.updateDeckFiles(
+        cards.map((c) => ({ repo: c.repo, path: c.filePath, sha: c.filePath, cards: [c] })),
+        []
+      );
+      const { loadCards } = await import("../sync");
+      await loadCards();
+      // Every card reviewed once: Geo yesterday, Spanish twice.
+      await stats.importReviews([
+        review(1, Grade.Good, -1),
+        review(2, Grade.Forgot, -2),
+        review(2, Grade.Good, -1),
+        review(3, Grade.Easy, -1),
+      ]);
+      const today = new Date().toISOString().slice(0, 10);
+      await stats.importState({
+        [keyOf(1)]: performance(today),
+        [keyOf(2)]: performance(day(30).slice(0, 10)),
+      });
+      return stats;
+    }
+
+    const pick = async (container: HTMLElement, label: string) => {
+      const select = container.querySelector("#stats-scope") as HTMLSelectElement;
+      const option = [...select.options].find((o) => o.textContent!.trim() === label)!;
+      select.value = option.value;
+      select.dispatchEvent(new Event("change"));
+    };
+    const box = (container: HTMLElement, label: string) =>
+      [...container.querySelectorAll(".stat-box")]
+        .find((b) => b.querySelector(".stat-label")?.textContent === label)
+        ?.querySelector(".stat-value")?.textContent;
+
+    it("offers every deck, under its folder as on Today, and each folder whole", async () => {
+      const { renderStats } = await seedDecks();
+      await renderStats(container, () => {});
+
+      const select = container.querySelector("#stats-scope") as HTMLSelectElement;
+      expect([...select.querySelectorAll(":scope > option")].map((o) => o.textContent!.trim())).toEqual([
+        "All decks",
+        "Geo",
+      ]);
+      expect(
+        [...select.querySelectorAll("optgroup")].map((g) => [
+          g.label,
+          [...g.querySelectorAll("option")].map((o) => o.textContent!.trim()),
+        ])
+      ).toEqual([
+        ["lang", ["All of lang", "Spanish"]],
+        ["lang · es", ["All of lang · es", "Verbs"]],
+      ]);
+    });
+
+    it("narrows every number to the folder or deck picked, reviews included", async () => {
+      const { renderStats } = await seedDecks();
+      await renderStats(container, () => {});
+      expect(box(container, "cards")).toBe("3");
+      expect(text(container, ".grades-panel .panel-head span")).toBe("4 reviews");
+
+      // A folder takes its subfolders with it.
+      // The view re-reads and repaints.
+      await pick(container, "All of lang");
+      await vi.waitFor(() => expect(box(container, "cards")).toBe("2"));
+      expect(box(container, "learned")).toBe("1");
+      expect(text(container, ".grades-panel .panel-head span")).toBe("3 reviews");
+
+      await pick(container, "Geo");
+      await vi.waitFor(() => expect(box(container, "cards")).toBe("1"));
+      expect(box(container, "due today")).toBe("1");
+      expect(text(container, ".grades-panel .panel-head span")).toBe("1 review");
+
+      // Kept for the next visit, as long as that deck is still there.
+      await renderStats(container, () => {});
+      expect(box(container, "cards")).toBe("1");
+
+      expect(
+        (container.querySelector("#stats-scope") as HTMLSelectElement).selectedOptions[0].textContent!.trim()
+      ).toBe("Geo");
+
+      await pick(container, "All decks");
+      await vi.waitFor(() => expect(box(container, "cards")).toBe("3"));
+    });
+
+    it("has nothing to pick for a collection of one deck", async () => {
+      const { renderStats } = await seed();
+      await renderStats(container, () => {});
+      expect(container.querySelector("#stats-scope")).toBeNull();
+    });
+  });
+
   it("goes back", async () => {
     const { renderStats } = await seed();
     let backs = 0;

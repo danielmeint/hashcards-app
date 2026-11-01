@@ -243,7 +243,12 @@ async function tour(page: Page, github: FakeGitHub, tag: string): Promise<void> 
     page.locator("#stats-btn"),
     page.locator("#settings-btn"),
   ]);
-  await check(page, `${tag}-today-full`, [page.locator(".deck-row").last(), page.locator("#inbox-btn")], true);
+  await check(
+    page,
+    `${tag}-today-full`,
+    [page.locator(".deck-row").last(), page.locator(".folder-btn").first(), page.locator("#inbox-btn")],
+    true
+  );
 
   await inbox(page, tag);
 
@@ -253,7 +258,12 @@ async function tour(page: Page, github: FakeGitHub, tag: string): Promise<void> 
 
   await page.locator("#stats-btn").click();
   await expect(page.locator(".stats-view")).toBeVisible();
-  await check(page, `${tag}-stats`, [page.locator("#back-btn"), page.locator(".stat-box").last()]);
+  await check(page, `${tag}-stats`, [page.locator("#back-btn"), page.locator("#stats-scope"), page.locator(".stat-box").last()]);
+  // The longest choice still fits the header, and narrows the numbers.
+  await page.locator("#stats-scope").selectOption({ label: "All of geography · europe" });
+  await expect(page.locator(".stat-box").first().locator(".stat-value")).toHaveText("5");
+  await check(page, `${tag}-stats-folder`, [page.locator("#back-btn"), page.locator("#stats-scope")]);
+  await page.locator("#stats-scope").selectOption({ label: "All decks" });
   await check(
     page,
     `${tag}-stats-full`,

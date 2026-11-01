@@ -1,5 +1,5 @@
 import { html, nothing, render, TemplateResult } from "lit-html";
-import { Grade } from "../types";
+import { Card, Grade } from "../types";
 import { getAllPerformances, stateKey } from "../db";
 import { loadCachedCards } from "../sync";
 import { todayStr, retrievability } from "../fsrs";
@@ -11,24 +11,45 @@ import {
   isReverse,
   isRecovering,
 } from "../leeches";
-import { getConfig, getDesiredRetention } from "../github";
+import { getConfig, getDesiredRetention, getRepos, repoKey } from "../github";
 import { icon } from "./icons";
 import { formatSyncAge } from "../sync-state";
 import { reviewHistory } from "../review-state";
+import { folderCards } from "./deck-list";
+
+/**
+ * Which part of the collection the numbers are about: all of it, one folder
+ * (subfolders included, as reviewing it from Today is) or one deck. Kept
+ * while the app is open, so editing a leech or going back to Today and
+ * returning does not lose it.
+ */
+type Scope = { kind: "folder"; repo: string; dir: string } | { kind: "deck"; repo: string; path: string };
+let scope: Scope | null = null;
 
 export async function renderStats(
   container: HTMLElement,
   onBack: () => void
 ): Promise<void> {
-  const [allStates, cards, history] = await Promise.all([
+  const [allStates, allCards, allHistory] = await Promise.all([
     getAllPerformances(),
     loadCachedCards(),
     reviewHistory(),
   ]);
+  const today = todayStr();
+
+  // The picker's choices come from every deck; a choice whose decks are gone
+  // since is forgotten. Everything below then reads the chosen cards only, and
+  // only their grades.
+  const choices = scopeChoices(allCards);
+  const chosen = scope;
+  const offered = choices.flatMap((g) => (g.folder ? [g.folder, ...g.decks] : g.decks));
+  if (chosen && !offered.some((c) => sameScope(c.scope, chosen))) scope = null;
+  const cards = scope ? cardsIn(allCards, scope) : allCards;
+  const inScope = new Set(cards.map((c) => stateKey(c)));
+  const history = scope ? allHistory.filter((h) => inScope.has(h.key)) : allHistory;
   // Every device's grades, not this one's: the heatmap, the streak and the
   // grade mix are the collection's, as due dates already are.
   const reviews = history;
-  const today = todayStr();
 
   // From the whole log, every device's grades: a card that fails on your
   // phone and on your laptop fails twice, not once on each.
@@ -184,6 +205,10 @@ export async function renderStats(
             ${icon("back")}<span class="icon-btn-label">Today</span>
           </button>
           <h1>Statistics</h1>
+          ${scopePicker(choices, (next) => {
+            scope = next;
+            void renderStats(container, onBack);
+          })}
         </header>
 
         <div class="tiles stats-overview">
@@ -367,6 +392,88 @@ export async function renderStats(
   }
 
   paint();
+}
+
+type Choice = { scope: Scope; label: string };
+
+/**
+ * Folders and decks as Today groups them: a folder for every heading there,
+ * its decks under it. Drafts are the Inbox's, so a file of nothing but
+ * drafts is no deck to pick.
+ */
+function scopeChoices(cards: Card[]): { group: string | null; folder: Choice | null; decks: Choice[] }[] {
+  const repos = getRepos().map(repoKey);
+  const many = new Set(cards.map((c) => c.repo)).size > 1;
+  const decks = new Map<string, { repo: string; path: string; name: string }>();
+  for (const card of cards) {
+    if (card.status === "draft") continue;
+    const id = `${card.repo}\u0000${card.filePath}`;
+    if (!decks.has(id)) decks.set(id, { repo: card.repo, path: card.filePath, name: card.deckName });
+  }
+  const groups = new Map<string, { repo: string; dir: string; decks: Choice[] }>();
+  for (const deck of decks.values()) {
+    const dir = deck.path.includes("/") ? deck.path.slice(0, deck.path.lastIndexOf("/")) : "";
+    const id = `${deck.repo}\u0000${dir}`;
+    if (!groups.has(id)) groups.set(id, { repo: deck.repo, dir, decks: [] });
+    groups.get(id)!.decks.push({ scope: { kind: "deck", repo: deck.repo, path: deck.path }, label: deck.name });
+  }
+  return [...groups.values()]
+    .sort(
+      (a, b) =>
+        repos.indexOf(a.repo) - repos.indexOf(b.repo) ||
+        a.repo.localeCompare(b.repo) ||
+        (a.dir === "" ? -1 : b.dir === "" ? 1 : a.dir.localeCompare(b.dir))
+    )
+    .map(({ repo, dir, decks }) => {
+      const name = dir.split("/").join(" · ");
+      const group = [many ? repo : "", name].filter(Boolean).join(": ") || null;
+      return {
+        group,
+        folder: dir ? { scope: { kind: "folder", repo, dir }, label: `All of ${name}` } : null,
+        decks: decks.sort((a, b) => a.label.localeCompare(b.label)),
+      };
+    });
+}
+
+function cardsIn(cards: Card[], scope: Scope): Card[] {
+  return scope.kind === "folder"
+    ? folderCards(cards, scope.repo, scope.dir)
+    : cards.filter((c) => c.repo === scope.repo && c.filePath === scope.path);
+}
+
+function sameScope(a: Scope, b: Scope): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * All decks, a folder or a deck. A plain select: the platform's own picker is
+ * the right one on a phone, and there is nothing here worth a custom sheet.
+ * Not shown for a collection of one deck, where there is nothing to choose.
+ */
+function scopePicker(
+  choices: ReturnType<typeof scopeChoices>,
+  onPick: (scope: Scope | null) => void
+): TemplateResult | typeof nothing {
+  const count = choices.reduce((n, g) => n + g.decks.length, 0);
+  if (count < 2) return nothing;
+  const option = ({ scope: s, label }: Choice) =>
+    html`<option value=${JSON.stringify(s)} ?selected=${scope !== null && sameScope(s, scope)}>${label}</option>`;
+  return html`<select
+    id="stats-scope"
+    class="stats-scope"
+    aria-label="Decks"
+    @change=${(e: Event) => {
+      const value = (e.target as HTMLSelectElement).value;
+      onPick(value === "" ? null : (JSON.parse(value) as Scope));
+    }}
+  >
+    <option value="" ?selected=${scope === null}>All decks</option>
+    ${choices.map(({ group, folder, decks }) =>
+      group === null
+        ? decks.map(option)
+        : html`<optgroup label=${group}>${folder ? option(folder) : nothing}${decks.map(option)}</optgroup>`
+    )}
+  </select>`;
 }
 
 // Local helpers

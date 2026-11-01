@@ -3,7 +3,8 @@ import { todayStr } from "./fsrs";
 import { legacy, settings } from "./settings";
 import { startedOn } from "./review-state";
 import { markDirty } from "./collection-settings";
-import { stateKey } from "./db";
+import { getAllDeckFiles, stateKey } from "./db";
+import { NewCardBudget, NewCardLimit, budgetFor, newCardBudget, pickNew } from "./core/limits";
 
 // --- Settings ---
 
@@ -26,56 +27,120 @@ export function setNewCardsPerDay(n: number): void {
  * this device's localStorage, so a phone that had started twenty new cards
  * left the desktop offering twenty more.
  *
+ * `[limits.<name>]` groups split it further (`core/limits.ts`): each started
+ * card is kept with its deck's path, so a group's spend is the started cards
+ * in its decks.
+ *
  * The log is read asynchronously and the budget is asked synchronously (the
  * deck list, the drill), so the answer is kept here: refreshed whenever the
  * deck list loads, and kept current between refreshes by the drill, which
  * reports each first grade and each undo of one as it happens.
  */
-let started: { date: string; keys: Set<string> } | null = null;
+let started: { date: string; paths: Map<string, string | null> } | null = null;
 
-/** Re-read today's started cards from the log. */
-export async function refreshIntroduced(today: string = todayStr()): Promise<void> {
+/** The collection's new-card groups, as last read from `hashcards.toml`. */
+export function getNewCardLimits(): NewCardLimit[] {
+  return settings.newCardLimits.get();
+}
+
+/**
+ * Re-read today's started cards from the log. `cards` say which deck each one
+ * is in; without them the deck store is read.
+ */
+export async function refreshIntroduced(
+  today: string = todayStr(),
+  cards?: Card[]
+): Promise<void> {
   const keys = await startedOn(today);
-  started = { date: today, keys };
+  const pathOf = await deckPaths(cards);
+  started = { date: today, paths: new Map([...keys].map((k) => [k, pathOf.get(k) ?? null])) };
   // The counter this replaced; its count would read as a reset here.
   legacy.introducedToday.remove();
 }
 
-export function getIntroducedToday(today: string = todayStr()): number {
-  const count = started?.date === today ? started.keys.size : 0;
+async function deckPaths(cards?: Card[]): Promise<Map<string, string>> {
+  const paths = new Map<string, string>();
+  const add = (key: string, path: string) => {
+    if (!paths.has(key)) paths.set(key, path);
+  };
+  if (cards) {
+    for (const card of cards) add(stateKey(card), card.filePath);
+  } else {
+    for (const file of await getAllDeckFiles()) {
+      for (const card of file.cards) add(stateKey({ ...card, repo: file.repo }), file.path);
+    }
+  }
+  return paths;
+}
+
+/** The deck path of each card started today, since this device's last Reset. */
+function startedToday(today: string): (string | null)[] {
+  if (started?.date !== today) return [];
   const reset = settings.newCardsReset.get();
-  return Math.max(0, count - (reset?.date === today ? reset.count : 0));
+  const entries = [...started.paths];
+  if (reset?.date !== today) return entries.map(([, path]) => path);
+  // A reset from before groups knew only how many.
+  if (!reset.keys) return entries.slice(reset.count).map(([, path]) => path);
+  const before = new Set(reset.keys);
+  return entries.filter(([key]) => !before.has(key)).map(([, path]) => path);
 }
 
+export function getIntroducedToday(today: string = todayStr()): number {
+  return startedToday(today).length;
+}
+
+/** What today's new cards may still use, the collection's and each group's. */
+export function getBudget(today: string = todayStr()): NewCardBudget {
+  return newCardBudget(getNewCardsPerDay(), getNewCardLimits(), startedToday(today));
+}
+
+/** The collection's budget left today, whatever the groups say. */
 export function remainingBudget(today: string = todayStr()): number {
-  return Math.max(0, getNewCardsPerDay() - getIntroducedToday(today));
+  return getBudget(today).total;
 }
 
-/** The drill graded `key` for the first time (`started`), or undid that grade. */
-export function recordIntroduced(today: string, key: string, first: boolean): void {
-  if (started?.date !== today) started = { date: today, keys: new Set() };
-  if (first) started.keys.add(key);
-  else started.keys.delete(key);
+/** New cards a deck at `path` may still introduce today: its group's budget within the collection's. */
+export function remainingFor(path: string, today: string = todayStr()): number {
+  return budgetFor(path, getBudget(today));
 }
 
 /**
- * "Reset" in Settings: today's count starts again from zero on this device.
- * Local on purpose — it is a choice to do more today here, not a setting.
+ * The drill graded `key` (in the deck at `path`) for the first time, or undid
+ * that grade.
+ */
+export function recordIntroduced(
+  today: string,
+  key: string,
+  first: boolean,
+  path: string | null = null
+): void {
+  if (started?.date !== today) started = { date: today, paths: new Map() };
+  if (first) started.paths.set(key, path);
+  else started.paths.delete(key);
+}
+
+/**
+ * "Reset" in Settings: today's count starts again from zero on this device,
+ * every group's with it. Local on purpose — it is a choice to do more today
+ * here, not a setting.
  */
 export function resetIntroduced(today: string = todayStr()): void {
-  const count = started?.date === today ? started.keys.size : 0;
-  settings.newCardsReset.set({ date: today, count });
+  const keys = started?.date === today ? [...started.paths.keys()] : [];
+  settings.newCardsReset.set({ date: today, count: keys.length, keys });
 }
 
 // --- Card classification ---
 
-/** Select review-due and budget-capped new cards from a list. */
+/**
+ * Select review-due and budget-capped new cards from a list: new cards in the
+ * order given, each while its group and the collection both have budget left.
+ */
 export function selectDueCards(
   cards: Card[],
   performances: Map<string, ReviewedPerformance>,
   today: string = todayStr()
 ): Card[] {
-  const budget = remainingBudget(today);
+  const budget = getBudget(today);
   const reviewDue: Card[] = [];
   const newCards: Card[] = [];
 
@@ -91,7 +156,7 @@ export function selectDueCards(
     }
   }
 
-  return [...reviewDue, ...newCards.slice(0, budget)];
+  return [...reviewDue, ...pickNew(newCards, (card) => card.filePath, budget)];
 }
 
 /**

@@ -14,6 +14,7 @@ import {
   parseConfig,
   writeReviewConfig,
 } from "./collection-config";
+import type { NewCardLimit } from "./core/limits";
 import { settings } from "./settings";
 
 /**
@@ -107,6 +108,15 @@ export function adoptReviewConfig(review: ReviewConfig): boolean {
     rescheduled = true;
   }
   return rescheduled;
+}
+
+/**
+ * Take the file's new-card groups. Settings has no control for them, so the
+ * file always wins, and saving a setting never writes them (only the dirty
+ * `[review]` lines are touched).
+ */
+export function adoptLimits(limits: NewCardLimit[]): void {
+  settings.newCardLimits.set(limits);
 }
 
 /**

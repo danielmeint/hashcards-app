@@ -24,17 +24,18 @@ export function eventsByCard(events: readonly ScheduleEvent[]): Map<string, Sche
 }
 
 /**
- * New cards already started on `day`: those whose very first event is a
- * review on that day. This is what the day's new-card budget has been spent
+ * New cards already started on `day`, by key: those whose very first event is
+ * a review on that day. This is what the day's new-card budget has been spent
  * on, wherever the reviews were done — the app's per-device counter cannot
- * know about another phone's, the log can.
+ * know about another phone's, the log can. The app counts the same way
+ * (`startedOn` in `src/review-state.ts`).
  */
-export function introducedOn(byCard: Map<string, ScheduleEvent[]>, day: string): number {
-  let n = 0;
-  for (const list of byCard.values()) {
-    if (list[0].kind === "review" && eventDay(list[0]) === day) n++;
+export function startedOn(byCard: Map<string, ScheduleEvent[]>, day: string): string[] {
+  const keys: string[] = [];
+  for (const [key, list] of byCard) {
+    if (list[0].kind === "review" && eventDay(list[0]) === day) keys.push(key);
   }
-  return n;
+  return keys;
 }
 
 export type Retention = { reviews: number; passed: number; rate: number | null };

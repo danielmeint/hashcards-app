@@ -1,7 +1,8 @@
 /**
  * The part of TOML that `hashcards.toml` uses: `[tables]`, `key = value`,
  * strings, numbers, booleans and arrays of them (arrays may span lines),
- * comments. Not a TOML parser — no inline tables, dates, dotted keys or
+ * comments, and dotted table names (`[limits.interview]`, kept under that
+ * whole name). Not a TOML parser — no inline tables, dates, dotted keys or
  * multi-line strings — but strict about what it does read, so a typo is an
  * error with a line number rather than a silently missing setting. A full TOML
  * dependency would outweigh the rest of the CLI for a dozen keys.
@@ -9,7 +10,7 @@
 
 export type TomlValue = string | number | boolean | TomlValue[];
 export type TomlTable = Record<string, TomlValue>;
-/** Top-level keys under `""`, every `[table]` under its name. */
+/** Top-level keys under `""`, every `[table]` under its name, dots and all, in file order. */
 export type TomlDocument = Record<string, TomlTable>;
 
 export class TomlError extends Error {
@@ -31,7 +32,7 @@ export function parseToml(text: string): TomlDocument {
     const line = stripComment(lines[i]).trim();
     if (line === "") continue;
 
-    const header = line.match(/^\[\s*([A-Za-z0-9_-]+)\s*\]$/);
+    const header = line.match(/^\[\s*([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)\s*\]$/);
     if (header) {
       if (doc[header[1]]) throw new TomlError(`table [${header[1]}] defined twice`, lineNo);
       table = doc[header[1]] = {};

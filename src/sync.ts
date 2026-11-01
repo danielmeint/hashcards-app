@@ -34,6 +34,7 @@ import { AuthError } from "./auth";
 import { isDeckPath } from "./collection-config";
 import {
   CONFIG_PATH,
+  adoptLimits,
   adoptReviewConfig,
   cachedCollectionConfig,
   pushCollectionSettings,
@@ -211,7 +212,9 @@ async function runSync(
     // collection's, whichever collections this sync visited.
     const primary = getConfig();
     if (primary && !primary.readOnly) {
-      adoptReviewConfig((await cachedCollectionConfig(repoKey(primary))).review);
+      const own = await cachedCollectionConfig(repoKey(primary));
+      adoptReviewConfig(own.review);
+      adoptLimits(own.limits);
     }
 
     // `inStep` is the conjunction: one collection declining to push is still

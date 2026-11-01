@@ -36,8 +36,9 @@ original hashcards format opens too, and `hc migrate` brings it up to 1.0
   your cards and nothing else. Every device replays the same log and agrees on
   what is due.
 - **Settings live in `hashcards.toml`**: new cards per day, desired retention,
-  interval fuzz, and which files are decks. Theme and haptics stay on the
-  device.
+  interval fuzz, and which files are decks. A group of decks can have its own
+  new-card limit (`[limits.<name>]`, with `decks` globs and `new_per_day`),
+  within the collection's. Theme and haptics stay on the device.
 - **[FSRS](https://github.com/open-spaced-repetition/fsrs4anki/wiki/The-Algorithm)
   schedules every card**, aiming each review at the moment you would otherwise
   start to forget.
@@ -110,7 +111,7 @@ hc lint                         # parse errors; the same card twice
 hc add --deck net/tcp.md --draft -q "Question?" -a "Answer"
 hc add --deck net/tcp.md --cloze "TCP opens with a [SYN]."
 hc add --json cards.json        # one card or an array, as schema/card.schema.json
-hc due [--date tomorrow]        # reviews due, new cards within new_per_day
+hc due [--date tomorrow]        # reviews due, new cards within new_per_day and [limits]
 hc stats                        # totals, maturity, retention, 14-day forecast
 hc leeches [--min-lapses 3]     # cards that keep failing
 hc show <file:line|key>         # a card, its file and line, state and history

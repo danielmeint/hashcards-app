@@ -1,4 +1,6 @@
 import { MAX_RETENTION, MIN_RETENTION } from "./core/schedule";
+import { globMatch, matchesAny } from "./core/glob";
+import { NewCardLimit, readLimit } from "./core/limits";
 
 /**
  * `hashcards.toml`: the collection's settings, kept in the repository so every
@@ -13,7 +15,11 @@ import { MAX_RETENTION, MIN_RETENTION } from "./core/schedule";
  *     include = ["**\/*.md"]
  *     exclude = ["README.md", "AGENTS.md", "archive/**"]
  *
- * Not a TOML library. The file has five documented keys, and the frontmatter
+ *     [limits.interview]          # any number of these (`core/limits.ts`)
+ *     decks = ["interview/**"]
+ *     new_per_day = 5
+ *
+ * Not a TOML library. The file has a handful of documented keys, and the frontmatter
  * reader (M1) already set the precedent of reading the subset this format uses
  * by hand rather than shipping a parser for the rest. What this reads: tables,
  * `key = value` with integers, floats, booleans, basic strings and arrays of
@@ -39,6 +45,8 @@ export type DeckConfig = {
 export type CollectionConfig = {
   review: ReviewConfig;
   decks: DeckConfig;
+  /** `[limits.<name>]` groups in file order, the usable ones only. */
+  limits: NewCardLimit[];
 };
 
 type Value = string | number | boolean | string[];
@@ -140,7 +148,7 @@ function lookup(found: Entry[], table: string, key: string): Value | undefined {
  * the device keeps its own — rather than refusing the whole file over it.
  */
 export function parseConfig(text: string): CollectionConfig {
-  const { entries: found } = entries(text);
+  const { entries: found, tables } = entries(text);
   const review: ReviewConfig = {};
   const decks: DeckConfig = {};
 
@@ -164,7 +172,18 @@ export function parseConfig(text: string): CollectionConfig {
   const exclude = lookup(found, "decks", "exclude");
   if (Array.isArray(exclude)) decks.exclude = exclude;
 
-  return { review, decks };
+  // In file order, which decides the group of a deck two of them match. A
+  // group `hc lint` would complain about is left out, as `hc` leaves it out.
+  const limits: NewCardLimit[] = [];
+  for (const table of tables.keys()) {
+    if (!table.startsWith("limits.")) continue;
+    const values: Record<string, unknown> = {};
+    for (const e of found) if (e.table === table && e.value !== undefined) values[e.key] = e.value;
+    const { limit } = readLimit(table.slice("limits.".length), values);
+    if (limit) limits.push(limit);
+  }
+
+  return { review, decks, limits };
 }
 
 function formatValue(value: Value): string {
@@ -222,57 +241,14 @@ function setValue(text: string, table: string, key: string, value: Value): strin
 // --- Deck globs ---------------------------------------------------------------
 
 /**
- * Which Markdown files are decks.
- *
- * Patterns are matched against the path from the repository root, with `/`
- * between segments:
- *
- * - `*` matches any run of characters within one segment, `?` one character.
- * - `**` as a whole segment matches any number of segments, including none:
- *   `**\/*.md` is every Markdown file, `archive/**` everything under `archive`.
- * - A pattern with no `/` matches the file name at any depth, as in
- *   `.gitignore`: `README.md` excludes every README, not only the top one.
- *   One with a `/` is anchored at the root.
- *
- * No braces, no character classes, no negation: a file is a deck when it
- * matches some `include` (all `.md` files when there is none) and no
- * `exclude`. Only `.md` files are ever decks, whatever the globs say.
+ * Which Markdown files are decks: those matching some `include` (all `.md`
+ * files when there is none) and no `exclude`, in the glob syntax of
+ * `core/glob.ts`, which `hc` shares. Only `.md` files are ever decks,
+ * whatever the globs say.
  */
 export function isDeckPath(path: string, decks: DeckConfig): boolean {
   if (!path.endsWith(".md")) return false;
-  const include = decks.include ?? ["**/*.md"];
-  return (
-    include.some((pattern) => globMatch(pattern, path)) &&
-    !(decks.exclude ?? []).some((pattern) => globMatch(pattern, path))
-  );
+  return matchesAny(path, decks.include ?? ["**/*.md"]) && !matchesAny(path, decks.exclude ?? []);
 }
 
-const regexCache = new Map<string, RegExp>();
-
-export function globMatch(pattern: string, path: string): boolean {
-  let re = regexCache.get(pattern);
-  if (!re) {
-    re = globToRegExp(pattern);
-    regexCache.set(pattern, re);
-  }
-  return re.test(path);
-}
-
-function globToRegExp(pattern: string): RegExp {
-  const anchored = pattern.includes("/");
-  const segments = pattern.replace(/^\/+/, "").split("/");
-  let source = "";
-  segments.forEach((segment, i) => {
-    const last = i === segments.length - 1;
-    if (segment === "**") {
-      source += last ? ".*" : "(?:[^/]+/)*";
-      return;
-    }
-    source += segment
-      .split("")
-      .map((c) => (c === "*" ? "[^/]*" : c === "?" ? "[^/]" : c.replace(/[.+^${}()|[\]\\]/g, "\\$&")))
-      .join("");
-    if (!last) source += "/";
-  });
-  return new RegExp(anchored ? `^${source}$` : `^(?:.*/)?${source}$`);
-}
+export { globMatch };

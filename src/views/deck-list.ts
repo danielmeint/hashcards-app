@@ -17,7 +17,7 @@ import {
   refreshIntroduced,
   selectDueCards,
   countDue,
-  remainingBudget,
+  remainingFor,
 } from "../new-card-budget";
 import {
   getLastPushedAt,
@@ -55,6 +55,8 @@ type DeckInfo = {
   reviewDue: number;
   /** Genuine supply of unseen cards, before the day's global budget. */
   newCount: number;
+  /** Of those, how many today's budget allows: its group's within the collection's. */
+  newToday: number;
 };
 
 /**
@@ -86,8 +88,6 @@ type Model = {
   repoNames: Map<string, boolean>;
   newPerDay: number;
   introducedToday: number;
-  /** What the day's new-card budget still allows. */
-  budgetLeft: number;
   totalReviews: number;
   totalNew: number;
   /** Reviews graded since local midnight, for the caught-up line. */
@@ -605,7 +605,7 @@ export async function renderDeckList(
    * a review that would come up empty.
    */
   function deckRow(deck: DeckInfo): TemplateResult {
-    const newToday = Math.min(deck.newCount, model.budgetLeft);
+    const newToday = deck.newToday;
     const drillable = deck.reviewDue + newToday > 0;
     const status =
       deck.reviewDue > 0
@@ -720,7 +720,6 @@ async function load(): Promise<Model> {
       repoNames: new Map(),
       newPerDay: getNewCardsPerDay(),
       introducedToday: 0,
-      budgetLeft: remainingBudget(today),
       totalReviews: 0,
       totalNew: 0,
       reviewedToday: 0,
@@ -771,6 +770,7 @@ async function load(): Promise<Model> {
       total: deckCards.length,
       reviewDue: counts.reviewDue,
       newCount: counts.newCount,
+      newToday: 0,
     });
   }
   decks.sort(
@@ -809,8 +809,10 @@ async function load(): Promise<Model> {
   });
 
   // Cards started today on any device, from the log just loaded.
-  await refreshIntroduced(today);
-  const budgetLeft = remainingBudget(today);
+  await refreshIntroduced(today, cards);
+  for (const deck of decks) {
+    deck.newToday = Math.min(deck.newCount, remainingFor(deck.path, today));
+  }
   for (const group of groups) {
     if (group.dir === "") continue;
     group.due = selectDueCards(
@@ -829,14 +831,13 @@ async function load(): Promise<Model> {
     repoNames: new Map(getRepos().map((r) => [repoKey(r), r.readOnly === true])),
     newPerDay: getNewCardsPerDay(),
     introducedToday: getIntroducedToday(today),
-    budgetLeft,
     totalReviews: decks.reduce((s, d) => s + d.reviewDue, 0),
-    // Clamped once, across every deck: the budget is one pool, and the screen
-    // has to promise what pressing Start will actually give you.
-    totalNew: Math.min(
-      decks.reduce((s, d) => s + d.newCount, 0),
-      budgetLeft
-    ),
+    // What Start would actually hand the drill: the budget is one pool (with
+    // its groups inside it), so it is clamped once across every deck, never
+    // deck by deck.
+    totalNew: selectDueCards(cards, performances, today).filter(
+      (c) => !performances.has(stateKey(c))
+    ).length,
     reviewedToday,
     comingUp,
     lastPushedAt,

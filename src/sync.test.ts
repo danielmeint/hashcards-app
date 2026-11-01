@@ -1446,6 +1446,25 @@ exclude = ["archive/**"]
     expect(app.github.getDesiredRetention()).toBe(0.85);
   });
 
+  it("takes its new-card groups, and keeps them in the file when a setting is saved", async () => {
+    const groups = `${TOML}
+[limits.interview]
+decks = ["interview/**"]
+new_per_day = 2
+`;
+    repo.set("hashcards.toml", groups, "sha-toml");
+    const app = await new Device("phone1").use();
+    await app.sync.syncAll(CONFIG);
+
+    const { getNewCardLimits, setNewCardsPerDay } = await import("./new-card-budget");
+    expect(getNewCardLimits()).toEqual([{ name: "interview", decks: ["interview/**"], newPerDay: 2 }]);
+
+    setNewCardsPerDay(7);
+    await app.sync.syncAll(CONFIG);
+    const [write] = repo.fileWrites.filter((w) => w.path === "hashcards.toml");
+    expect(write.content).toBe(groups.replace("new_per_day = 5", "new_per_day = 7"));
+  });
+
   it("moves every due date when retention changes", async () => {
     const app = await new Device("phone1").use();
     await app.sync.syncAll(CONFIG);

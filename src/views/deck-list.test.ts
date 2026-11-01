@@ -364,6 +364,78 @@ describe("deck identity", () => {
     );
   });
 
+  it("holds a group of decks to its own new-card limit, within the collection's", async () => {
+    const { renderDeckList } = await freshDeckList();
+    localStorage.setItem("new_cards_per_day", "3");
+    localStorage.setItem(
+      "new_card_limits",
+      JSON.stringify([{ name: "interview", decks: ["interview/**"], newPerDay: 1 }])
+    );
+    await cache([
+      card(1, "Geo", "Geo.md"),
+      card(2, "SD", "interview/SD.md"),
+      card(3, "SD", "interview/SD.md"),
+      card(4, "Algo", "interview/algo/Algo.md"),
+    ]);
+
+    const drilled: Card[][] = [];
+    await renderDeckList(container, (cards) => drilled.push(cards), () => {}, () => {});
+
+    // Geo's one, and the group's first in path order: the collection would
+    // allow a third.
+    expect(container.querySelector("#due-summary")!.textContent).toContain("2 new");
+    (container.querySelector("#drill-all") as HTMLButtonElement).click();
+    expect(drilled[0].map((c) => c.filePath)).toEqual(["Geo.md", "interview/algo/Algo.md"]);
+
+    // The folder, and each deck in it, get the group's one card.
+    (
+      container.querySelector('.folder-btn[data-dir="interview"]') as HTMLButtonElement
+    ).click();
+    expect(drilled[1]).toHaveLength(1);
+    (container.querySelector('button.deck-row[data-path="interview/algo/Algo.md"]') as HTMLButtonElement).click();
+    expect(drilled[2]).toHaveLength(1);
+  });
+
+  it("says a group's decks are done for today once the group has spent its limit", async () => {
+    const { renderDeckList } = await freshDeckList();
+    localStorage.setItem("new_cards_per_day", "20");
+    localStorage.setItem(
+      "new_card_limits",
+      JSON.stringify([{ name: "interview", decks: ["interview/**"], newPerDay: 1 }])
+    );
+    await cache([card(1, "SD", "interview/SD.md"), card(2, "SD", "interview/SD.md"), card(3, "Geo", "Geo.md")]);
+    // One of the group's cards was started today, on another device.
+    const { importReviews } = await import("../db");
+    await importReviews([
+      {
+        key: "someone/cards/h:0123456789abcdef",
+        log: "someone/cards",
+        tz: -new Date().getTimezoneOffset(),
+        cardHash: "other",
+        reviewedAt: new Date().toISOString(),
+        grade: 3,
+        stability: 2,
+        difficulty: 5,
+        intervalRaw: 2,
+        intervalDays: 2,
+        dueDate: "2999-01-01",
+      },
+    ]);
+    await cache([
+      { ...card(9, "SD", "interview/SD.md"), key: "h:0123456789abcdef" },
+      card(1, "SD", "interview/SD.md"),
+      card(2, "SD", "interview/SD.md"),
+      card(3, "Geo", "Geo.md"),
+    ]);
+
+    await renderDeckList(container, () => {}, () => {}, () => {});
+
+    // Its unseen cards are still there, only not today.
+    expect(container.querySelector('.deck-row[data-path="interview/SD.md"]')!.textContent).toMatch(/\d new left/);
+    expect(container.querySelector(".folder-btn")).toBeNull();
+    expect(container.querySelector("#due-summary")!.textContent).toContain("1 new");
+  });
+
   it("hands the drill only as many new cards as the budget allows", async () => {
     const { renderDeckList } = await freshDeckList();
     localStorage.setItem("new_cards_per_day", "2");

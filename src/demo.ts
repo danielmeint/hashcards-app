@@ -2,7 +2,7 @@ import { DEMO_REPO, enterDemo } from "./demo-mode";
 import { repoKey, saveRepos } from "./github";
 import { importReviews } from "./db";
 import { loadCards, syncCards } from "./sync";
-import { cachedCollectionConfig, adoptReviewConfig } from "./collection-settings";
+import { cachedCollectionConfig, adoptLimits, adoptReviewConfig } from "./collection-settings";
 import { refreshStates, replayOptions } from "./review-state";
 import { recordSyncSuccess } from "./sync-state";
 import { localDay } from "./fsrs";
@@ -52,7 +52,9 @@ export async function startDemo(now: Date = new Date()): Promise<void> {
   const key = repoKey(DEMO_REPO);
 
   await syncCards(DEMO_REPO);
-  adoptReviewConfig((await cachedCollectionConfig(key)).review);
+  const config = await cachedCollectionConfig(key);
+  adoptReviewConfig(config.review);
+  adoptLimits(config.limits);
 
   const cards = await loadCards();
   await importReviews(

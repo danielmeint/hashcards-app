@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_RETENTION, MAX_RETENTION, MIN_RETENTION } from "../src/core/schedule";
+import { readLimit } from "../src/core/limits";
+import type { NewCardLimit } from "../src/core/limits";
 import { parseToml, TomlError } from "./toml";
 import type { TomlTable, TomlValue } from "./toml";
 
@@ -22,6 +24,8 @@ export type Config = {
   };
   /** Null when the file has no `[decks]`: then the default rule applies (`decks.ts`). */
   decks: { include: string[]; exclude: string[] } | null;
+  /** `[limits.<name>]` new-card groups in file order (`src/core/limits.ts`), the usable ones. */
+  limits: NewCardLimit[];
 };
 
 export type ConfigResult = {
@@ -38,6 +42,7 @@ export function defaultConfig(): Config {
   return {
     review: { newPerDay: DEFAULT_NEW_PER_DAY, desiredRetention: DEFAULT_RETENTION, fuzz: true },
     decks: null,
+    limits: [],
   };
 }
 
@@ -95,6 +100,17 @@ export function parseConfig(text: string): Omit<ConfigResult, "present"> {
     };
     config.decks = { include: list("include", ["**/*.md"]), exclude: list("exclude", []) };
   }
+
+  // Each group is its own table; a broken one is reported and left out.
+  if (doc.limits && Object.keys(doc.limits).length > 0) {
+    problem("[limits] holds no keys of its own: each group is a table, [limits.<name>]");
+  }
+  for (const [table, values] of Object.entries(doc)) {
+    if (!table.startsWith("limits.")) continue;
+    const { limit, problems: found } = readLimit(table.slice("limits.".length), values);
+    found.forEach(problem);
+    if (limit) config.limits.push(limit);
+  }
   return { config, problems };
 }
 
@@ -126,5 +142,11 @@ ${pad(`fuzz = ${fuzz}`)} # spread cards learned together over neighbouring days
 # Globs. One without a "/" matches a file name at any depth.
 include = ["**/*.md"]
 exclude = [${list}]
+
+# A group of decks can have its own new cards per day, within new_per_day
+# above. A deck counts in the first group whose globs match it.
+# [limits.languages]
+# decks = ["languages/**"]
+# new_per_day = 5
 `;
 }

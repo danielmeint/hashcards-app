@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseFile, scanFile } from "../src/parser";
 import type { ParsedCard } from "../src/types";
-import { matchesAny } from "./glob";
+import { matchesAny } from "../src/core/glob";
 import { readConfig } from "./config";
 import type { Config, ConfigResult } from "./config";
 

@@ -88,3 +88,16 @@ test("a folder's heading reviews every deck under it", async ({ page, github }) 
   await expect(page.locator(".progress-count")).toHaveText("0 / 3");
   expect(github.unhandled).toEqual([]);
 });
+
+test("a [limits] group in hashcards.toml holds its decks to their own new cards", async ({ page, github }) => {
+  github.set("hashcards.toml", '[review]\nnew_per_day = 20\n\n[limits.lang]\ndecks = ["lang/**"]\nnew_per_day = 1\n');
+  github.set("Capitals.md", deck("Japan", "Peru"));
+  github.set("lang/Spanish.md", deck("hola", "adiós", "gracias"));
+  await page.goto("/");
+
+  // Both capitals, and one of the three Spanish cards.
+  await expect(page.locator("#due-summary")).toHaveText("0 reviews · 3 new");
+  await page.locator('.folder-btn[data-dir="lang"]').click();
+  await expect(page.locator(".progress-count")).toHaveText("0 / 1");
+  expect(github.unhandled).toEqual([]);
+});

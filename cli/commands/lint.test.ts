@@ -94,4 +94,20 @@ describe("hc lint", () => {
     expect(run.code).toBe(1);
     expect(run.json().errors[0]).toMatchObject({ kind: "config", file: "hashcards.toml", line: 2 });
   });
+
+  it("reports a [limits] group it cannot use", async () => {
+    const repo = makeRepo({
+      "a.md": "Q: q\nA: a\n",
+      "hashcards.toml": '[limits.interview]\ndecks = ["interview/"]\nnew_per_day = 5\n',
+    });
+    const run = await hc(["lint", "--json", "--repo", repo]);
+    expect(run.code).toBe(1);
+    expect(run.json().errors).toEqual([
+      expect.objectContaining({
+        kind: "config",
+        file: "hashcards.toml",
+        message: expect.stringContaining("'interview/**' is everything in it"),
+      }),
+    ]);
+  });
 });

@@ -95,6 +95,36 @@ describe("reading history from the hashcards-data branch", () => {
     expect(out.new).toMatchObject({ introducedToday: 1, count: 1, perDay: 2, unseen: 3 });
   });
 
+  it("holds a [limits] group to its own budget, spent by its decks' cards started that day", async () => {
+    const qs = (...names: string[]) => names.map((n) => `Q: ${n}?\nA: ${n}\n`).join("\n---\n\n");
+    const repo = makeRepo({
+      "Geo.md": qs("geo 1"),
+      "interview/sd.md": qs("sd 1", "sd 2"),
+      "interview/algo/sort.md": qs("sort 1"),
+      "hashcards.toml": `[review]
+new_per_day = 3
+
+[limits.interview]
+decks = ["interview/**"]
+new_per_day = 2
+`,
+    });
+    gitInit(repo);
+    const [sd1] = (await parseFile(qs("sd 1"), "interview/sd.md", "sd")).map((c) => c.key);
+    // Started today on another device: one of the group's two.
+    makeDataBranch(repo, { "2026-10.phone.jsonl": review(sd1, "2026-10-15T07:00:00.000Z", 3) + "\n" });
+
+    const out = (await hc(["due", "--json", "--repo", repo, "--date", "2026-10-15"])).json();
+    // The collection has two left; the group one of them.
+    expect(out.new).toMatchObject({ count: 2, unseen: 3, perDay: 3, introducedToday: 1 });
+    expect(out.new.cards.map((c: { file: string }) => c.file)).toEqual(["Geo.md", "interview/algo/sort.md"]);
+    expect(out.new.limits).toEqual([
+      { name: "interview", decks: ["interview/**"], perDay: 2, startedToday: 1, new: 1 },
+    ]);
+    const human = await hc(["due", "--repo", repo, "--date", "2026-10-15"]);
+    expect(human.stdout).toMatch(/2 new \(3 unseen; 1\/3 new started today; interview 1\/2\)/);
+  });
+
   it("counts a line that is in two files once", async () => {
     // A device that took a new name leaves its reviews under both names.
     const once = v2Repo();

@@ -352,7 +352,7 @@ export async function createSession(
       // and never in a dry run, which is meant to persist nothing.
       if (newCardHashes.has(key) && !gradedNewCards.has(key)) {
         gradedNewCards.add(key);
-        if (!dryRun) recordIntroduced(todayStr(), key, true);
+        if (!dryRun) recordIntroduced(todayStr(), key, true, card.filePath);
       }
 
       // Forgot comes round again later in the drill — hashcards' version of

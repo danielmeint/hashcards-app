@@ -15,6 +15,14 @@ exclude = [
   "archive/**",
 ]
 
+[limits.interview]
+decks = ["interview/**"]   # every deck in the folder
+new_per_day = 5
+
+[limits.languages]
+decks = ["lang/**", "Spanish.md"]
+new_per_day = 10
+
 [something_else]
 kept = "as it is"
 `;
@@ -24,11 +32,37 @@ describe("reading hashcards.toml", () => {
     expect(parseConfig(FULL)).toEqual({
       review: { newPerDay: 20, desiredRetention: 0.9, fuzz: true },
       decks: { include: ["**/*.md"], exclude: ["README.md", "AGENTS.md", "archive/**"] },
+      limits: [
+        { name: "interview", decks: ["interview/**"], newPerDay: 5 },
+        { name: "languages", decks: ["lang/**", "Spanish.md"], newPerDay: 10 },
+      ],
     });
   });
 
   it("reads nothing from an empty or missing file", () => {
-    expect(parseConfig("")).toEqual({ review: {}, decks: {} });
+    expect(parseConfig("")).toEqual({ review: {}, decks: {}, limits: [] });
+  });
+
+  it("leaves out a new-card group it cannot use, as hc does, and keeps the others", () => {
+    const config = parseConfig(`
+[limits.typo]
+decks = ["a/**"]
+new_per_dya = 5
+
+[limits.half]
+decks = ["b/**"]
+new_per_day = 2.5
+
+[limits.folder]
+decks = ["c/"]
+new_per_day = 3
+
+[limits.fine]
+decks = ["d/**"]
+new_per_day = 0
+extra = "an unknown key is reported, not fatal"
+`);
+    expect(config.limits).toEqual([{ name: "fine", decks: ["d/**"], newPerDay: 0 }]);
   });
 
   it("ignores a value it cannot use, and keeps the rest", () => {
@@ -50,6 +84,7 @@ describe("writing hashcards.toml", () => {
     const text = writeReviewConfig(FULL, { newPerDay: 5, desiredRetention: 0.85, fuzz: false });
     expect(parseConfig(text).review).toEqual({ newPerDay: 5, desiredRetention: 0.85, fuzz: false });
     expect(parseConfig(text).decks).toEqual(parseConfig(FULL).decks);
+    expect(parseConfig(text).limits).toEqual(parseConfig(FULL).limits);
   });
 
   it("changes only the lines of the keys it sets, comments included", () => {
@@ -65,6 +100,13 @@ describe("writing hashcards.toml", () => {
   it("adds a missing key to its table, before the next one", () => {
     const text = writeReviewConfig("[review]\nfuzz = true\n\n[decks]\nexclude = []\n", { newPerDay: 10 });
     expect(text).toBe("[review]\nfuzz = true\nnew_per_day = 10\n\n[decks]\nexclude = []\n");
+  });
+
+  it("adds a [review] key to [review], not to a new-card group before it", () => {
+    const before = '[limits.x]\ndecks = ["x/**"]\nnew_per_day = 1\n\n[review]\nfuzz = true\n';
+    expect(writeReviewConfig(before, { newPerDay: 3 })).toBe(before + "new_per_day = 3\n");
+    const none = '[limits.x]\ndecks = ["x/**"]\nnew_per_day = 1\n';
+    expect(writeReviewConfig(none, { newPerDay: 3 })).toBe(none + "\n[review]\nnew_per_day = 3\n");
   });
 
   it("adds the table when there is none, and makes a file from nothing", () => {

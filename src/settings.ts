@@ -2,6 +2,7 @@ import type { Theme } from "./theme";
 import type { RepoConfig } from "./github";
 import { DEFAULT_RETENTION, MAX_RETENTION, MIN_RETENTION } from "./core/schedule";
 import { keyValueStore } from "./demo-mode";
+import type { NewCardLimit } from "./core/limits";
 
 /**
  * Everything this app keeps in `localStorage`, in one place.
@@ -18,7 +19,8 @@ import { keyValueStore } from "./demo-mode";
  *
  * Since M3, three of these — new cards per day, desired retention and fuzz —
  * are a local copy of the collection's `hashcards.toml`, read on every sync
- * and written back when changed here (`collection-settings.ts`). They stay
+ * and written back when changed here (`collection-settings.ts`). Its new-card
+ * groups are copied too, and never written back. They stay
  * here too, because the first paint and an offline drill need them before any
  * sync. Theme and haptics are the device's own and never leave it.
  *
@@ -114,6 +116,12 @@ const theme: Codec<Theme> = {
 /** A count of new cards on a given day. */
 export type IntroducedToday = { date: string; count: number };
 
+/**
+ * Today's started cards at a "Reset": `keys` say which, so each new-card
+ * group starts from zero too. A reset written before groups has only `count`.
+ */
+export type NewCardsReset = IntroducedToday & { keys?: string[] };
+
 export const settings = {
   /**
    * Every collection the app reads, in the order they are shown. A list rather
@@ -123,7 +131,12 @@ export const settings = {
   repos: setting("repos", json<RepoConfig[]>([])),
   newCardsPerDay: setting("new_cards_per_day", count(20)),
   /** Today's started cards at the last "Reset" on this device (`new-card-budget.ts`). */
-  newCardsReset: setting("new_cards_reset", json<IntroducedToday | null>(null)),
+  newCardsReset: setting("new_cards_reset", json<NewCardsReset | null>(null)),
+  /**
+   * The collection's `[limits.<name>]` groups, as last read from
+   * `hashcards.toml`. Not edited here, so only ever copied from the file.
+   */
+  newCardLimits: setting("new_card_limits", json<NewCardLimit[]>([])),
   intervalFuzz: setting("interval_fuzz", flag(true)),
   desiredRetention: setting(
     "desired_retention",
